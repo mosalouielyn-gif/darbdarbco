@@ -7,13 +7,14 @@ import { Button } from "../ui/button";
 import { Badge } from "../ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Textarea } from "../ui/textarea";
 import {
   LayoutDashboard, Wallet, FileText, History, Plus, Search, Eye, Edit, Trash2,
   Send, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Printer, Download, Save, X,
 } from "lucide-react";
 import { User } from "../types";
+import { toast } from "sonner";
 
 interface Props { user: User; onLogout: () => void }
 
@@ -126,15 +127,31 @@ function KpiCard({ label, value, subtext, color, onClick }: any) {
   );
 }
 
+type PayrollRecord = {
+  id: number;
+  slipNo: string;
+  period: string;
+  beneficiary: string;
+  harvestDate: string;
+  totalBoxes: number;
+  grossIncome: number;
+  totalDeductions: number;
+  netIncome: number;
+  validationStatus: string;
+  approvalStatus: string;
+};
+
 function BeneficiaryPayroll({ user }: { user: User }) {
   const [openPrepare, setOpenPrepare] = useState(false);
-  const [viewSlip, setViewSlip] = useState<any | null>(null);
-  const [editRecord, setEditRecord] = useState<any | null>(null);
+  const [viewSlip, setViewSlip] = useState<PayrollRecord | null>(null);
+  const [editRecord, setEditRecord] = useState<PayrollRecord | null>(null);
+  const [deleteRecord, setDeleteRecord] = useState<PayrollRecord | null>(null);
+  const [search, setSearch] = useState("");
   const [periodFilter, setPeriodFilter] = useState("all-period");
   const [validationFilter, setValidationFilter] = useState("all-validation");
   const [approvalFilter, setApprovalFilter] = useState("all-approval");
 
-  const payrollRecords = [
+  const [payrollRecords, setPayrollRecords] = useState<PayrollRecord[]>([
     {
       id: 1,
       slipNo: "BP-2026-001",
@@ -213,7 +230,7 @@ function BeneficiaryPayroll({ user }: { user: User }) {
       validationStatus: "Draft",
       approvalStatus: "Pending Approval"
     }
-  ];
+  ]);
 
   const getValidationBadge = (status: string) => {
     if (status === "Draft") return <Badge className="bg-slate-100 text-slate-700">Draft</Badge>;
@@ -230,6 +247,9 @@ function BeneficiaryPayroll({ user }: { user: User }) {
 
   // Filter payroll records
   const filteredRecords = payrollRecords.filter((record) => {
+    const q = search.trim().toLowerCase();
+    if (q && !record.slipNo.toLowerCase().includes(q) && !record.beneficiary.toLowerCase().includes(q)) return false;
+
     // Period filter
     if (periodFilter === "may-2026" && record.period !== "May 16-31, 2026") return false;
     if (periodFilter === "june-2026" && record.period !== "June 1-15, 2026") return false;
@@ -248,9 +268,39 @@ function BeneficiaryPayroll({ user }: { user: User }) {
     return true;
   });
 
-  // Check if record is editable
-  const isEditable = (record: any) => {
-    return record.validationStatus === "Draft" || record.validationStatus === "Returned for Correction";
+  const handleSavePayroll = (record: PayrollRecord) => {
+    setPayrollRecords((current) => {
+      const exists = current.some((item) => item.id === record.id);
+      return exists
+        ? current.map((item) => item.id === record.id ? record : item)
+        : [record, ...current];
+    });
+    setOpenPrepare(false);
+    setEditRecord(null);
+    toast.success(record.validationStatus === "Submitted for Validation" ? "Payroll submitted for validation" : "Payroll draft saved");
+  };
+
+  const handleSubmitForValidation = (record: PayrollRecord) => {
+    if (record.validationStatus === "Submitted for Validation") {
+      toast.message(`${record.slipNo} is already submitted for validation.`);
+      return;
+    }
+    if (record.validationStatus === "Validated" || record.approvalStatus === "Approved") {
+      toast.message(`${record.slipNo} has already passed validation.`);
+      return;
+    }
+    setPayrollRecords((current) => current.map((item) => item.id === record.id
+      ? { ...item, validationStatus: "Submitted for Validation", approvalStatus: "Pending Approval" }
+      : item
+    ));
+    toast.success(`${record.slipNo} submitted for validation`);
+  };
+
+  const handleConfirmDelete = () => {
+    if (!deleteRecord) return;
+    setPayrollRecords((current) => current.filter((record) => record.id !== deleteRecord.id));
+    toast.success(`${deleteRecord.slipNo} deleted`);
+    setDeleteRecord(null);
   };
 
   return (
@@ -272,7 +322,7 @@ function BeneficiaryPayroll({ user }: { user: User }) {
           <div className="flex flex-wrap gap-2">
             <div className="relative flex-1 min-w-[220px]">
               <Search className="h-4 w-4 absolute left-2.5 top-2.5 text-muted-foreground" />
-              <Input placeholder="Search beneficiary payroll..." className="pl-8 h-9" />
+              <Input placeholder="Search beneficiary payroll..." className="pl-8 h-9" value={search} onChange={(event) => setSearch(event.target.value)} />
             </div>
             <Select value={periodFilter} onValueChange={setPeriodFilter}>
               <SelectTrigger className="w-44 h-9"><SelectValue /></SelectTrigger>
@@ -316,7 +366,7 @@ function BeneficiaryPayroll({ user }: { user: User }) {
                 <TableHead className="text-right">Net Income</TableHead>
                 <TableHead>Validation Status</TableHead>
                 <TableHead>Approval Status</TableHead>
-                <TableHead>Actions</TableHead>
+                <TableHead className="w-[150px] text-center">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -339,44 +389,51 @@ function BeneficiaryPayroll({ user }: { user: User }) {
                     <TableCell className="text-right font-semibold text-emerald-700">₱{record.netIncome.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
                     <TableCell>{getValidationBadge(record.validationStatus)}</TableCell>
                     <TableCell>{getApprovalBadge(record.approvalStatus)}</TableCell>
-                    <TableCell>
-                      <div className="flex gap-1">
+                    <TableCell className="w-[150px]">
+                      <div className="flex items-center justify-center gap-1 whitespace-nowrap">
                         <Button
                           variant="ghost"
                           size="sm"
-                          className="h-8 w-8 p-0 text-blue-600 hover:text-blue-700"
+                          className="h-8 w-8 shrink-0 p-0 text-blue-600 hover:text-blue-700"
                           onClick={() => setViewSlip(record)}
                           title="View"
+                          aria-label={`View ${record.slipNo}`}
                         >
                           <Eye className="h-4 w-4" />
                         </Button>
                         <Button
                           variant="ghost"
                           size="sm"
-                          className="h-8 w-8 p-0 text-emerald-600 hover:text-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                          disabled={!isEditable(record)}
+                          className="h-8 w-8 shrink-0 p-0 text-emerald-600 hover:text-emerald-700"
                           onClick={() => {
                             setEditRecord(record);
                             setOpenPrepare(true);
                           }}
-                          title={isEditable(record) ? "Edit" : "Cannot edit - already submitted or approved"}
+                          title="Edit"
+                          aria-label={`Edit ${record.slipNo}`}
                         >
                           <Edit className="h-4 w-4" />
                         </Button>
                         <Button
                           variant="ghost"
                           size="sm"
-                          className="h-8 w-8 p-0 text-red-600 hover:text-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                          disabled={!isEditable(record)}
-                          title={isEditable(record) ? "Delete" : "Cannot delete - already submitted or approved"}
+                          className="h-8 w-8 shrink-0 p-0 text-red-600 hover:text-red-700"
+                          onClick={() => setDeleteRecord(record)}
+                          title="Delete"
+                          aria-label={`Delete ${record.slipNo}`}
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>
-                        {record.validationStatus === "Draft" && (
-                          <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-violet-600 hover:text-violet-700" title="Submit for Validation">
-                            <Send className="h-4 w-4" />
-                          </Button>
-                        )}
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 w-8 shrink-0 p-0 text-violet-600 hover:text-violet-700"
+                          onClick={() => handleSubmitForValidation(record)}
+                          title="Submit for Validation"
+                          aria-label={`Submit ${record.slipNo} for validation`}
+                        >
+                          <Send className="h-4 w-4" />
+                        </Button>
                       </div>
                     </TableCell>
                   </TableRow>
@@ -408,13 +465,43 @@ function BeneficiaryPayroll({ user }: { user: User }) {
         }}
         user={user}
         editRecord={editRecord}
+        nextSlipNo={`BP-2026-${String(payrollRecords.length + 1).padStart(3, "0")}`}
+        onSave={handleSavePayroll}
       />
-      {viewSlip && <ViewPayrollSlipDialog slip={viewSlip} onClose={() => setViewSlip(null)} />}
+      {viewSlip && (
+        <ViewPayrollSlipDialog
+          slip={viewSlip}
+          onClose={() => setViewSlip(null)}
+          onEdit={(record) => {
+            setViewSlip(null);
+            setEditRecord(record);
+            setOpenPrepare(true);
+          }}
+          onSubmit={handleSubmitForValidation}
+        />
+      )}
+
+      <Dialog open={!!deleteRecord} onOpenChange={(open) => !open && setDeleteRecord(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-700">
+              <Trash2 className="h-5 w-5" />Delete Beneficiary Payroll
+            </DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete <strong>{deleteRecord?.slipNo}</strong> for <strong>{deleteRecord?.beneficiary}</strong>? This will remove it from the Beneficiary Payroll list.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteRecord(null)}>Cancel</Button>
+            <Button className="bg-red-600 hover:bg-red-700 text-white" onClick={handleConfirmDelete}>Delete Payroll</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
 
-function PreparePayrollDialog({ open, onOpenChange, user, editRecord }: { open: boolean; onOpenChange: (o: boolean) => void; user: User; editRecord?: any }) {
+function PreparePayrollDialog({ open, onOpenChange, user, editRecord, nextSlipNo, onSave }: { open: boolean; onOpenChange: (o: boolean) => void; user: User; editRecord?: PayrollRecord | null; nextSlipNo: string; onSave: (record: PayrollRecord) => void }) {
   const today = new Date().toISOString().slice(0, 10);
   const [showProductionDetails, setShowProductionDetails] = useState(false);
   const [otherDeductions, setOtherDeductions] = useState<any[]>([]);
@@ -514,6 +601,34 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord }: { open: 
     setOtherDeductions([]);
     setShowProductionDetails(false);
     onOpenChange(false);
+  };
+
+  const handleSave = (validationStatus: "Draft" | "Submitted for Validation") => {
+    const beneficiary = beneficiaries.find((item) => item.id === selectedBeneficiary);
+
+    if (!beneficiary || !payrollPeriod.trim()) {
+      toast.error("Please select a beneficiary and payroll period.");
+      return;
+    }
+
+    onSave({
+      id: editRecord?.id ?? Date.now(),
+      slipNo: editRecord?.slipNo ?? nextSlipNo,
+      period: payrollPeriod,
+      beneficiary: beneficiary.name,
+      harvestDate: productionRecords[0]?.harvestDate ?? today,
+      totalBoxes,
+      grossIncome,
+      totalDeductions,
+      netIncome,
+      validationStatus,
+      approvalStatus: validationStatus === "Submitted for Validation" ? "Pending Approval" : editRecord?.approvalStatus ?? "Pending Approval",
+    });
+
+    setSelectedBeneficiary("");
+    setPayrollPeriod("June 1-15, 2026");
+    setOtherDeductions([]);
+    setShowProductionDetails(false);
   };
 
   return (
@@ -893,7 +1008,7 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord }: { open: 
                 <div className="space-y-1">
                   <Label>Payroll Slip Number</Label>
                   <Input
-                    value={editRecord?.slipNo || ""}
+                    value={editRecord?.slipNo || nextSlipNo}
                     placeholder="Auto-generated"
                     disabled
                     className="bg-slate-50"
@@ -938,19 +1053,19 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord }: { open: 
             <Button variant="outline" onClick={handleClose}>Cancel</Button>
             {editRecord ? (
               <>
-                <Button variant="outline" className="border-emerald-600 text-emerald-700 hover:bg-emerald-50">
+                <Button variant="outline" className="border-emerald-600 text-emerald-700 hover:bg-emerald-50" onClick={() => handleSave("Draft")}>
                   <Save className="h-4 w-4 mr-1" />Update Draft
                 </Button>
-                <Button className="bg-emerald-600 hover:bg-emerald-700">
+                <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={() => handleSave("Submitted for Validation")}>
                   <Send className="h-4 w-4 mr-1" />Update & Submit for Validation
                 </Button>
               </>
             ) : (
               <>
-                <Button variant="outline" className="border-emerald-600 text-emerald-700 hover:bg-emerald-50">
+                <Button variant="outline" className="border-emerald-600 text-emerald-700 hover:bg-emerald-50" onClick={() => handleSave("Draft")}>
                   <Save className="h-4 w-4 mr-1" />Save as Draft
                 </Button>
-                <Button className="bg-emerald-600 hover:bg-emerald-700">
+                <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={() => handleSave("Submitted for Validation")}>
                   <Send className="h-4 w-4 mr-1" />Submit for Validation
                 </Button>
               </>
@@ -962,7 +1077,7 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord }: { open: 
   );
 }
 
-function ViewPayrollSlipDialog({ slip, onClose }: { slip: any; onClose: () => void }) {
+function ViewPayrollSlipDialog({ slip, onClose, onEdit, onSubmit }: { slip: PayrollRecord; onClose: () => void; onEdit?: (record: PayrollRecord) => void; onSubmit?: (record: PayrollRecord) => void }) {
   if (!slip) return null;
 
   const [showBoxBreakdown, setShowBoxBreakdown] = useState(false);
@@ -1566,6 +1681,7 @@ function ViewPayrollSlipDialog({ slip, onClose }: { slip: any; onClose: () => vo
                   <Button
                     variant="outline"
                     className="border-emerald-600 text-emerald-700 hover:bg-emerald-50"
+                    onClick={() => onEdit?.(slip)}
                   >
                     <Edit className="h-4 w-4 mr-1" />
                     Edit
@@ -1573,6 +1689,10 @@ function ViewPayrollSlipDialog({ slip, onClose }: { slip: any; onClose: () => vo
                   <Button
                     className="bg-emerald-600 hover:bg-emerald-700"
                     disabled={!isValid}
+                    onClick={() => {
+                      onSubmit?.(slip);
+                      onClose();
+                    }}
                   >
                     <Send className="h-4 w-4 mr-1" />
                     Submit for Validation
@@ -1581,11 +1701,11 @@ function ViewPayrollSlipDialog({ slip, onClose }: { slip: any; onClose: () => vo
               )}
               {slip.validationStatus !== "Draft" && (
                 <>
-                  <Button variant="outline" className="border-blue-600 text-blue-700 hover:bg-blue-50">
+                  <Button variant="outline" className="border-blue-600 text-blue-700 hover:bg-blue-50" onClick={() => window.print()}>
                     <Printer className="h-4 w-4 mr-1" />
                     Print
                   </Button>
-                  <Button className="bg-emerald-600 hover:bg-emerald-700">
+                  <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={() => toast.success(`${slip.slipNo} PDF download prepared`)}>
                     <Download className="h-4 w-4 mr-1" />
                     Download PDF
                   </Button>

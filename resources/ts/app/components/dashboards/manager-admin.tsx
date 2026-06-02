@@ -208,10 +208,10 @@ function Dashboard({ goTo, payroll, restock, audit, userName, onApprovePayroll, 
         <p className="text-muted-foreground">Welcome back, {userName} — overview of farm operations and approval queue.</p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-        <Kpi color="amber" icon={<Wallet className="h-4 w-4" />} value="12" label="Pending Payroll Approvals" sub={`₱${pendingPayAmount.toLocaleString()}.00`} onClick={() => goTo("payroll")} />
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+        <Kpi color="amber" icon={<Wallet className="h-4 w-4" />} value={String(pendingPay.length)} label="Pending Payroll Approvals" sub={`₱${pendingPayAmount.toLocaleString()}.00`} onClick={() => goTo("payroll")} />
         <Kpi color="amber" icon={<AlertTriangle className="h-4 w-4" />} value={String(pendingRestock.length)} label="Pending Restock Requests" sub={`₱${pendingRestockAmount.toLocaleString()}.00`} onClick={() => goTo("restock")} />
-        <Kpi color="emerald" icon={<TrendingUp className="h-4 w-4" />} value="14" label="Production Today" sub="Boxes • ↑ 10% vs yesterday" onClick={() => goTo("ops")} />
+        <Kpi color="emerald" icon={<TrendingUp className="h-4 w-4" />} value="14" label="Production Today" sub="Boxes • ↑ 10% vs yesterday" onClick={() => goTo("reports")} />
         <Kpi color="emerald" icon={<CheckCircle2 className="h-4 w-4" />} value={String(approvedThisWeek)} label="Approved This Week" sub="Transactions • All modules" onClick={() => goTo("audit")} />
       </div>
 
@@ -298,6 +298,7 @@ const DAILY_BOXES_RECORDS = [
 ];
 
 function ProductionSummary() {
+  const [viewDay, setViewDay] = useState<typeof DAILY_BOXES_RECORDS[number] | null>(null);
   const today = DAILY_BOXES_RECORDS[0];
   const totalToday = today.total;
   const pct = (n: number) => totalToday ? `${Math.round((n / totalToday) * 100)}%` : "0%";
@@ -341,7 +342,7 @@ function ProductionSummary() {
                   <TableCell className="text-right">{r.special}</TableCell>
                   <TableCell className="text-right"><strong>{r.total}</strong></TableCell>
                   <TableCell>
-                    <button className="p-1.5 rounded bg-slate-100 text-slate-700 hover:bg-slate-200" title="View">
+                    <button className="p-1.5 rounded bg-slate-100 text-slate-700 hover:bg-slate-200" title="View" onClick={() => setViewDay(r)}>
                       <Eye className="h-3.5 w-3.5" />
                     </button>
                   </TableCell>
@@ -351,6 +352,26 @@ function ProductionSummary() {
           </Table>
         </CardContent>
       </Card>
+
+      <Dialog open={!!viewDay} onOpenChange={(open) => !open && setViewDay(null)}>
+        <DialogContent className="!max-w-[95vw] w-[95vw] sm:!max-w-[560px] sm:w-[560px]">
+          {viewDay && (
+            <>
+              <DialogHeader><DialogTitle>Daily Boxes Record — {viewDay.date}</DialogTitle></DialogHeader>
+              <div className="grid grid-cols-2 gap-3 p-3 bg-slate-50 rounded-md">
+                <Field label="Date" value={viewDay.date} />
+                <Field label="First Box Out" value={viewDay.first} />
+                <Field label="Last Box Out" value={viewDay.last} />
+                <Field label="Class A Boxes" value={String(viewDay.classA)} />
+                <Field label="Class B Boxes" value={String(viewDay.classB)} />
+                <Field label="Special Product Boxes" value={String(viewDay.special)} />
+                <Field label="Total Boxes" value={String(viewDay.total)} />
+              </div>
+              <div className="flex justify-end"><Button variant="outline" onClick={() => setViewDay(null)}>Close</Button></div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -408,6 +429,22 @@ function PayrollApprovals({ payroll, onApprove, onReturn }: { payroll: PayrollRo
   const [returning, setReturning] = useState<PayrollRow | null>(null);
   const [reason, setReason] = useState("");
 
+  const handleApprove = (row: PayrollRow) => {
+    if (row.status !== "Validated") {
+      toast.message(`${row.id} is already ${row.status.toLowerCase()}.`);
+      return;
+    }
+    onApprove(row.id);
+  };
+
+  const handleReturn = (row: PayrollRow) => {
+    if (row.status !== "Validated") {
+      toast.message(`${row.id} is already ${row.status.toLowerCase()}.`);
+      return;
+    }
+    setReturning(row);
+  };
+
   return (
     <div className="space-y-4">
       <div>
@@ -438,10 +475,10 @@ function PayrollApprovals({ payroll, onApprove, onReturn }: { payroll: PayrollRo
                   <TableCell><Badge className={r.status === "Approved" ? "bg-emerald-100 text-emerald-800" : r.status === "Returned" ? "bg-red-100 text-red-800" : "bg-emerald-100 text-emerald-800"}>{r.status === "Returned" ? "Returned" : "Validated"}</Badge></TableCell>
                   <TableCell>
                     <div className="flex gap-1.5">
-                      <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 h-8 disabled:opacity-50" disabled={r.status !== "Validated"} onClick={() => onApprove(r.id)}>
+                      <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 h-8" onClick={() => handleApprove(r)}>
                         <CheckCircle2 className="h-3.5 w-3.5 mr-1" />Approve
                       </Button>
-                      <Button size="sm" variant="outline" className="border-amber-400 text-amber-700 hover:bg-amber-50 h-8 disabled:opacity-50" disabled={r.status !== "Validated"} onClick={() => setReturning(r)}>
+                      <Button size="sm" variant="outline" className="border-amber-400 text-amber-700 hover:bg-amber-50 h-8" onClick={() => handleReturn(r)}>
                         <Undo2 className="h-3.5 w-3.5 mr-1" />Return
                       </Button>
                       <Button size="sm" variant="outline" className="h-8" onClick={() => setView(r)}>
@@ -518,6 +555,22 @@ function RestockRequests({ restock, onApprove, onReturn }: { restock: RestockRow
   const [returning, setReturning] = useState<RestockRow | null>(null);
   const [reason, setReason] = useState("");
 
+  const handleApprove = (row: RestockRow) => {
+    if (row.status !== "Pending Review") {
+      toast.message(`${row.id} is already ${row.status.toLowerCase()}.`);
+      return;
+    }
+    onApprove(row.id);
+  };
+
+  const handleReturn = (row: RestockRow) => {
+    if (row.status !== "Pending Review") {
+      toast.message(`${row.id} is already ${row.status.toLowerCase()}.`);
+      return;
+    }
+    setReturning(row);
+  };
+
   return (
     <div className="space-y-4">
       <div>
@@ -549,10 +602,10 @@ function RestockRequests({ restock, onApprove, onReturn }: { restock: RestockRow
                   <TableCell><RestockBadge s={r.status} /></TableCell>
                   <TableCell>
                     <div className="flex gap-1">
-                      <button title="Approve" className="p-1.5 rounded bg-emerald-100 text-emerald-700 hover:bg-emerald-200 disabled:opacity-40" disabled={r.status !== "Pending Review"} onClick={() => onApprove(r.id)}>
+                      <button title="Approve" className="p-1.5 rounded bg-emerald-100 text-emerald-700 hover:bg-emerald-200" onClick={() => handleApprove(r)}>
                         <CheckCircle2 className="h-3.5 w-3.5" />
                       </button>
-                      <button title="Return" className="p-1.5 rounded bg-amber-100 text-amber-700 hover:bg-amber-200 disabled:opacity-40" disabled={r.status !== "Pending Review"} onClick={() => setReturning(r)}>
+                      <button title="Return" className="p-1.5 rounded bg-amber-100 text-amber-700 hover:bg-amber-200" onClick={() => handleReturn(r)}>
                         <Undo2 className="h-3.5 w-3.5" />
                       </button>
                       <button title="View" className="p-1.5 rounded bg-slate-100 text-slate-700 hover:bg-slate-200" onClick={() => setView(r)}>
@@ -696,6 +749,7 @@ function OperationsMonitor() {
 }
 
 function Reports() {
+  const [selected, setSelected] = useState<{ title: string; desc: string } | null>(null);
   const cards = [
     { title: "Production Report", desc: "Summary of harvest and boxes" },
     { title: "Inventory Report", desc: "Stock levels and movements" },
@@ -712,18 +766,74 @@ function Reports() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         {cards.map((r) => (
-          <Card key={r.title} className="hover:border-emerald-400 transition cursor-pointer">
+          <Card key={r.title} className="hover:border-emerald-400 transition cursor-pointer" onClick={() => setSelected(r)}>
             <CardContent className="p-5">
               <div className="flex items-center gap-3 mb-2">
                 <div className="h-10 w-10 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center"><FileBarChart2 className="h-5 w-5" /></div>
                 <div>{r.title}</div>
               </div>
               <p className="text-xs text-muted-foreground mb-3">{r.desc}</p>
-              <Button variant="link" className="text-emerald-700 p-0 h-auto">View Report <ArrowRight className="h-3.5 w-3.5 ml-1" /></Button>
+              <Button variant="link" className="text-emerald-700 p-0 h-auto" onClick={(event) => { event.stopPropagation(); setSelected(r); }}>View Report <ArrowRight className="h-3.5 w-3.5 ml-1" /></Button>
             </CardContent>
           </Card>
         ))}
       </div>
+
+      <Dialog open={!!selected} onOpenChange={(open) => !open && setSelected(null)}>
+        <DialogContent className="!max-w-[95vw] w-[95vw] sm:!max-w-[680px] sm:w-[680px]">
+          {selected && (
+            <>
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <FileBarChart2 className="h-5 w-5 text-emerald-700" />{selected.title}
+                </DialogTitle>
+              </DialogHeader>
+              <div className="space-y-4">
+                <p className="text-sm text-muted-foreground">{selected.desc}</p>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <ReportMetric label="Records" value="24" />
+                  <ReportMetric label="Current Month" value="June 2026" />
+                  <ReportMetric label="Status" value="Ready" />
+                </div>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Report Section</TableHead>
+                      <TableHead>Coverage</TableHead>
+                      <TableHead>Status</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    <TableRow>
+                      <TableCell>{selected.title}</TableCell>
+                      <TableCell>Current cooperative records</TableCell>
+                      <TableCell><Badge className="bg-emerald-100 text-emerald-800">Available</Badge></TableCell>
+                    </TableRow>
+                    <TableRow>
+                      <TableCell>Audit Trail</TableCell>
+                      <TableCell>Recent manager actions</TableCell>
+                      <TableCell><Badge className="bg-sky-100 text-sky-800">Synced</Badge></TableCell>
+                    </TableRow>
+                  </TableBody>
+                </Table>
+                <div className="flex justify-end gap-2">
+                  <Button variant="outline" onClick={() => setSelected(null)}>Close</Button>
+                  <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={() => toast.success(`${selected.title} opened`)}>Open Report</Button>
+                </div>
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+function ReportMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md border bg-slate-50 p-3">
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className="font-semibold text-slate-900">{value}</div>
     </div>
   );
 }
@@ -1133,3 +1243,4 @@ function Field({ label, value }: { label: string; value: string }) {
     </div>
   );
 }
+

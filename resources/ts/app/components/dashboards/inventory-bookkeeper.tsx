@@ -1003,11 +1003,12 @@ function RestockRequests({ user }: { user: User }) {
   const [openCreate, setOpenCreate] = useState(false);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
-
-  const requests = [
-    { id: "RR-2025-001", dateRequested: "May 20, 2025", material: "Urea Fertilizer", category: "Fertilizers and Soil Inputs", current: 40, requested: 100, reason: "Below minimum stock level", requestedBy: user.name, status: "Pending" },
-    { id: "RR-2025-002", dateRequested: "May 19, 2025", material: "Banana Bags (Blue)", category: "Packaging Materials", current: 80, requested: 150, reason: "High demand this month", requestedBy: user.name, status: "Approved" },
-  ];
+  const [viewing, setViewing] = useState<RestockRequest | null>(null);
+  const [cancelling, setCancelling] = useState<RestockRequest | null>(null);
+  const [requests, setRequests] = useState<RestockRequest[]>([
+    { id: "RR-2025-001", dateRequested: "May 20, 2025", material: "Urea Fertilizer", category: "Fertilizers and Soil Inputs", current: 40, requested: 100, reason: "Below minimum stock level", requestedBy: user.name, status: "Pending", priority: "Normal", notes: "" },
+    { id: "RR-2025-002", dateRequested: "May 19, 2025", material: "Banana Bags (Blue)", category: "Packaging Materials", current: 80, requested: 150, reason: "High demand this month", requestedBy: user.name, status: "Approved", priority: "Normal", notes: "" },
+  ]);
 
   const filtered = requests.filter((r) => {
     const q = search.toLowerCase();
@@ -1024,6 +1025,31 @@ function RestockRequests({ user }: { user: User }) {
       case "Completed": return "bg-sky-100 text-sky-800";
       default: return "bg-slate-100 text-slate-800";
     }
+  };
+
+  const handleCreate = (request: Omit<RestockRequest, "id" | "dateRequested" | "requestedBy" | "status">) => {
+    const nextNumber = requests.length > 0
+      ? Math.max(...requests.map((r) => Number(r.id.split("-").at(-1)) || 0)) + 1
+      : 1;
+
+    setRequests((current) => [
+      {
+        ...request,
+        id: `RR-2025-${String(nextNumber).padStart(3, "0")}`,
+        dateRequested: new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" }),
+        requestedBy: user.name,
+        status: "Pending",
+      },
+      ...current,
+    ]);
+    toast.success("Restock request submitted for approval");
+  };
+
+  const handleConfirmCancel = () => {
+    if (!cancelling) return;
+    setRequests((current) => current.filter((r) => r.id !== cancelling.id));
+    toast.success("Restock request cancelled");
+    setCancelling(null);
   };
 
   return (
@@ -1069,7 +1095,7 @@ function RestockRequests({ user }: { user: User }) {
                 <TableHead>Reason</TableHead>
                 <TableHead>Requested By</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead>Actions</TableHead>
+                <TableHead className="w-[88px] text-center">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -1091,13 +1117,13 @@ function RestockRequests({ user }: { user: User }) {
                     <TableCell className="text-sm">{r.reason}</TableCell>
                     <TableCell>{r.requestedBy}</TableCell>
                     <TableCell><Badge className={getStatusClass(r.status)}>{r.status}</Badge></TableCell>
-                    <TableCell>
-                      <div className="flex gap-1">
-                        <button className="p-1.5 rounded bg-sky-100 text-sky-700 hover:bg-sky-200" title="View">
+                    <TableCell className="w-[88px]">
+                      <div className="flex items-center justify-center gap-1 whitespace-nowrap">
+                        <button className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded bg-sky-100 text-sky-700 hover:bg-sky-200" title="View" aria-label={`View ${r.id}`} onClick={() => setViewing(r)}>
                           <Eye className="h-3.5 w-3.5" />
                         </button>
                         {r.status === "Pending" && (
-                          <button className="p-1.5 rounded bg-red-100 text-red-700 hover:bg-red-200" title="Cancel">
+                          <button className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded bg-red-100 text-red-700 hover:bg-red-200" title="Cancel" aria-label={`Cancel ${r.id}`} onClick={() => setCancelling(r)}>
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
                         )}
@@ -1120,13 +1146,83 @@ function RestockRequests({ user }: { user: User }) {
         </CardContent>
       </Card>
 
-      <CreateRestockRequestDialog open={openCreate} onOpenChange={setOpenCreate} user={user} />
+      <CreateRestockRequestDialog open={openCreate} onOpenChange={setOpenCreate} onCreate={handleCreate} />
+
+      <Dialog open={!!viewing} onOpenChange={(o) => !o && setViewing(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-emerald-700">
+              <Eye className="h-5 w-5" />Restock Request Details
+            </DialogTitle>
+            <DialogDescription>
+              Review the material request information before manager approval.
+            </DialogDescription>
+          </DialogHeader>
+          {viewing && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+              <Detail label="Request ID" value={viewing.id} />
+              <Detail label="Status" value={viewing.status} />
+              <Detail label="Date Requested" value={viewing.dateRequested} />
+              <Detail label="Requested By" value={viewing.requestedBy} />
+              <Detail label="Material" value={viewing.material} />
+              <Detail label="Category" value={viewing.category || "Not specified"} />
+              <Detail label="Current Quantity" value={String(viewing.current)} />
+              <Detail label="Requested Quantity" value={String(viewing.requested)} />
+              <Detail label="Priority" value={viewing.priority || "Normal"} />
+              <Detail className="sm:col-span-2" label="Reason" value={viewing.reason} />
+              {viewing.notes && <Detail className="sm:col-span-2" label="Notes" value={viewing.notes} />}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setViewing(null)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!cancelling} onOpenChange={(o) => !o && setCancelling(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-700">
+              <AlertTriangle className="h-5 w-5" />Cancel Restock Request
+            </DialogTitle>
+            <DialogDescription>
+              Are you sure you want to cancel <strong>{cancelling?.id}</strong> for <strong>{cancelling?.material}</strong>? This will remove the pending request from the list.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCancelling(null)}>Keep Request</Button>
+            <Button className="bg-red-600 hover:bg-red-700 text-white" onClick={handleConfirmCancel}>Cancel Request</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
 
-function CreateRestockRequestDialog({ open, onOpenChange, user }: { open: boolean; onOpenChange: (o: boolean) => void; user: User }) {
-  const today = new Date().toISOString().slice(0, 10);
+type RestockRequest = {
+  id: string;
+  dateRequested: string;
+  material: string;
+  category: string;
+  current: number;
+  requested: number;
+  reason: string;
+  requestedBy: string;
+  status: "Pending" | "Approved" | "Rejected" | "Completed";
+  priority?: string;
+  notes?: string;
+};
+
+function Detail({ label, value, className = "" }: { label: string; value: string; className?: string }) {
+  return (
+    <div className={`rounded-md border bg-slate-50 px-3 py-2 ${className}`}>
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className="font-medium text-slate-900">{value}</div>
+    </div>
+  );
+}
+
+function CreateRestockRequestDialog({ open, onOpenChange, onCreate }: { open: boolean; onOpenChange: (o: boolean) => void; onCreate: (request: Omit<RestockRequest, "id" | "dateRequested" | "requestedBy" | "status">) => void }) {
   const [material, setMaterial] = useState("");
   const [category, setCategory] = useState("");
   const [currentQty, setCurrentQty] = useState("");
@@ -1141,7 +1237,15 @@ function CreateRestockRequestDialog({ open, onOpenChange, user }: { open: boolea
       toast.error("Please fill in all required fields");
       return;
     }
-    toast.success("Restock request submitted for approval");
+    onCreate({
+      material,
+      category: CATEGORIES.find((c) => c.toLowerCase().startsWith(category)) || category || "Not specified",
+      current: Number(currentQty) || 0,
+      requested: Number(requestedQty) || 0,
+      reason,
+      priority: priority === "urgent" ? "Urgent" : "Normal",
+      notes,
+    });
     onOpenChange(false);
     // Reset form
     setMaterial("");
