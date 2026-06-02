@@ -1,0 +1,9 @@
+node_modules
+vendor
+.env
+.git
+.vscode
+.idea
+.DS_Store
+npm-debug.log
+storage/logs/*
