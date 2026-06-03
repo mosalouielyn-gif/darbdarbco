@@ -10,7 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from ".
 import {
   LayoutDashboard, Package, Boxes, Users, TrendingUp, Plus, Search,
   CheckCircle2, Edit, Trash2, ChevronLeft, ChevronRight, FileText,
-  Save, FileBarChart2, ClipboardList, ArrowRight, Calendar,
+  Save, FileBarChart2, ClipboardList, ArrowRight, Calendar, Loader2,
 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Label } from "../ui/label";
@@ -20,6 +20,18 @@ import {
   LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip, AreaChart, Area,
   PieChart, Pie, Cell, CartesianGrid,
 } from "recharts";
+import {
+  createProductionBoxRecord,
+  createHarvestRecord,
+  deleteHarvestRecord,
+  deleteProductionBoxRecord,
+  fetchProductionBoxRecords,
+  fetchHarvestRecords,
+  HarvestRecordInput,
+  ProductionBoxRecordInput,
+  updateProductionBoxRecord,
+  updateHarvestRecord,
+} from "../../lib/api";
 
 interface Props { user: User; onLogout: () => void }
 
@@ -72,7 +84,17 @@ const productionRecords = [
   { id: 1, date: "May 30, 2026", beneficiary: "SALUDEZ LISA", classA_big: 45, classA_small: 30, classA_cp: 12, classB_big: 20, classB_small: 15, classB_cp: 8, special: 5, defects_11: 2, defects_12: 3, defects_13: 1, defects_14: 0, rejects_11: 1, rejects_12: 2, rejects_13: 1, rejects_14: 1 },
 ];
 
-type HarvestRecord = typeof harvestRecords[number];
+interface HarvestRecord {
+  id: number;
+  date: string;
+  beneficiary: string;
+  harvester: string;
+  w11: number;
+  w12: number;
+  w13: number;
+  w14: number;
+  total: number;
+}
 type ProductionRecord = typeof productionRecords[number];
 
 export function ProductionClerkDashboard({ user, onLogout }: Props) {
@@ -87,7 +109,7 @@ export function ProductionClerkDashboard({ user, onLogout }: Props) {
   return (
     <DarbcoLayout user={user} onLogout={onLogout} navItems={NAV} active={active} onChange={setActive}>
       {active === "dashboard" && <Dashboard goToTab={goToTab} />}
-      {active === "production" && <ProductionRecords tab={prodTab} setTab={setProdTab} />}
+      {active === "production" && <ProductionRecords tab={prodTab} setTab={setProdTab} user={user} />}
     </DarbcoLayout>
   );
 }
@@ -235,15 +257,54 @@ function KpiCard({ icon, color, label, value, delta, onClick }: any) {
   );
 }
 
-function ProductionRecords({ tab, setTab }: { tab: string; setTab: (t: string) => void }) {
+function ProductionRecords({ tab, setTab, user }: { tab: string; setTab: (t: string) => void; user: User }) {
   const [openHarvest, setOpenHarvest] = useState(false);
   const [openProduction, setOpenProduction] = useState(false);
   const [harvestData, setHarvestData] = useState<HarvestRecord[]>(harvestRecords);
   const [productionData, setProductionData] = useState<ProductionRecord[]>(productionRecords);
   const [editingHarvest, setEditingHarvest] = useState<HarvestRecord | null>(null);
   const [editingProduction, setEditingProduction] = useState<ProductionRecord | null>(null);
+  const [deletingHarvest, setDeletingHarvest] = useState<HarvestRecord | null>(null);
+  const [deletingProduction, setDeletingProduction] = useState<ProductionRecord | null>(null);
+  const [loadingHarvest, setLoadingHarvest] = useState(false);
+  const [loadingProduction, setLoadingProduction] = useState(false);
+  const [deletingHarvestBusy, setDeletingHarvestBusy] = useState(false);
+  const [deletingProductionBusy, setDeletingProductionBusy] = useState(false);
 
   const buttonLabel = tab === "harvest" ? "New Harvest Record" : "New Production Record";
+
+  React.useEffect(() => {
+    let active = true;
+    setLoadingHarvest(true);
+    setLoadingProduction(true);
+
+    Promise.allSettled([fetchHarvestRecords(), fetchProductionBoxRecords()])
+      .then(([harvestResult, productionResult]) => {
+        if (!active) return;
+
+        if (harvestResult.status === "fulfilled") {
+          setHarvestData(harvestResult.value.map(mapHarvestRecord));
+        } else {
+          toast.error(harvestResult.reason instanceof Error ? harvestResult.reason.message : "Unable to load harvest records.");
+        }
+
+        if (productionResult.status === "fulfilled") {
+          setProductionData(productionResult.value.map(mapProductionRecord));
+        } else {
+          toast.error(productionResult.reason instanceof Error ? productionResult.reason.message : "Unable to load production box records.");
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setLoadingHarvest(false);
+          setLoadingProduction(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const onNew = () => {
     if (tab === "harvest") setOpenHarvest(true);
@@ -272,21 +333,17 @@ function ProductionRecords({ tab, setTab }: { tab: string; setTab: (t: string) =
         <TabsContent value="harvest">
           <HarvestRecordsPanel
             records={harvestData}
+            loading={loadingHarvest}
             onEdit={setEditingHarvest}
-            onDelete={(record) => {
-              setHarvestData((current) => current.filter((item) => item.id !== record.id));
-              toast.success("Harvest record deleted");
-            }}
+            onDelete={setDeletingHarvest}
           />
         </TabsContent>
         <TabsContent value="production">
           <ProductionBoxesPanel
             records={productionData}
+            loading={loadingProduction}
             onEdit={setEditingProduction}
-            onDelete={(record) => {
-              setProductionData((current) => current.filter((item) => item.id !== record.id));
-              toast.success("Production record deleted");
-            }}
+            onDelete={setDeletingProduction}
           />
         </TabsContent>
       </Tabs>
@@ -294,8 +351,9 @@ function ProductionRecords({ tab, setTab }: { tab: string; setTab: (t: string) =
       <HarvestDialog
         open={openHarvest}
         onOpenChange={setOpenHarvest}
-        onSave={(record) => {
-          setHarvestData((current) => [{ ...record, id: nextId(current) }, ...current]);
+        onSave={async (record) => {
+          const saved = await createHarvestRecord(toHarvestPayload(record, user));
+          setHarvestData((current) => [mapHarvestRecord(saved), ...current]);
           toast.success("Harvest record saved");
         }}
       />
@@ -303,8 +361,9 @@ function ProductionRecords({ tab, setTab }: { tab: string; setTab: (t: string) =
         open={!!editingHarvest}
         record={editingHarvest}
         onOpenChange={(open) => !open && setEditingHarvest(null)}
-        onSave={(record) => {
-          setHarvestData((current) => current.map((item) => item.id === record.id ? record : item));
+        onSave={async (record) => {
+          const saved = await updateHarvestRecord(record.id, toHarvestPayload(record, user));
+          setHarvestData((current) => current.map((item) => item.id === record.id ? mapHarvestRecord(saved) : item));
           setEditingHarvest(null);
           toast.success("Harvest record updated");
         }}
@@ -313,8 +372,9 @@ function ProductionRecords({ tab, setTab }: { tab: string; setTab: (t: string) =
         open={openProduction}
         onOpenChange={setOpenProduction}
         beneficiaryOptions={harvestData.map((record) => record.beneficiary)}
-        onSave={(record) => {
-          setProductionData((current) => [{ ...record, id: nextId(current) }, ...current]);
+        onSave={async (record) => {
+          const saved = await createProductionBoxRecord(toProductionPayload(record, user));
+          setProductionData((current) => [mapProductionRecord(saved), ...current]);
           toast.success("Production record saved");
         }}
       />
@@ -323,21 +383,126 @@ function ProductionRecords({ tab, setTab }: { tab: string; setTab: (t: string) =
         record={editingProduction}
         beneficiaryOptions={harvestData.map((record) => record.beneficiary)}
         onOpenChange={(open) => !open && setEditingProduction(null)}
-        onSave={(record) => {
-          setProductionData((current) => current.map((item) => item.id === record.id ? record : item));
+        onSave={async (record) => {
+          const saved = await updateProductionBoxRecord(record.id, toProductionPayload(record, user));
+          setProductionData((current) => current.map((item) => item.id === record.id ? mapProductionRecord(saved) : item));
           setEditingProduction(null);
           toast.success("Production record updated");
         }}
       />
+      <Dialog open={!!deletingHarvest} onOpenChange={(open) => !open && !deletingHarvestBusy && setDeletingHarvest(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-700">
+              <Trash2 className="h-5 w-5" />Delete Harvest Record
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Are you sure you want to delete this harvest record? This action cannot be undone.
+            </p>
+            {deletingHarvest && (
+              <div className="rounded-md border bg-slate-50 p-3 text-sm">
+                <div className="font-medium">{deletingHarvest.beneficiary}</div>
+                <div className="text-muted-foreground">{deletingHarvest.date} • {deletingHarvest.harvester}</div>
+              </div>
+            )}
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setDeletingHarvest(null)} disabled={deletingHarvestBusy}>Cancel</Button>
+              <Button
+                className="bg-red-600 hover:bg-red-700"
+                disabled={deletingHarvestBusy}
+                onClick={async () => {
+                  if (!deletingHarvest) return;
+                  setDeletingHarvestBusy(true);
+                  try {
+                    await deleteHarvestRecord(deletingHarvest.id, userAuditPayload(user));
+                    setHarvestData((current) => current.filter((item) => item.id !== deletingHarvest.id));
+                    setDeletingHarvest(null);
+                    toast.success("Harvest record deleted");
+                  } catch (error) {
+                    toast.error(error instanceof Error ? error.message : "Unable to delete harvest record.");
+                  } finally {
+                    setDeletingHarvestBusy(false);
+                  }
+                }}
+              >
+                {deletingHarvestBusy ? (
+                  <><Loader2 className="h-4 w-4 mr-1 animate-spin" />Deleting...</>
+                ) : (
+                  "Delete Record"
+                )}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={!!deletingProduction} onOpenChange={(open) => !open && !deletingProductionBusy && setDeletingProduction(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-700">
+              <Trash2 className="h-5 w-5" />Delete Production Record
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Are you sure you want to delete this production record? This action cannot be undone.
+            </p>
+            {deletingProduction && (
+              <div className="rounded-md border bg-slate-50 p-3 text-sm">
+                <div className="font-medium">{deletingProduction.beneficiary}</div>
+                <div className="text-muted-foreground">{deletingProduction.date}</div>
+              </div>
+            )}
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setDeletingProduction(null)} disabled={deletingProductionBusy}>Cancel</Button>
+              <Button
+                className="bg-red-600 hover:bg-red-700"
+                disabled={deletingProductionBusy}
+                onClick={async () => {
+                  if (!deletingProduction) return;
+                  setDeletingProductionBusy(true);
+                  try {
+                    await deleteProductionBoxRecord(deletingProduction.id, userAuditPayload(user));
+                    setProductionData((current) => current.filter((item) => item.id !== deletingProduction.id));
+                    setDeletingProduction(null);
+                    toast.success("Production record deleted");
+                  } catch (error) {
+                    toast.error(error instanceof Error ? error.message : "Unable to delete production record.");
+                  } finally {
+                    setDeletingProductionBusy(false);
+                  }
+                }}
+              >
+                {deletingProductionBusy ? (
+                  <><Loader2 className="h-4 w-4 mr-1 animate-spin" />Deleting...</>
+                ) : (
+                  "Delete Record"
+                )}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
 
-function HarvestRecordsPanel({ records, onEdit, onDelete }: {
+function HarvestRecordsPanel({ records, loading, onEdit, onDelete }: {
   records: HarvestRecord[];
+  loading: boolean;
   onEdit: (record: HarvestRecord) => void;
   onDelete: (record: HarvestRecord) => void;
 }) {
+  const [search, setSearch] = useState("");
+  const filteredRecords = records.filter((record) => {
+    const q = search.trim().toLowerCase();
+    if (!q) return true;
+    return record.beneficiary.toLowerCase().includes(q)
+      || record.harvester.toLowerCase().includes(q)
+      || record.date.toLowerCase().includes(q);
+  });
+
   return (
     <Card className="mt-3">
       <CardHeader className="flex-row items-center justify-between">
@@ -346,7 +511,7 @@ function HarvestRecordsPanel({ records, onEdit, onDelete }: {
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <TableToolbar />
+        <TableToolbar search={search} onSearch={setSearch} />
         <Table>
           <TableHeader>
             <TableRow>
@@ -362,7 +527,17 @@ function HarvestRecordsPanel({ records, onEdit, onDelete }: {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {records.map((r) => (
+            {loading && (
+              <TableRow>
+                <TableCell colSpan={9} className="text-center text-muted-foreground py-6">Loading harvest records...</TableCell>
+              </TableRow>
+            )}
+            {!loading && filteredRecords.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={9} className="text-center text-muted-foreground py-6">No harvest records found.</TableCell>
+              </TableRow>
+            )}
+            {!loading && filteredRecords.map((r) => (
               <TableRow key={r.id}>
                 <TableCell>{r.date}</TableCell>
                 <TableCell className="font-medium">{r.beneficiary}</TableCell>
@@ -379,17 +554,27 @@ function HarvestRecordsPanel({ records, onEdit, onDelete }: {
             ))}
           </TableBody>
         </Table>
-        <Pager />
+        <Pager count={filteredRecords.length} total={records.length} />
       </CardContent>
     </Card>
   );
 }
 
-function ProductionBoxesPanel({ records, onEdit, onDelete }: {
+function ProductionBoxesPanel({ records, loading, onEdit, onDelete }: {
   records: ProductionRecord[];
+  loading: boolean;
   onEdit: (record: ProductionRecord) => void;
   onDelete: (record: ProductionRecord) => void;
 }) {
+  const [search, setSearch] = useState("");
+  const filteredRecords = records.filter((record) => {
+    const q = search.trim().toLowerCase();
+    if (!q) return true;
+    return record.beneficiary.toLowerCase().includes(q)
+      || record.date.toLowerCase().includes(q)
+      || String(record.id).includes(q);
+  });
+
   return (
     <Card className="mt-3">
       <CardHeader className="flex-row items-center justify-between">
@@ -398,7 +583,7 @@ function ProductionBoxesPanel({ records, onEdit, onDelete }: {
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <TableToolbar />
+        <TableToolbar search={search} onSearch={setSearch} />
         <div className="overflow-x-auto">
           <Table>
             <TableHeader>
@@ -430,7 +615,17 @@ function ProductionBoxesPanel({ records, onEdit, onDelete }: {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {records.map((r) => (
+              {loading && (
+                <TableRow>
+                  <TableCell colSpan={19} className="text-center text-muted-foreground py-6">Loading production records...</TableCell>
+                </TableRow>
+              )}
+              {!loading && filteredRecords.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={19} className="text-center text-muted-foreground py-6">No production records found.</TableCell>
+                </TableRow>
+              )}
+              {!loading && filteredRecords.map((r) => (
                 <TableRow key={r.id}>
                   <TableCell>{r.date}</TableCell>
                   <TableCell className="font-medium">{r.beneficiary}</TableCell>
@@ -457,13 +652,13 @@ function ProductionBoxesPanel({ records, onEdit, onDelete }: {
             </TableBody>
           </Table>
         </div>
-        <Pager />
+        <Pager count={filteredRecords.length} total={records.length} />
       </CardContent>
     </Card>
   );
 }
 
-function TableToolbar() {
+function TableToolbar({ search, onSearch }: { search?: string; onSearch?: (value: string) => void }) {
   return (
     <div className="flex items-center justify-between mb-3">
       <div className="flex items-center gap-2 text-sm">
@@ -475,16 +670,20 @@ function TableToolbar() {
       </div>
       <div className="relative">
         <Search className="h-4 w-4 absolute left-2.5 top-2.5 text-muted-foreground" />
-        <Input placeholder="Search records..." className="pl-8 w-64 h-9" />
+        <Input
+          placeholder="Search records..."
+          className="pl-8 w-64 h-9"
+          {...(onSearch ? { value: search ?? "", onChange: (event: React.ChangeEvent<HTMLInputElement>) => onSearch(event.target.value) } : {})}
+        />
       </div>
     </div>
   );
 }
 
-function Pager() {
+function Pager({ count = 5, total = 5 }: { count?: number; total?: number }) {
   return (
     <div className="flex items-center justify-between mt-3">
-      <span className="text-muted-foreground text-sm">Showing 1 to 5 of 5 entries</span>
+      <span className="text-muted-foreground text-sm">Showing {count ? 1 : 0} to {count} of {total} entries</span>
       <div className="flex gap-1">
         <Button variant="outline" size="sm" className="h-8 w-8 p-0"><ChevronLeft className="h-4 w-4" /></Button>
         <Button size="sm" className="h-8 w-8 p-0 bg-emerald-600 hover:bg-emerald-700">1</Button>
@@ -492,6 +691,89 @@ function Pager() {
       </div>
     </div>
   );
+}
+
+function mapHarvestRecord(record: any): HarvestRecord {
+  const date = record.harvest_date || record.date || todayLocalDate();
+  return {
+    id: Number(record.id),
+    date,
+    beneficiary: record.beneficiary_name || record.beneficiary || "",
+    harvester: record.harvester_name || record.harvester || "",
+    w11: Number(record.buligs_11_weeks ?? record.w11 ?? 0),
+    w12: Number(record.buligs_12_weeks ?? record.w12 ?? 0),
+    w13: Number(record.buligs_13_weeks ?? record.w13 ?? 0),
+    w14: Number(record.buligs_14_weeks ?? record.w14 ?? 0),
+    total: Number(record.total_buligs ?? record.total ?? 0),
+  };
+}
+
+function mapProductionRecord(record: any): ProductionRecord {
+  const date = record.production_date || record.date || todayLocalDate();
+  return {
+    id: Number(record.id),
+    date,
+    beneficiary: record.beneficiary_name || record.beneficiary || "",
+    classA_big: Number(record.class_a_big_hands ?? record.classA_big ?? 0),
+    classA_small: Number(record.class_a_small_hands ?? record.classA_small ?? 0),
+    classA_cp: Number(record.class_a_cps ?? record.classA_cp ?? 0),
+    classB_big: Number(record.class_b_big_hands ?? record.classB_big ?? 0),
+    classB_small: Number(record.class_b_small_hands ?? record.classB_small ?? 0),
+    classB_cp: Number(record.class_b_cps ?? record.classB_cp ?? 0),
+    special: Number(record.special_product ?? record.special ?? 0),
+    defects_11: Number(record.defects_11_weeks ?? record.defects_11 ?? 0),
+    defects_12: Number(record.defects_12_weeks ?? record.defects_12 ?? 0),
+    defects_13: Number(record.defects_13_weeks ?? record.defects_13 ?? 0),
+    defects_14: Number(record.defects_14_weeks ?? record.defects_14 ?? 0),
+    rejects_11: Number(record.rejects_11_weeks ?? record.rejects_11 ?? 0),
+    rejects_12: Number(record.rejects_12_weeks ?? record.rejects_12 ?? 0),
+    rejects_13: Number(record.rejects_13_weeks ?? record.rejects_13 ?? 0),
+    rejects_14: Number(record.rejects_14_weeks ?? record.rejects_14 ?? 0),
+  };
+}
+
+function userAuditPayload(user: User) {
+  const id = Number(user.id);
+  return {
+    ...(Number.isFinite(id) ? { user_id: id } : {}),
+    user_name: user.name,
+  };
+}
+
+function toHarvestPayload(record: HarvestRecord, user: User): HarvestRecordInput {
+  return {
+    harvest_date: parseDateInput(record.date),
+    beneficiary_name: record.beneficiary.trim(),
+    harvester_name: record.harvester.trim(),
+    buligs_11_weeks: record.w11,
+    buligs_12_weeks: record.w12,
+    buligs_13_weeks: record.w13,
+    buligs_14_weeks: record.w14,
+    ...userAuditPayload(user),
+  };
+}
+
+function toProductionPayload(record: ProductionRecord, user: User): ProductionBoxRecordInput {
+  return {
+    production_date: parseDateInput(record.date),
+    beneficiary_name: record.beneficiary.trim(),
+    class_a_big_hands: record.classA_big,
+    class_a_small_hands: record.classA_small,
+    class_a_cps: record.classA_cp,
+    class_b_big_hands: record.classB_big,
+    class_b_small_hands: record.classB_small,
+    class_b_cps: record.classB_cp,
+    special_product: record.special,
+    defects_11_weeks: record.defects_11,
+    defects_12_weeks: record.defects_12,
+    defects_13_weeks: record.defects_13,
+    defects_14_weeks: record.defects_14,
+    rejects_11_weeks: record.rejects_11,
+    rejects_12_weeks: record.rejects_12,
+    rejects_13_weeks: record.rejects_13,
+    rejects_14_weeks: record.rejects_14,
+    ...userAuditPayload(user),
+  };
 }
 
 function ActionCell({ onEdit, onDelete }: { onEdit: () => void; onDelete: () => void }) {
@@ -529,18 +811,31 @@ function formatDateLabel(value: string) {
 }
 
 function parseDateInput(value: string) {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return new Date().toISOString().slice(0, 10);
-  return date.toISOString().slice(0, 10);
+  if (Number.isNaN(date.getTime())) return todayLocalDate();
+  return formatLocalDate(date);
+}
+
+function formatLocalDate(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function todayLocalDate() {
+  return formatLocalDate(new Date());
 }
 
 function HarvestDialog({ open, onOpenChange, record, onSave }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   record?: HarvestRecord | null;
-  onSave: (record: HarvestRecord) => void;
+  onSave: (record: HarvestRecord) => void | Promise<void>;
 }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayLocalDate();
   const [form, setForm] = useState<HarvestRecord>({
     id: record?.id ?? 0,
     date: record?.date ?? formatDateLabel(today),
@@ -552,9 +847,11 @@ function HarvestDialog({ open, onOpenChange, record, onSave }: {
     w14: record?.w14 ?? 0,
     total: record?.total ?? 0,
   });
+  const [isSaving, setIsSaving] = useState(false);
 
   React.useEffect(() => {
     if (!open) return;
+    setIsSaving(false);
     setForm({
       id: record?.id ?? 0,
       date: record?.date ?? formatDateLabel(today),
@@ -574,17 +871,25 @@ function HarvestDialog({ open, onOpenChange, record, onSave }: {
     setForm(next);
   };
 
-  const submit = () => {
+  const submit = async () => {
+    if (isSaving) return;
     if (!form.beneficiary.trim() || !form.harvester.trim()) {
       toast.error("Beneficiary and harvester are required");
       return;
     }
-    onSave(form);
-    onOpenChange(false);
+    try {
+      setIsSaving(true);
+      await onSave(form);
+      onOpenChange(false);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to save harvest record.");
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(nextOpen) => !isSaving && onOpenChange(nextOpen)}>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-emerald-700">
@@ -638,9 +943,13 @@ function HarvestDialog({ open, onOpenChange, record, onSave }: {
           </div>
 
           <div className="flex justify-end gap-2 pt-2">
-            <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={submit}>
-              <Save className="h-4 w-4 mr-1" />Save Record
+            <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isSaving}>Cancel</Button>
+            <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={submit} disabled={isSaving}>
+              {isSaving ? (
+                <><Loader2 className="h-4 w-4 mr-1 animate-spin" />Saving...</>
+              ) : (
+                <><Save className="h-4 w-4 mr-1" />Save Record</>
+              )}
             </Button>
           </div>
         </div>
@@ -654,9 +963,9 @@ function ProductionBoxesDialog({ open, onOpenChange, record, beneficiaryOptions,
   onOpenChange: (open: boolean) => void;
   record?: ProductionRecord | null;
   beneficiaryOptions: string[];
-  onSave: (record: ProductionRecord) => void;
+  onSave: (record: ProductionRecord) => void | Promise<void>;
 }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayLocalDate();
   const uniqueBeneficiaries = Array.from(new Set(beneficiaryOptions.filter(Boolean)));
   const blank = (): ProductionRecord => ({
     id: record?.id ?? 0,
@@ -679,27 +988,39 @@ function ProductionBoxesDialog({ open, onOpenChange, record, beneficiaryOptions,
     rejects_14: record?.rejects_14 ?? 0,
   });
   const [form, setForm] = useState<ProductionRecord>(blank);
+  const [isSaving, setIsSaving] = useState(false);
 
   React.useEffect(() => {
-    if (open) setForm(blank());
+    if (open) {
+      setIsSaving(false);
+      setForm(blank());
+    }
   }, [open, record]);
 
   const setNumber = (key: keyof ProductionRecord, value: string) => {
     setForm({ ...form, [key]: Math.max(0, Number(value) || 0) });
   };
 
-  const submit = () => {
+  const submit = async () => {
+    if (isSaving) return;
     if (!form.beneficiary.trim()) {
       toast.error("Beneficiary name is required");
       return;
     }
 
-    onSave(form);
-    onOpenChange(false);
+    try {
+      setIsSaving(true);
+      await onSave(form);
+      onOpenChange(false);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to save production record.");
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(nextOpen) => !isSaving && onOpenChange(nextOpen)}>
       <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-emerald-700">
@@ -824,9 +1145,13 @@ function ProductionBoxesDialog({ open, onOpenChange, record, beneficiaryOptions,
           </div>
 
           <div className="flex justify-end gap-2 pt-2">
-            <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={submit}>
-              <Save className="h-4 w-4 mr-1" />Save Record
+            <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isSaving}>Cancel</Button>
+            <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={submit} disabled={isSaving}>
+              {isSaving ? (
+                <><Loader2 className="h-4 w-4 mr-1 animate-spin" />Saving...</>
+              ) : (
+                <><Save className="h-4 w-4 mr-1" />Save Record</>
+              )}
             </Button>
           </div>
         </div>

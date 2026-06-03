@@ -13,6 +13,7 @@ class AppDataController extends Controller
     {
         return response()->json([
             'beneficiaries' => $this->beneficiaries(),
+            'harvestRecords' => $this->harvestRecords(),
             'productionRecords' => $this->productionRecords(),
             'dailyBoxes' => $this->dailyBoxes(),
             'inventoryItems' => $this->inventoryItems(),
@@ -22,6 +23,35 @@ class AppDataController extends Controller
             'auditLogs' => $this->auditLogs(),
             'users' => $this->users(),
         ]);
+    }
+
+    private function harvestRecords(): array
+    {
+        if (! Schema::hasTable('harvest_records')) {
+            return [];
+        }
+
+        return DB::table('harvest_records')
+            ->select([
+                'id',
+                'harvest_date',
+                'beneficiary_id',
+                'beneficiary_name',
+                'harvester_name',
+                'buligs_11_weeks',
+                'buligs_12_weeks',
+                'buligs_13_weeks',
+                'buligs_14_weeks',
+                'total_buligs',
+                'created_by',
+                'created_at',
+                'updated_at',
+            ])
+            ->orderByDesc('harvest_date')
+            ->orderByDesc('id')
+            ->limit(200)
+            ->get()
+            ->all();
     }
 
     private function beneficiaries(): array

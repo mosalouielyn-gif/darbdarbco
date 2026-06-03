@@ -589,7 +589,7 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, nextSlipNo
   const subtotalSpecial = specialBoxes * priceSpecial;
   const grossIncome = subtotalA + subtotalB + subtotalSpecial;
 
-  const totalCreditDeductions = creditMaterials.reduce((sum, c) => sum + c.amountCharged, 0);
+  const totalCreditDeductions = creditMaterials.reduce((sum, c) => sum + c.remaining, 0);
   const previousBalance = 0;
   const otherDeductionsTotal = otherDeductions.reduce((sum, d) => sum + (parseFloat(d.amount) || 0), 0);
   const totalDeductions = totalCreditDeductions + previousBalance + otherDeductionsTotal;
@@ -854,13 +854,15 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, nextSlipNo
                       <TableHead>Material Name</TableHead>
                       <TableHead className="text-right">Quantity</TableHead>
                       <TableHead>Unit</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead className="text-right">Remaining Balance</TableHead>
                       <TableHead className="text-right">Amount Charged</TableHead>
                     </TableRow>
                   </TableHeader>
                 <TableBody>
                   {creditMaterials.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={6} className="text-center text-muted-foreground h-24">
+                      <TableCell colSpan={8} className="text-center text-muted-foreground h-24">
                         No credit material deductions found for this beneficiary.
                       </TableCell>
                     </TableRow>
@@ -872,6 +874,14 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, nextSlipNo
                         <TableCell>{credit.materialName}</TableCell>
                         <TableCell className="text-right">{credit.quantity}</TableCell>
                         <TableCell>{credit.unit}</TableCell>
+                        <TableCell>
+                          <Badge className={
+                            credit.status === "Pending" ? "bg-amber-100 text-amber-800"
+                            : credit.status === "Partially Deducted" ? "bg-orange-100 text-orange-800"
+                            : "bg-emerald-100 text-emerald-800"
+                          }>{credit.status}</Badge>
+                        </TableCell>
+                        <TableCell className="text-right">â‚±{credit.remaining.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
                         <TableCell className="text-right">₱{credit.amountCharged.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
                       </TableRow>
                     ))
