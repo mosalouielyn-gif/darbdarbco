@@ -2,8 +2,15 @@
 
 use App\Http\Controllers\Api\AppDataController;
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\BorrowedMaterialController;
+use App\Http\Controllers\Api\CreditTransactionController;
 use App\Http\Controllers\Api\HarvestRecordController;
+use App\Http\Controllers\Api\InventoryItemController;
+use App\Http\Controllers\Api\PayrollSlipController;
 use App\Http\Controllers\Api\ProductionBoxRecordController;
+use App\Http\Controllers\Api\RestockRequestController;
+use App\Http\Controllers\Api\RolePermissionController;
+use App\Http\Controllers\Api\UserAccountController;
 use Illuminate\Support\Facades\Route;
 
 Route::post('/login', [AuthController::class, 'login']);
@@ -16,3 +23,29 @@ Route::get('/production-box-records', [ProductionBoxRecordController::class, 'in
 Route::post('/production-box-records', [ProductionBoxRecordController::class, 'store']);
 Route::put('/production-box-records/{id}', [ProductionBoxRecordController::class, 'update']);
 Route::delete('/production-box-records/{id}', [ProductionBoxRecordController::class, 'destroy']);
+Route::post('/users', [UserAccountController::class, 'store']);
+Route::put('/users/{id}', [UserAccountController::class, 'update']);
+Route::put('/users/{id}/status', [UserAccountController::class, 'status']);
+Route::post('/inventory-items', [InventoryItemController::class, 'store']);
+Route::put('/inventory-items/{id}', [InventoryItemController::class, 'update']);
+Route::put('/inventory-items/{id}/status', [InventoryItemController::class, 'status']);
+Route::post('/inventory-items/{id}/stock-in', [InventoryItemController::class, 'stockIn']);
+Route::post('/inventory-items/{id}/release', [InventoryItemController::class, 'release']);
+Route::post('/inventory-items/{id}/adjust', [InventoryItemController::class, 'adjust']);
+Route::post('/borrowed-materials/{id}/return', [BorrowedMaterialController::class, 'returnMaterial']);
+Route::post('/credit-transactions/{id}/deduct', [CreditTransactionController::class, 'deduct']);
+Route::post('/payroll-slips', [PayrollSlipController::class, 'store']);
+Route::put('/payroll-slips/{id}', [PayrollSlipController::class, 'update']);
+Route::put('/payroll-slips/{id}/submit', [PayrollSlipController::class, 'submit']);
+Route::put('/payroll-slips/{id}/validate', [PayrollSlipController::class, 'validateSlip']);
+Route::put('/payroll-slips/{id}/return', [PayrollSlipController::class, 'returnForCorrection']);
+Route::put('/payroll-slips/{id}/manager-approve', [PayrollSlipController::class, 'approveByManager']);
+Route::put('/payroll-slips/{id}/manager-return', [PayrollSlipController::class, 'returnByManager']);
+Route::delete('/payroll-slips/{id}', [PayrollSlipController::class, 'destroy']);
+Route::post('/restock-requests', [RestockRequestController::class, 'store']);
+Route::put('/restock-requests/{id}', [RestockRequestController::class, 'update']);
+Route::put('/restock-requests/{id}/cancel', [RestockRequestController::class, 'cancel']);
+Route::put('/restock-requests/{id}/approve', [RestockRequestController::class, 'approve']);
+Route::put('/restock-requests/{id}/return', [RestockRequestController::class, 'return']);
+Route::get('/role-permissions', [RolePermissionController::class, 'index']);
+Route::put('/role-permissions', [RolePermissionController::class, 'update']);

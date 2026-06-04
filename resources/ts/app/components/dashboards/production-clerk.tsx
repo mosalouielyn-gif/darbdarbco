@@ -7,10 +7,11 @@ import { Badge } from "../ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table";
+import { DateInput } from "../ui/date-input";
 import {
   LayoutDashboard, Package, Boxes, Users, TrendingUp, Plus, Search,
   CheckCircle2, Edit, Trash2, ChevronLeft, ChevronRight, FileText,
-  Save, FileBarChart2, ClipboardList, ArrowRight, Calendar, Loader2,
+  Save, FileBarChart2, ClipboardList, ArrowRight, Loader2,
 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Label } from "../ui/label";
@@ -32,6 +33,7 @@ import {
   updateProductionBoxRecord,
   updateHarvestRecord,
 } from "../../lib/api";
+import { usePersistentState } from "../../lib/use-persistent-state";
 
 interface Props { user: User; onLogout: () => void }
 
@@ -40,49 +42,16 @@ const NAV = [
   { id: "production", label: "Production", icon: <Package className="h-4 w-4" /> },
 ];
 
-const dailyProduction = [
-  { d: "Sep 1", v: 18 }, { d: "Sep 5", v: 22 }, { d: "Sep 10", v: 35 },
-  { d: "Sep 15", v: 42 }, { d: "Sep 20", v: 58 }, { d: "Sep 25", v: 73 }, { d: "Sep 30", v: 86 },
-];
-const monthlyOverview = [
-  { m: "Jan", v: 1100 }, { m: "Feb", v: 1320 }, { m: "Mar", v: 980 },
-  { m: "Apr", v: 1610 }, { m: "May", v: 1820 }, { m: "Jun", v: 2050 },
-  { m: "Jul", v: 2240 }, { m: "Aug", v: 1990 }, { m: "Sep", v: 2410 },
-];
-const breakdown = [
-  { name: "Class A", value: 612, color: "#10b981" },
-  { name: "Class B", value: 384, color: "#f59e0b" },
-  { name: "Special Product", value: 252, color: "#6366f1" },
-];
-const harvestBuligs = [
-  { age: "11 weeks", v: 1840, pct: 32 },
-  { age: "12 weeks", v: 2210, pct: 39 },
-  { age: "13 weeks", v: 1180, pct: 21 },
-  { age: "14 weeks", v: 460, pct: 8 },
-];
-const beneficiariesToday = [
-  { name: "SALUDEZ LISA", boxes: 86 },
-  { name: "Daniel Cruz", boxes: 64 },
-  { name: "Marco Castillo", boxes: 58 },
-  { name: "Jeanito Reyes", boxes: 47 },
-  { name: "Vivian Farms", boxes: 39 },
-];
-const quality = [
-  { age: "11 weeks", defects: 4, rejects: 2 },
-  { age: "12 weeks", defects: 6, rejects: 5 },
-  { age: "13 weeks", defects: 9, rejects: 7 },
-  { age: "14 weeks", defects: 12, rejects: 10 },
-];
+const dailyProduction: { d: string; v: number }[] = [];
+const monthlyOverview: { m: string; v: number }[] = [];
+const breakdown: { name: string; value: number; color: string }[] = [];
+const harvestBuligs: { age: string; v: number; pct: number }[] = [];
+const beneficiariesToday: { name: string; boxes: number }[] = [];
+const quality: { age: string; defects: number; rejects: number }[] = [];
 
-const harvestRecords = [
-  { id: 1, date: "May 30, 2026", beneficiary: "SALUDEZ LISA", harvester: "Daniel Cruz", w11: 4, w12: 6, w13: 5, w14: 1, total: 16 },
-  { id: 2, date: "May 30, 2026", beneficiary: "Marco Castillo", harvester: "Jeanito Reyes", w11: 2, w12: 4, w13: 3, w14: 0, total: 9 },
-  { id: 3, date: "May 30, 2026", beneficiary: "Manny Dela Cruz", harvester: "Vivian Farms", w11: 1, w12: 3, w13: 4, w14: 0, total: 8 },
-];
+const harvestRecords: HarvestRecord[] = [];
 
-const productionRecords = [
-  { id: 1, date: "May 30, 2026", beneficiary: "SALUDEZ LISA", classA_big: 45, classA_small: 30, classA_cp: 12, classB_big: 20, classB_small: 15, classB_cp: 8, special: 5, defects_11: 2, defects_12: 3, defects_13: 1, defects_14: 0, rejects_11: 1, rejects_12: 2, rejects_13: 1, rejects_14: 1 },
-];
+const productionRecords: ProductionRecord[] = [];
 
 interface HarvestRecord {
   id: number;
@@ -98,8 +67,8 @@ interface HarvestRecord {
 type ProductionRecord = typeof productionRecords[number];
 
 export function ProductionClerkDashboard({ user, onLogout }: Props) {
-  const [active, setActive] = useState("dashboard");
-  const [prodTab, setProdTab] = useState("harvest");
+  const [active, setActive] = usePersistentState("darbco.productionClerk.active", "dashboard");
+  const [prodTab, setProdTab] = usePersistentState("darbco.productionClerk.productionTab", "harvest");
 
   const goToTab = (tab: string) => {
     setProdTab(tab);
@@ -900,15 +869,7 @@ function HarvestDialog({ open, onOpenChange, record, onSave }: {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div className="space-y-1">
               <Label>Harvest Date <span className="text-red-500">*</span></Label>
-              <div className="relative">
-                <Input
-                  type="date"
-                  value={parseDateInput(form.date)}
-                  onChange={(e) => setForm({ ...form, date: formatDateLabel(e.target.value) })}
-                  className="h-9 w-full cursor-pointer bg-muted/50 px-3 pr-10 [color-scheme:light] [&::-webkit-calendar-picker-indicator]:absolute [&::-webkit-calendar-picker-indicator]:inset-0 [&::-webkit-calendar-picker-indicator]:h-full [&::-webkit-calendar-picker-indicator]:w-full [&::-webkit-calendar-picker-indicator]:cursor-pointer [&::-webkit-calendar-picker-indicator]:opacity-0"
-                />
-                <Calendar className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-700" />
-              </div>
+              <DateInput value={parseDateInput(form.date)} onChange={(e) => setForm({ ...form, date: formatDateLabel(e.target.value) })} />
             </div>
             <div className="space-y-1">
               <Label>Beneficiary Name <span className="text-red-500">*</span></Label>
@@ -1044,21 +1005,13 @@ function ProductionBoxesDialog({ open, onOpenChange, record, beneficiaryOptions,
             </div>
             <div className="space-y-1">
               <Label>Production Date <span className="text-red-500">*</span></Label>
-              <div className="relative">
-                <Input
-                  type="date"
-                  value={parseDateInput(form.date)}
-                  onChange={(e) => setForm({ ...form, date: formatDateLabel(e.target.value) })}
-                  className="h-9 w-full cursor-pointer bg-muted/50 px-3 pr-10 [color-scheme:light] [&::-webkit-calendar-picker-indicator]:absolute [&::-webkit-calendar-picker-indicator]:inset-0 [&::-webkit-calendar-picker-indicator]:h-full [&::-webkit-calendar-picker-indicator]:w-full [&::-webkit-calendar-picker-indicator]:cursor-pointer [&::-webkit-calendar-picker-indicator]:opacity-0"
-                />
-                <Calendar className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-700" />
-              </div>
+              <DateInput value={parseDateInput(form.date)} onChange={(e) => setForm({ ...form, date: formatDateLabel(e.target.value) })} />
             </div>
           </div>
 
           <div className="border rounded-md p-4 space-y-3 bg-emerald-50">
             <Label className="text-base text-emerald-700">Class A Boxes</Label>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div className="space-y-1">
                 <Label className="text-sm">Big Hands</Label>
                 <Input type="number" value={form.classA_big} onChange={(e) => setNumber("classA_big", e.target.value)} placeholder="0" className="bg-white" />
@@ -1076,7 +1029,7 @@ function ProductionBoxesDialog({ open, onOpenChange, record, beneficiaryOptions,
 
           <div className="border rounded-md p-4 space-y-3 bg-amber-50">
             <Label className="text-base text-amber-700">Class B Boxes</Label>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div className="space-y-1">
                 <Label className="text-sm">Big Hands</Label>
                 <Input type="number" value={form.classB_big} onChange={(e) => setNumber("classB_big", e.target.value)} placeholder="0" className="bg-white" />
@@ -1102,7 +1055,7 @@ function ProductionBoxesDialog({ open, onOpenChange, record, beneficiaryOptions,
 
           <div className="border rounded-md p-4 space-y-3 bg-orange-50">
             <Label className="text-base text-orange-700">Defects (by age)</Label>
-            <div className="grid grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <div className="space-y-1">
                 <Label className="text-sm">11 weeks</Label>
                 <Input type="number" value={form.defects_11} onChange={(e) => setNumber("defects_11", e.target.value)} placeholder="0" className="bg-white" />
@@ -1124,7 +1077,7 @@ function ProductionBoxesDialog({ open, onOpenChange, record, beneficiaryOptions,
 
           <div className="border rounded-md p-4 space-y-3 bg-red-50">
             <Label className="text-base text-red-700">Rejects (by age)</Label>
-            <div className="grid grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <div className="space-y-1">
                 <Label className="text-sm">11 weeks</Label>
                 <Input type="number" value={form.rejects_11} onChange={(e) => setNumber("rejects_11", e.target.value)} placeholder="0" className="bg-white" />

@@ -9,9 +9,10 @@ import { ManagerAdminDashboard } from "./components/dashboards/manager-admin";
 import { User } from "./components/types";
 import { AppData, fetchAppData } from "./lib/api";
 import { AppDataProvider } from "./lib/app-data-context";
+import { usePersistentState } from "./lib/use-persistent-state";
 
 export default function App() {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = usePersistentState<User | null>("darbco.currentUser", null);
   const [data, setData] = useState<AppData | null>(null);
   const [loadingData, setLoadingData] = useState(false);
   const [dataError, setDataError] = useState("");

@@ -7,10 +7,13 @@ export interface AppData {
   dailyBoxes: any[];
   inventoryItems: any[];
   stockTransactions: any[];
+  borrowedMaterials: any[];
+  creditTransactions: any[];
   restockRequests: any[];
   payrollSlips: any[];
   auditLogs: any[];
   users: any[];
+  rolePermissions: any[];
 }
 
 export interface HarvestRecordInput {
@@ -43,6 +46,35 @@ export interface ProductionBoxRecordInput {
   rejects_12_weeks: number;
   rejects_13_weeks: number;
   rejects_14_weeks: number;
+  user_id?: number;
+  user_name?: string;
+}
+
+export interface UserAccountInput {
+  name: string;
+  email: string;
+  username: string;
+  role: string;
+  active: boolean;
+  contact?: string;
+  remarks?: string;
+  password?: string;
+  admin_id?: number;
+  admin_name?: string;
+}
+
+export interface InventoryItemInput {
+  item_code: string;
+  name: string;
+  category: string;
+  unit: string;
+  on_hand: number;
+  minimum_stock?: number;
+  unit_cost: number;
+  stock_date: string;
+  expiry_date?: string | null;
+  supplier?: string;
+  notes?: string;
   user_id?: number;
   user_name?: string;
 }
@@ -193,4 +225,450 @@ export async function deleteProductionBoxRecord(id: number, user: { user_id?: nu
     const payload = await response.json().catch(() => ({}));
     throw new Error(payload?.message || "Unable to delete production box record.");
   }
+}
+
+export async function createUserAccount(account: UserAccountInput): Promise<any> {
+  const response = await fetch("/api/users", {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify(account),
+  });
+
+  const payload = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(payload?.message || "Unable to create user account.");
+  }
+
+  return payload;
+}
+
+export async function updateUserAccount(id: string | number, account: UserAccountInput): Promise<any> {
+  const response = await fetch(`/api/users/${id}`, {
+    method: "PUT",
+    headers: jsonHeaders,
+    body: JSON.stringify(account),
+  });
+
+  const payload = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(payload?.message || "Unable to update user account.");
+  }
+
+  return payload;
+}
+
+export async function updateUserAccountStatus(
+  id: string | number,
+  payload: { active: boolean; admin_id?: number; admin_name?: string; remarks?: string },
+): Promise<any> {
+  const response = await fetch(`/api/users/${id}/status`, {
+    method: "PUT",
+    headers: jsonHeaders,
+    body: JSON.stringify(payload),
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(data?.message || "Unable to update user account status.");
+  }
+
+  return data;
+}
+
+export async function createInventoryItem(item: InventoryItemInput): Promise<any> {
+  const response = await fetch("/api/inventory-items", {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify(item),
+  });
+
+  const payload = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(payload?.message || "Unable to save inventory item.");
+  }
+
+  return payload;
+}
+
+export async function updateInventoryItem(id: string | number, item: InventoryItemInput): Promise<any> {
+  const response = await fetch(`/api/inventory-items/${id}`, {
+    method: "PUT",
+    headers: jsonHeaders,
+    body: JSON.stringify(item),
+  });
+
+  const payload = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(payload?.message || "Unable to update inventory item.");
+  }
+
+  return payload;
+}
+
+export async function updateInventoryItemStatus(
+  id: string | number,
+  payload: { active: boolean; user_id?: number; user_name?: string; remarks?: string },
+): Promise<any> {
+  const response = await fetch(`/api/inventory-items/${id}/status`, {
+    method: "PUT",
+    headers: jsonHeaders,
+    body: JSON.stringify(payload),
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(data?.message || "Unable to update inventory item status.");
+  }
+
+  return data;
+}
+
+export async function stockInInventoryItem(
+  id: string | number,
+  payload: {
+    quantity: number;
+    unit_cost: number;
+    supplier: string;
+    reference_no: string;
+    stock_date: string;
+    expiry_date?: string | null;
+    notes?: string;
+    document_name?: string;
+    user_id?: number;
+    user_name?: string;
+  },
+): Promise<any> {
+  const response = await fetch(`/api/inventory-items/${id}/stock-in`, {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify(payload),
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(data?.message || "Unable to save stock-in transaction.");
+  }
+
+  return data;
+}
+
+export async function releaseInventoryItem(
+  id: string | number,
+  payload: {
+    quantity: number;
+    unit_cost: number;
+    reference_no: string;
+    stock_date: string;
+    release_type: string;
+    beneficiary?: string;
+    purpose?: string;
+    notes?: string;
+    expected_return_date?: string;
+    user_id?: number;
+    user_name?: string;
+  },
+): Promise<any> {
+  const response = await fetch(`/api/inventory-items/${id}/release`, {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify(payload),
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(data?.message || "Unable to save material release.");
+  }
+
+  return data;
+}
+
+export async function adjustInventoryItem(
+  id: string | number,
+  payload: {
+    corrected_quantity: number;
+    reference_no: string;
+    stock_date: string;
+    reason: string;
+    user_id?: number;
+    user_name?: string;
+  },
+): Promise<any> {
+  const response = await fetch(`/api/inventory-items/${id}/adjust`, {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify(payload),
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(data?.message || "Unable to save stock adjustment.");
+  }
+
+  return data;
+}
+
+export async function returnBorrowedMaterial(
+  id: string | number,
+  payload: {
+    quantity: number;
+    return_date: string;
+    user_id?: number;
+    user_name?: string;
+  },
+): Promise<any> {
+  const response = await fetch(`/api/borrowed-materials/${id}/return`, {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify(payload),
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(data?.message || "Unable to save borrowed material return.");
+  }
+
+  return data;
+}
+
+export async function deductCreditTransaction(
+  id: string | number,
+  payload: {
+    amount: number;
+    payroll_batch: string;
+    deduction_date?: string;
+    user_id?: number;
+    user_name?: string;
+  },
+): Promise<any> {
+  const response = await fetch(`/api/credit-transactions/${id}/deduct`, {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify(payload),
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(data?.message || "Unable to save credit deduction.");
+  }
+
+  return data;
+}
+
+export interface PayrollSlipInput {
+  slip_no?: string;
+  beneficiary_id: number;
+  production_record_id?: number;
+  payroll_period: string;
+  harvest_date?: string | null;
+  class_a_boxes?: number;
+  class_b_boxes?: number;
+  special_boxes?: number;
+  class_a_price?: number;
+  class_b_price?: number;
+  special_price?: number;
+  material_deduction?: number;
+  previous_balance?: number;
+  labor_cost?: number;
+  other_deductions?: number;
+  gross_amount: number;
+  credit_deduction?: number;
+  total_deductions: number;
+  net_amount: number;
+  validation_status: string;
+  approval_status?: string;
+  user_id?: number;
+  user_name?: string;
+}
+
+export async function createPayrollSlip(payload: PayrollSlipInput): Promise<any> {
+  const response = await fetch("/api/payroll-slips", {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify(payload),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data?.message || "Unable to save payroll slip.");
+  return data;
+}
+
+export async function updatePayrollSlip(id: string | number, payload: PayrollSlipInput): Promise<any> {
+  const response = await fetch(`/api/payroll-slips/${id}`, {
+    method: "PUT",
+    headers: jsonHeaders,
+    body: JSON.stringify(payload),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data?.message || "Unable to update payroll slip.");
+  return data;
+}
+
+export async function submitPayrollSlip(id: string | number, payload: { user_id?: number; user_name?: string }): Promise<any> {
+  const response = await fetch(`/api/payroll-slips/${id}/submit`, {
+    method: "PUT",
+    headers: jsonHeaders,
+    body: JSON.stringify(payload),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data?.message || "Unable to submit payroll slip.");
+  return data;
+}
+
+export async function deletePayrollSlip(id: string | number, payload: { user_id?: number; user_name?: string }): Promise<any> {
+  const response = await fetch(`/api/payroll-slips/${id}`, {
+    method: "DELETE",
+    headers: jsonHeaders,
+    body: JSON.stringify(payload),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data?.message || "Unable to delete payroll slip.");
+  return data;
+}
+
+export async function validatePayrollSlip(id: string | number, payload: { user_id?: number; user_name?: string; remarks?: string }): Promise<any> {
+  const response = await fetch(`/api/payroll-slips/${id}/validate`, {
+    method: "PUT",
+    headers: jsonHeaders,
+    body: JSON.stringify(payload),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data?.message || "Unable to validate payroll slip.");
+  return data;
+}
+
+export async function returnPayrollSlipForCorrection(
+  id: string | number,
+  payload: { category: string; reason: string; remarks?: string; user_id?: number; user_name?: string },
+): Promise<any> {
+  const response = await fetch(`/api/payroll-slips/${id}/return`, {
+    method: "PUT",
+    headers: jsonHeaders,
+    body: JSON.stringify(payload),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data?.message || "Unable to return payroll slip.");
+  return data;
+}
+
+export async function approvePayrollSlipByManager(
+  id: string | number,
+  payload: { user_id?: number; user_name?: string; remarks?: string },
+): Promise<any> {
+  const response = await fetch(`/api/payroll-slips/${id}/manager-approve`, {
+    method: "PUT",
+    headers: jsonHeaders,
+    body: JSON.stringify(payload),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data?.message || "Unable to approve payroll slip.");
+  return data;
+}
+
+export async function returnPayrollSlipByManager(
+  id: string | number,
+  payload: { reason: string; remarks?: string; user_id?: number; user_name?: string },
+): Promise<any> {
+  const response = await fetch(`/api/payroll-slips/${id}/manager-return`, {
+    method: "PUT",
+    headers: jsonHeaders,
+    body: JSON.stringify(payload),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data?.message || "Unable to return payroll slip.");
+  return data;
+}
+
+export async function updateRolePermissions(payload: {
+  role: string;
+  permissions: { permission: string; allowed: boolean }[];
+  user_id?: number;
+  user_name?: string;
+}): Promise<any[]> {
+  const response = await fetch("/api/role-permissions", {
+    method: "PUT",
+    headers: jsonHeaders,
+    body: JSON.stringify(payload),
+  });
+  const data = await response.json().catch(() => []);
+  if (!response.ok) throw new Error((data as any)?.message || "Unable to save role permissions.");
+  return data;
+}
+
+export interface RestockRequestInput {
+  item_id?: number;
+  material_name?: string;
+  category?: string;
+  current_quantity?: number;
+  minimum_stock?: number;
+  requested_quantity: number;
+  priority?: string;
+  reason: string;
+  notes?: string;
+  user_id?: number;
+  user_name?: string;
+}
+
+export async function createRestockRequest(payload: RestockRequestInput): Promise<any> {
+  const response = await fetch("/api/restock-requests", {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify(payload),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data?.message || "Unable to create restock request.");
+  return data;
+}
+
+export async function updateRestockRequest(id: string | number, payload: RestockRequestInput): Promise<any> {
+  const response = await fetch(`/api/restock-requests/${id}`, {
+    method: "PUT",
+    headers: jsonHeaders,
+    body: JSON.stringify(payload),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data?.message || "Unable to update restock request.");
+  return data;
+}
+
+export async function cancelRestockRequest(id: string | number, payload: { user_id?: number; user_name?: string }): Promise<any> {
+  const response = await fetch(`/api/restock-requests/${id}/cancel`, {
+    method: "PUT",
+    headers: jsonHeaders,
+    body: JSON.stringify(payload),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data?.message || "Unable to cancel restock request.");
+  return data;
+}
+
+export async function approveRestockRequest(id: string | number, payload: { user_id?: number; user_name?: string; review_notes?: string }): Promise<any> {
+  const response = await fetch(`/api/restock-requests/${id}/approve`, {
+    method: "PUT",
+    headers: jsonHeaders,
+    body: JSON.stringify(payload),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data?.message || "Unable to approve restock request.");
+  return data;
+}
+
+export async function returnRestockRequest(id: string | number, payload: { reason: string; user_id?: number; user_name?: string }): Promise<any> {
+  const response = await fetch(`/api/restock-requests/${id}/return`, {
+    method: "PUT",
+    headers: jsonHeaders,
+    body: JSON.stringify(payload),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data?.message || "Unable to return restock request.");
+  return data;
 }

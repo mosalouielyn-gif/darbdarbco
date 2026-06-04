@@ -1,424 +1,376 @@
-# DARBCO Functionality Checklist
+# DARBCO Code-Scanned Functionality Checklist
 
-Source: `D:\Downloads\DARBCO detailed functionality.pdf`
+Source document: `D:\Downloads\DARBCO detailed functionality.pdf`
 
-Use this as the working implementation and verification checklist. Items can be marked as done once the UI, backend/API behavior, database persistence, role rules, and tests are all covered.
+Code scan date: 2026-06-03
 
-Checked items below are features currently present in the codebase. Many checked dashboard/workflow items are implemented as React UI with local demo state, not yet persisted through backend endpoints unless the database/API section also says so.
+Legend:
 
-## 1. Project Health And Environment
+- `[x]` Implemented with backend/API/database coverage or confirmed application shell behavior.
+- `[ ]` Still needed, or currently only mocked/in-memory in React.
+- `UI present` means the screen/workflow exists but does not yet persist through a dedicated backend endpoint.
 
-- [x] Ensure project runs with PHP 8.3 or newer.
-- [ ] Fix local PATH so Laravel commands use Laragon PHP 8.3 instead of XAMPP PHP 8.2.
-- [ ] Keep `npm.cmd` or PowerShell execution policy workaround documented for frontend commands.
-- [x] Confirm `npm.cmd run build` passes after each frontend milestone.
-- [x] Confirm Laravel feature tests pass with PHP 8.3 after each backend milestone.
+## Scan Summary
+
+- [x] Laravel + React/Vite app shell exists.
+- [x] Login API exists at `POST /api/login`.
+- [x] Role dashboard routing exists for Production Clerk, Inventory Bookkeeper, Payroll Personnel, Finance Officer, and Manager/Admin.
+- [x] App-wide read API exists at `GET /api/app-data`.
+- [x] Production harvest CRUD API exists.
+- [x] Production box CRUD API exists.
+- [x] Production create/update/delete audit logging exists.
+- [ ] Inventory, payroll, finance validation, manager approval, restock review, and user management workflows need write APIs and persistence.
+- [ ] Backend authorization is not enforced on API routes yet.
+- [ ] Manager and Admin are combined into one `manager_admin` role; the PDF describes separate Manager and Admin responsibilities.
+- [ ] Most non-production dashboard actions use seeded or component state only.
+
+## 1. Environment And Project Health
+
+- [x] Confirm project requires PHP `^8.3` in `composer.json`.
+- [x] Confirm frontend build script exists: `npm run build`.
+- [x] Confirm Laravel test script exists: `composer test`.
+- [x] Confirm feature API tests exist for login, app-data, harvest CRUD, production box CRUD, and audit creation.
 - [ ] Add end-to-end smoke test for login and role dashboard routing.
+- [ ] Add browser test for each role dashboard landing screen.
+- [ ] Add test coverage for API authorization by role.
+- [ ] Add test coverage for numeric computations across production, inventory, payroll, deductions, validation, and approval.
 
-## 2. Authentication And Role-Based Access
+## 2. Authentication And Access Control
 
-- [x] Support login using authorized personnel accounts.
-- [x] Reject invalid credentials with a clear error message.
-- [x] Prevent inactive users from logging in.
-- [x] Record successful login timestamp.
-- [ ] Add audit record for successful login.
-- [ ] Add audit record for failed login attempt.
-- [ ] Add logout action and audit record.
-- [x] Restrict Production Clerk to production records and production monitoring.
-- [x] Restrict Inventory Bookkeeper to inventory items, releases, credit transactions, stock history, and restock requests.
-- [x] Restrict Payroll Personnel to beneficiary payroll preparation and payroll records.
-- [x] Restrict Finance Officer to payroll review, validation, and validation history.
-- [x] Restrict Manager to payroll approval, restock approval, reports, and monitoring.
-- [x] Restrict Admin to user management, account access, and audit trail.
+- [x] Validate login email and password.
+- [x] Reject invalid credentials.
+- [x] Reject inactive users.
+- [x] Store successful `last_login_at`.
+- [x] Route logged-in users to role-specific dashboards.
+- [ ] Add logout API/audit event.
+- [ ] Add successful login audit event.
+- [ ] Add failed login audit event.
+- [ ] Add session/token based authentication instead of only client-side persisted user state.
+- [ ] Protect API endpoints from unauthenticated access.
+- [ ] Enforce role permissions on every API write action.
+- [ ] Split Manager and Admin into separate roles if the final scope requires both.
 
 ## 3. Production Clerk - Harvest Records
 
-- [x] Add Harvest Records tab.
-- [x] Add Production Boxes tab.
-- [x] Allow switching between Harvest Records and Production Boxes without leaving the module.
-- [x] Add New Harvest Record form.
+- [x] UI tab exists for Harvest Records.
+- [x] Add harvest record form exists.
 - [x] Capture harvest date.
 - [x] Capture beneficiary name.
-- [x] Capture harvester or carrero name.
-- [x] Capture 11-week buligs.
-- [x] Capture 12-week buligs.
-- [x] Capture 13-week buligs.
-- [x] Capture 14-week buligs.
-- [x] Automatically compute total buligs from all maturity levels.
-- [x] Save harvest records to the database.
-- [x] Display harvest records in a table.
-- [x] Show harvest date, beneficiary, harvester, maturity-level counts, and total buligs.
-- [x] Edit existing harvest records.
-- [x] Recalculate total buligs immediately after edit.
-- [x] Delete incorrect or duplicate harvest records.
-- [x] Show delete confirmation before removing harvest records.
-- [x] Search harvest records by beneficiary, harvester, or harvest date.
-- [x] Add show-entries selector for 10, 25, and 50 rows.
-- [x] Add pagination for harvest records.
-- [x] Add audit records for create, update, and delete.
+- [x] Capture harvester/carrero name.
+- [x] Capture 11, 12, 13, and 14 week buligs.
+- [x] Auto-compute total buligs in UI.
+- [x] Auto-compute total buligs in backend.
+- [x] Save harvest record to database.
+- [x] Fetch harvest records from API.
+- [x] Edit harvest record through API.
+- [x] Delete harvest record through API.
+- [x] Show delete confirmation.
+- [x] Search harvest records in UI.
+- [x] Show entries selector in UI.
+- [x] Pagination controls present in UI.
+- [x] Audit create/update/delete actions.
+- [ ] Link harvest records to beneficiary IDs, not only beneficiary names.
+- [ ] Add backend search, filtering, and pagination instead of client-side/table-only behavior.
+- [ ] Add validation for impossible dates or all-zero harvest entries if required by business rules.
 
 ## 4. Production Clerk - Production Boxes
 
-- [x] Add New Production Record form.
+- [x] UI tab exists for Production Boxes.
+- [x] Add production record form exists.
 - [x] Capture production date.
-- [x] Link or select beneficiary from existing harvest records when possible.
-- [x] Capture Class A Big Hands quantity.
-- [x] Capture Class A Small Hands quantity.
-- [x] Capture Class A CPs quantity.
-- [x] Capture Class B Big Hands quantity.
-- [x] Capture Class B Small Hands quantity.
-- [x] Capture Class B CPs quantity.
-- [x] Capture Special Product quantity.
+- [x] Capture beneficiary name.
+- [x] Beneficiary dropdown can be populated from existing harvest record names.
+- [x] Capture Class A Big Hands, Small Hands, and CPs.
+- [x] Capture Class B Big Hands, Small Hands, and CPs.
+- [x] Capture Special Product.
 - [x] Capture defects for 11, 12, 13, and 14 weeks.
 - [x] Capture rejects for 11, 12, 13, and 14 weeks.
-- [x] Save production box records to the database.
-- [x] Display saved production records in a table.
-- [x] Show product classification, defects, rejects, and actions in the table.
-- [x] Edit existing production records.
-- [x] Delete incorrect or duplicate production records with confirmation.
-- [x] Search production records by beneficiary or production entry.
-- [x] Add show-entries selector for 10, 25, and 50 rows.
-- [x] Add pagination for production records.
-- [x] Add audit records for create, update, and delete.
+- [x] Save production box record to database.
+- [x] Fetch production box records from API.
+- [x] Edit production box record through API.
+- [x] Delete production box record through API.
+- [x] Show delete confirmation.
+- [x] Search production records in UI.
+- [x] Show entries selector in UI.
+- [x] Pagination controls present in UI.
+- [x] Audit create/update/delete actions.
+- [ ] Persist beneficiary linkage to harvest/beneficiary ID.
+- [ ] Add backend search, filtering, and pagination.
+- [ ] Add backend checks to prevent production output from being linked to the wrong harvest entry.
 
-## 5. Inventory Bookkeeper - Dashboard
+## 5. Inventory Bookkeeper - Inventory Dashboard
 
-- [x] Display total inventory items.
-- [x] Display low-stock item count.
-- [x] Display out-of-stock item count.
-- [x] Display recent stock-in transactions.
-- [x] Display recent material releases.
-- [x] Display pending credit transactions.
-- [x] Display restock requests.
-- [x] Auto-update dashboard after stock-in.
-- [x] Auto-update dashboard after stock-out or material release.
-- [x] Auto-update dashboard after beneficiary credit transaction.
-- [x] Auto-update dashboard after borrowed material return.
-- [x] Auto-update dashboard after stock adjustment.
+- [ ] Persist inventory dashboard actions through backend APIs. UI present.
+- [ ] Load inventory items from database into the Inventory Bookkeeper dashboard.
+- [ ] Display total inventory items from persisted data.
+- [ ] Display low-stock item count from persisted data.
+- [ ] Display out-of-stock item count from persisted data.
+- [ ] Display recent stock-in transactions from persisted data.
+- [ ] Display recent material releases from persisted data.
+- [ ] Display pending credit transactions from persisted data.
+- [ ] Display restock requests from persisted data.
+- [ ] Auto-update dashboard after persisted stock-in.
+- [ ] Auto-update dashboard after persisted release/stock-out.
+- [ ] Auto-update dashboard after persisted credit transaction.
+- [ ] Auto-update dashboard after persisted borrowed material return.
+- [ ] Auto-update dashboard after persisted stock adjustment.
 
-## 6. Inventory Bookkeeper - Inventory Items
+## 6. Inventory Items
 
-- [x] Add Inventory Items page.
-- [x] Add new inventory item.
-- [x] View complete item details.
-- [x] Edit item basic information.
-- [x] Search by material name or material ID.
-- [x] Filter by category.
-- [x] Filter by stock status.
-- [x] Sort by quantity, category, material name, and date updated.
-- [x] Track material ID.
-- [x] Track material name.
-- [x] Track category.
-- [x] Track unit of measurement.
-- [x] Track current quantity.
-- [x] Track minimum stock level.
-- [x] Track unit price.
-- [x] Track supplier.
-- [x] Track expiration date where applicable.
-- [x] Generate stock status automatically.
-- [x] Track date created and last updated.
-- [x] Support categories for fertilizers and soil inputs.
-- [x] Support categories for chemicals and crop protection materials.
-- [x] Support categories for farm materials.
-- [x] Support categories for packaging materials.
-- [x] Support categories for other supplies.
-- [x] Record initial quantity as a Stock-In transaction after item creation.
+- [ ] Add inventory item API.
+- [ ] Update inventory item API.
+- [ ] View inventory item detail API or reliable read mapping.
+- [ ] Deactivate/delete inventory item API.
+- [ ] Persist material ID.
+- [ ] Persist material name.
+- [ ] Persist category.
+- [ ] Persist unit of measurement.
+- [ ] Persist current quantity.
+- [ ] Persist minimum stock level.
+- [ ] Persist unit price.
+- [ ] Persist supplier.
+- [ ] Persist expiration date.
+- [ ] Persist stock status or derive it consistently in backend.
+- [ ] Persist date created and last updated.
+- [ ] Record initial quantity as a stock-in transaction.
+- [ ] Add backend search/filter/sort for inventory item list.
+- [ ] Add backend audit records for inventory item create/update/deactivate.
 
-## 7. Inventory Bookkeeper - Stock-In
+## 7. Stock-In Transactions
 
-- [x] Add Stock-In form.
-- [x] Select inventory item.
-- [x] Capture quantity added.
-- [x] Capture unit price.
-- [x] Automatically compute total amount.
-- [x] Capture supplier.
-- [x] Capture receipt or delivery reference number.
-- [x] Capture date received.
-- [x] Capture expiration date where applicable.
-- [x] Capture remarks.
-- [x] Support optional supporting document upload.
-- [x] Add quantity to current inventory balance.
-- [x] Update stock status after stock-in.
-- [x] Record stock-in in Stock History.
-- [x] Show transaction under Recent Stock-In Transactions.
-- [x] Add audit record for stock-in.
+- [ ] Add stock-in API.
+- [ ] Select inventory item from persisted item list.
+- [ ] Capture quantity added.
+- [ ] Capture unit price.
+- [ ] Compute total amount in backend.
+- [ ] Capture supplier.
+- [ ] Capture receipt/delivery/reference number.
+- [ ] Capture date received.
+- [ ] Capture expiration date.
+- [ ] Capture remarks.
+- [ ] Support supporting document upload/storage.
+- [ ] Add quantity to inventory balance transactionally.
+- [ ] Record stock-in in stock history.
+- [ ] Add audit record for stock-in.
+- [ ] Add tests for stock-in balance updates.
 
-## 8. Inventory Bookkeeper - Material Release And Stock-Out
+## 8. Material Release And Stock-Out
 
-- [x] Add Release Material form.
-- [x] Select inventory item.
-- [x] Capture quantity released.
-- [x] Support Direct Release transaction type.
-- [x] Support Beneficiary Credit transaction type.
-- [x] Support Borrowed Material transaction type.
-- [x] Support Internal Use transaction type.
-- [x] Support Stock Adjustment transaction type.
-- [x] Require beneficiary when transaction type is Beneficiary Credit.
-- [x] Capture unit price.
-- [x] Automatically compute total amount.
-- [x] Capture date released.
-- [x] Capture release slip number.
-- [x] Capture remarks or reason.
-- [x] Prevent release when requested quantity exceeds available stock.
-- [x] Deduct released quantity from available stock.
-- [x] Update stock status after release.
-- [x] Record release in Stock History.
-- [x] Add audit record for material release.
+- [ ] Add material release API.
+- [ ] Support Direct Release.
+- [ ] Support Beneficiary Credit.
+- [ ] Support Borrowed Material.
+- [ ] Support Internal Use.
+- [ ] Support Stock Adjustment.
+- [ ] Require beneficiary for Beneficiary Credit.
+- [ ] Capture quantity released.
+- [ ] Capture unit price.
+- [ ] Compute total amount in backend.
+- [ ] Capture date released.
+- [ ] Capture release slip number.
+- [ ] Capture remarks/reason.
+- [ ] Prevent release quantity greater than available stock.
+- [ ] Deduct quantity from inventory balance transactionally.
+- [ ] Record release in stock history.
+- [ ] Add audit record for release.
+- [ ] Add tests for stock-out balance updates and over-release prevention.
 
-## 9. Inventory Bookkeeper - Beneficiary Credit Transactions
+## 9. Beneficiary Material Credits
 
-- [x] Automatically create credit record when release type is Beneficiary Credit.
-- [x] Link credit transaction to beneficiary account.
-- [x] Track credit transaction ID.
-- [x] Track beneficiary name and ID.
-- [x] Track material name.
-- [x] Track quantity.
-- [x] Track unit price.
-- [x] Automatically compute total credit amount.
-- [x] Track date released.
-- [x] Track release slip number.
-- [x] Track amount deducted through payroll.
-- [x] Automatically compute remaining balance.
-- [x] Set credit status to Pending when no deduction has been applied.
-- [x] Set credit status to Partially Deducted when partial deduction has been applied.
-- [x] Set credit status to Fully Deducted when remaining balance is zero.
-- [x] Show applicable unpaid credits in Payroll Personnel module.
-- [x] Update balance and status after payroll deduction.
-- [x] Preserve credit transaction history.
+- [ ] Add material credit transaction table/model or confirm final schema.
+- [ ] Add credit transaction API.
+- [ ] Create credit automatically when release type is Beneficiary Credit.
+- [ ] Link credit to beneficiary account.
+- [ ] Track credit transaction ID.
+- [ ] Track material, quantity, unit price, total amount, release slip, and release date.
+- [ ] Track amount deducted through payroll.
+- [ ] Compute remaining balance.
+- [ ] Support Pending, Partially Deducted, and Fully Deducted statuses.
+- [ ] Expose unpaid credits to Payroll Personnel workflow.
+- [ ] Update credit balance/status after payroll deduction.
+- [ ] Preserve credit history.
+- [ ] Add tests for deduction and remaining balance behavior.
 
-## 10. Inventory Bookkeeper - Borrowed Materials
+## 10. Borrowed Materials
 
-- [x] Add borrowed material record.
-- [x] Track borrower or beneficiary name.
-- [x] Track material name.
-- [x] Track quantity borrowed.
-- [x] Track date borrowed.
-- [x] Track expected return date.
-- [x] Track actual return date.
-- [x] Track quantity returned.
-- [x] Track remaining quantity to return.
-- [x] Support Borrowed status.
-- [x] Support Partially Returned status.
-- [x] Support Returned status.
-- [x] Support Overdue status.
-- [x] Add returned quantity back to available stock.
-- [x] Record return transaction in Stock History.
+- [ ] Add borrowed material table/model or confirm final schema.
+- [ ] Add borrowed material API.
+- [ ] Track borrower/beneficiary.
+- [ ] Track material.
+- [ ] Track quantity borrowed.
+- [ ] Track date borrowed.
+- [ ] Track expected return date.
+- [ ] Track actual return date.
+- [ ] Track quantity returned and remaining quantity.
+- [ ] Support Borrowed, Partially Returned, Returned, and Overdue statuses.
+- [ ] Add returned quantity back to available stock.
+- [ ] Record return transaction in stock history.
+- [ ] Add tests for partial/full returns.
 
-## 11. Inventory Bookkeeper - Stock Status, History, And Adjustment
+## 11. Stock History And Adjustments
 
-- [x] Set status to In Stock when current quantity is above minimum stock level.
-- [x] Set status to Low Stock when current quantity is equal to or below minimum but above zero.
-- [x] Set status to Out of Stock when current quantity is zero.
-- [x] Clearly display low-stock and out-of-stock items.
-- [x] Add Stock History page.
-- [x] Track transaction ID.
-- [x] Track material name.
-- [x] Track transaction type.
-- [x] Track quantity added.
-- [x] Track quantity deducted.
-- [x] Track previous balance.
-- [x] Track updated balance.
-- [x] Track date and time.
-- [x] Track Inventory Bookkeeper account.
-- [x] Track reference number.
-- [x] Track remarks.
-- [x] Prevent deleting stock history records.
-- [x] Add Stock Adjustment form.
-- [x] Capture system quantity and corrected quantity.
-- [x] Compute quantity difference.
-- [x] Support Increase and Decrease adjustment types.
-- [x] Require reason for adjustment.
-- [x] Record adjustment in Stock History.
+- [ ] Add stock history API.
+- [ ] Prevent stock history editing/deletion at backend level.
+- [ ] Track transaction ID.
+- [ ] Track material name/ID.
+- [ ] Track transaction type.
+- [ ] Track quantity added and deducted.
+- [ ] Track previous and updated balances.
+- [ ] Track date/time.
+- [ ] Track Inventory Bookkeeper account.
+- [ ] Track reference number.
+- [ ] Track remarks.
+- [ ] Add stock adjustment API.
+- [ ] Capture system quantity and corrected quantity.
+- [ ] Compute adjustment difference.
+- [ ] Support increase/decrease adjustment types.
+- [ ] Require adjustment reason.
+- [ ] Record adjustment in stock history and audit logs.
 
-## 12. Inventory Bookkeeper - Restock Requests
+## 12. Restock Requests
 
-- [x] Create restock request for low-stock or out-of-stock materials.
-- [x] Track request ID.
-- [x] Track material name.
-- [x] Track current quantity.
-- [x] Track minimum stock level.
-- [x] Track requested quantity.
-- [x] Track reason.
-- [x] Track date requested.
-- [x] Track requested by account.
-- [x] Track request status: Pending, Approved, Rejected, or Completed.
-- [ ] Allow Inventory Bookkeeper to edit request while Pending.
-- [ ] Lock restock request after Manager action.
-- [x] Add search, filter, and sort for restock requests.
+- [ ] Add restock request create/update API.
+- [ ] Add restock request review API for Manager approval/rejection.
+- [ ] Track request ID.
+- [ ] Track material name/ID.
+- [ ] Track current quantity.
+- [ ] Track minimum stock level.
+- [ ] Track requested quantity.
+- [ ] Track reason.
+- [ ] Track requested by account.
+- [ ] Track requested date.
+- [ ] Support Pending, Approved, Rejected, and Completed statuses.
+- [ ] Allow Inventory Bookkeeper edit while Pending.
+- [ ] Lock request after Manager action.
+- [ ] Ensure approval does not increase stock automatically.
+- [ ] Add audit/history records for request, approval, rejection, and completion.
 
-## 13. Payroll Personnel - Preparation And Computation
+## 13. Payroll Personnel - Preparation
 
-- [x] Add beneficiary selection for payroll period.
-- [x] Retrieve beneficiary production data automatically.
-- [x] Display beneficiary name and ID.
-- [x] Display harvest date.
-- [x] Display payroll period.
-- [x] Display production record ID.
-- [x] Display recorded box quantities for each product type.
-- [x] Prevent Payroll Personnel from editing production box quantities.
-- [ ] Allow price per box entry for Class A Big Hands.
-- [ ] Allow price per box entry for Class A Small Hands.
-- [ ] Allow price per box entry for Class A CPs.
-- [ ] Allow price per box entry for Class B Big Hands.
-- [ ] Allow price per box entry for Class B Small Hands.
-- [ ] Allow price per box entry for Class B CPs.
-- [x] Allow price per box entry for Special Product.
-- [x] Automatically compute subtotal per product type.
-- [x] Automatically compute gross income.
-- [x] Retrieve unpaid or applicable beneficiary credit deductions.
-- [x] Display material name, quantity, unit price, total amount, date released, reference number, deduction status, and amount to deduct.
-- [x] Automatically compute total deductions.
-- [x] Automatically compute net income.
-- [x] Recalculate subtotals, gross income, deductions, and net income when prices or deductions change.
+- [ ] Add payroll slip create/update/delete/submit APIs.
+- [ ] Retrieve beneficiary production data from persisted production records.
+- [ ] Retrieve unpaid beneficiary material credits from persisted credit records.
+- [ ] Select beneficiary and payroll period.
+- [ ] Display beneficiary name and ID.
+- [ ] Display harvest date and production record ID.
+- [ ] Display readonly production box quantities.
+- [ ] Capture price per box for all product types.
+- [ ] Compute product subtotals.
+- [ ] Compute gross income.
+- [ ] Display material credit deductions.
+- [ ] Capture authorized/current deduction amount.
+- [ ] Compute total deductions.
+- [ ] Compute net income.
+- [ ] Save payroll as Draft.
+- [ ] Submit payroll as Ready/Submitted for Validation.
+- [ ] Lock submitted payroll from editing.
+- [ ] Allow edit after Returned for Correction.
+- [ ] Generate payroll slip number in backend.
+- [ ] Add payroll audit records for create, edit, submit, and resubmit.
+- [ ] Add tests for payroll computation and status transitions.
 
-## 14. Payroll Personnel - Slip Status And Tracking
+## 14. Finance Officer - Validation
 
-- [x] Save payroll slip as Draft.
-- [x] Allow editing while Draft.
-- [x] Submit payroll slip as Ready for Validation.
-- [x] Lock editing while Ready for Validation.
-- [x] Allow editing again when Returned for Correction.
-- [x] Lock editing when Validated.
-- [x] Permanently lock editing when Approved.
-- [x] Generate payroll slip number.
-- [x] Show payroll slip details: beneficiary, production earnings, deductions, final summary, and tracking.
-- [x] Track prepared by account.
-- [x] Track date and time created.
-- [x] Track date and time last updated.
-- [x] Track validation status.
-- [x] Track approval status.
-- [x] Track remarks or correction reason.
-- [ ] Add audit records for create, edit, submit, and resubmit.
+- [ ] Add validation queue API.
+- [ ] Add validate payroll API.
+- [ ] Add return-for-correction API.
+- [ ] Load payroll slips from persisted payroll data instead of `SEED`.
+- [ ] Show payroll slip number, beneficiary, period, harvest date, gross income, deductions, net income, prepared by, submitted date, status, and actions.
+- [ ] Show complete payroll slip detail.
+- [ ] Show production earnings breakdown.
+- [ ] Show material credit deductions with previous deduction, current deduction, and remaining balance.
+- [ ] Show final computation summary.
+- [ ] Add validation checklist persistence if required.
+- [ ] Require remarks/reason when returning payroll.
+- [ ] Change status to Validated on validation.
+- [ ] Record Finance Officer account and timestamp.
+- [ ] Forward validated payroll to Manager approval queue.
+- [ ] Preserve validation remarks and history.
+- [ ] Prevent Finance Officer from editing production, credit, prices, gross income, deductions, or net income directly.
+- [ ] Add tests for validation/return transitions.
 
-## 15. Finance Officer - Validation
+## 15. Manager - Payroll Approval And Restock Review
 
-- [x] Add Finance Officer dashboard.
-- [x] Display payrolls for validation.
-- [x] Display validated payrolls.
-- [x] Display returned payrolls.
-- [ ] Display total validated payroll amount for selected period.
-- [ ] Display recent validation activities.
-- [x] Add Payroll Validation list.
-- [x] Show payroll slip number, beneficiary, period, harvest date, gross income, deductions, net income, prepared by, date submitted, validation status, and actions.
-- [x] Search, filter, and sort validation records.
-- [x] Add View Details layout for complete payroll slip.
-- [x] Show production earnings breakdown by product type.
-- [x] Show material credit deductions with previous deduction, current deduction, and remaining balance.
-- [x] Show final computation summary.
-- [x] Add validation checklist for beneficiary information.
-- [x] Add validation checklist for production records.
-- [x] Add validation checklist for product classifications.
-- [x] Add validation checklist for prices.
-- [x] Add validation checklist for earnings computation.
-- [x] Add validation checklist for material credit records.
-- [x] Add validation checklist for deduction amounts.
-- [x] Add validation checklist for net income.
-- [x] Validate payroll action changes status to Validated.
-- [x] Record Finance Officer account and validation timestamp.
-- [x] Lock payroll computation fields after validation.
-- [x] Forward validated payroll to Manager approval queue.
-- [x] Return payroll for correction with required remarks.
-- [x] Preserve validation remarks and transaction history.
-- [x] Add Validation History page.
-- [x] Prevent Finance Officer from editing production records, credit transactions, prices, gross income, deductions, or net income directly.
-
-## 16. Manager - Approval And Monitoring
-
-- [x] Add Manager dashboard.
-- [x] Display payrolls for approval.
-- [x] Display approved payrolls.
-- [x] Display returned payrolls.
-- [x] Display pending restock requests.
-- [ ] Display low-stock and out-of-stock item counts.
-- [x] Display total production boxes for selected period.
-- [x] Display recent approval activities.
-- [x] Add Payroll Approval page.
-- [x] Show payroll slip number, beneficiary, period, gross income, deductions, net income, prepared by, validated by, date validated, approval status, and actions.
-- [x] Search, filter, and sort payroll approval records.
-- [x] Add View Details layout for complete payroll slip.
-- [x] Approve payroll action changes status to Approved.
-- [x] Record Manager account and approval timestamp.
-- [x] Permanently lock approved payroll from editing.
-- [x] Save approval action in transaction history.
+- [ ] Split Manager workflow from Admin workflow if required.
+- [ ] Add Manager payroll approval queue API.
+- [ ] Add approve payroll API.
+- [ ] Add return payroll API.
+- [ ] Load approval queue from persisted validated payroll slips.
+- [ ] Record Manager account and approval/return timestamp.
+- [ ] Permanently lock approved payroll from editing.
+- [ ] Save approval action in transaction history.
 - [ ] Include approved payroll in reports.
-- [x] Return payroll for correction with required remarks.
-- [x] Preserve Finance Officer validation record and previous transaction history.
-- [ ] Require corrected payroll to pass Finance validation again before Manager approval.
-- [x] Add Restock Request Review page.
-- [x] Approve restock request and record Manager account and timestamp.
-- [x] Reject restock request with required remarks.
-- [x] Ensure approved restock request does not automatically increase stock quantity.
-- [x] Prevent Manager from directly editing production records, inventory transactions, payroll prices, computations, or validation details.
+- [ ] Require returned payroll to pass Finance validation again.
+- [ ] Add Manager restock review API.
+- [ ] Approve restock request and record Manager account/timestamp.
+- [ ] Reject restock request with required remarks.
+- [ ] Preserve restock request history.
+- [ ] Prevent Manager from editing production records, inventory transactions, payroll computations, validation details, or audit records.
+- [ ] Add tests for approval/return/reject transitions.
 
-## 17. Admin - User Management And Audit
+## 16. Admin - User Management And Audit
 
-- [x] Add Admin dashboard.
-- [x] Display total user accounts.
-- [x] Display active users.
-- [x] Display inactive users.
-- [x] Display users by role.
-- [x] Display recent user activities.
-- [ ] Display recent account changes.
-- [x] Add User Management page.
-- [ ] Search, filter, and sort users by full name, role, status, and date created.
-- [x] Add new user account.
-- [x] Capture full name.
-- [x] Capture username or email.
-- [x] Capture assigned role.
-- [ ] Capture temporary password and confirmation.
-- [x] Capture account status.
-- [ ] Capture contact information where applicable.
-- [ ] Capture remarks where applicable.
-- [ ] Edit user full name, username/email, role, contact information, status, and remarks.
-- [x] Activate user account.
-- [x] Deactivate user account.
-- [x] Prevent login for inactive accounts.
-- [x] Preserve user records after deactivation.
-- [x] Prevent permanent user deletion.
-- [ ] Record Admin account, affected user, changed information, date/time, and remarks for account changes.
-- [x] Add Audit Trail page.
-- [ ] Track activity ID, user account, role, action, module, affected record, date/time, and remarks.
-- [ ] Search, filter, and sort audit records by account, role, module, action type, and date range.
-- [x] Prevent editing or deleting audit records.
+- [ ] Split Admin workflow from Manager workflow if required.
+- [ ] Add user create API.
+- [ ] Add user update API.
+- [ ] Add activate/deactivate API.
+- [ ] Store temporary password securely.
+- [ ] Validate password confirmation.
+- [ ] Preserve users after deactivation.
+- [ ] Prevent permanent user deletion.
+- [ ] Record Admin account, affected user, changed fields, date/time, and remarks.
+- [ ] Add audit trail API with backend search/filter/sort.
+- [ ] Prevent audit editing/deletion at backend level.
 - [ ] Add administrative reports for users, roles, login history, account status, and audit records.
-- [x] Prevent Admin from editing operational records, inventory transactions, payroll computations, validation records, approval records, or audit records.
+- [ ] Prevent Admin from editing operational records.
+- [ ] Add tests for inactive login, user activation/deactivation, and user-management audit logs.
 
-## 18. Reports And Documents
+## 17. Reports And Documents
 
-- [ ] Generate production summaries.
-- [x] Generate payroll slips.
-- [ ] Generate inventory reports.
-- [ ] Generate material credit transaction records.
-- [ ] Generate restock request records.
-- [ ] Generate validation records.
-- [ ] Generate approval records.
-- [x] Add production performance report with date range filter.
-- [x] Add payroll transaction report with date range filter.
-- [x] Add inventory status report.
-- [x] Add material credits report.
-- [x] Add restock requests report.
-- [x] Add graphical summaries for production, payroll, inventory, credits, and restock requests.
-- [ ] Allow Manager reports to filter by date range, beneficiary, product classification, inventory status, payroll status, and transaction type.
+- [ ] Add production summary report using persisted production data.
+- [ ] Add payroll slip document/report using persisted payroll data.
+- [ ] Add inventory report using persisted inventory data.
+- [ ] Add material credit transaction report.
+- [ ] Add restock request report.
+- [ ] Add validation record report.
+- [ ] Add approval record report.
+- [ ] Add date range filters.
+- [ ] Add filters by beneficiary, product classification, inventory status, payroll status, and transaction type.
+- [ ] Add graphical summaries sourced from backend data.
+- [ ] Add export/print behavior that produces real documents, not only toast messages.
 
-## 19. Database And API Coverage
+## 18. Database And API Backlog
 
-- [x] Persist harvest records.
-- [x] Persist production box records.
-- [x] Persist inventory items.
-- [x] Persist stock transactions.
-- [ ] Persist beneficiary credit transactions.
-- [ ] Persist borrowed material records.
-- [ ] Persist stock adjustments.
-- [x] Persist restock requests.
-- [x] Persist payroll slips.
-- [x] Persist payroll deductions.
-- [ ] Persist validation records.
-- [x] Persist approval records.
-- [x] Persist audit logs.
-- [ ] Add API endpoints for create, update, delete, submit, validate, return, approve, reject, activate, and deactivate actions.
-- [ ] Add backend validation for required fields and numeric constraints.
-- [ ] Add backend authorization checks for every restricted action.
-- [ ] Add tests for critical computations.
-- [ ] Add tests for workflow status transitions.
-- [ ] Add tests for role restrictions.
-- [ ] Add tests for audit trail creation.
+- [x] `beneficiaries` schema exists.
+- [x] `harvest_records` schema exists.
+- [x] `production_box_records` schema exists.
+- [x] `inventory_items` schema exists.
+- [x] `inventory_transactions` schema exists.
+- [x] `restock_requests` schema exists.
+- [x] `payroll_slips` schema exists.
+- [x] `payroll_deductions` schema exists.
+- [x] `approval_actions` schema exists.
+- [x] `audit_logs` schema exists.
+- [ ] Add/confirm schema for material credit transactions.
+- [ ] Add/confirm schema for borrowed material records.
+- [ ] Add/confirm schema for stock adjustments as first-class records or stock transaction subtype.
+- [ ] Add/confirm schema for validation history records.
+- [ ] Add indexes for high-use filters: dates, statuses, beneficiary IDs, material IDs, role/status.
+- [ ] Replace direct `DB::table` logic with models/services where workflow complexity grows.
+- [ ] Add transaction handling for multi-table writes.
+- [ ] Add API endpoints for all non-production workflows.
+- [ ] Add Laravel policies/middleware for role restrictions.
+
+## 19. Priority Build Order
+
+- [ ] 1. Lock down authentication, sessions/tokens, API auth middleware, and role authorization.
+- [ ] 2. Normalize roles: decide whether Manager and Admin stay combined or split.
+- [ ] 3. Finish persisted inventory item, stock-in, stock-out, stock history, and restock APIs.
+- [ ] 4. Finish persisted material credit and borrowed material workflows.
+- [ ] 5. Finish persisted payroll slip preparation and deduction computation.
+- [ ] 6. Finish Finance validation workflow with history.
+- [ ] 7. Finish Manager approval and restock review workflow.
+- [ ] 8. Finish Admin user-management APIs and audit monitoring.
+- [ ] 9. Replace remaining seeded/in-memory dashboard data with API-backed data.
+- [ ] 10. Add reports/documents and exports.
+- [ ] 11. Add end-to-end and workflow transition tests.

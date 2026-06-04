@@ -4,13 +4,22 @@ import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Button } from "./ui/button";
 import { Alert, AlertDescription } from "./ui/alert";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Leaf, ShieldCheck } from "lucide-react";
-import { DEMO_ACCOUNTS, ROLE_LABELS, User } from "./types";
+import { User } from "./types";
 import { login } from "../lib/api";
 
 interface LoginProps {
   onLogin: (user: User) => void;
 }
+
+const LOGIN_ACCOUNTS = [
+  { label: "Production Clerk", email: "clerk@darbco.coop", password: "clerk123" },
+  { label: "Inventory Bookkeeper", email: "inventory@darbco.coop", password: "inv123" },
+  { label: "Payroll Personnel", email: "payroll@darbco.coop", password: "pay123" },
+  { label: "Finance Officer", email: "finance@darbco.coop", password: "fin123" },
+  { label: "Manager / Admin", email: "admin@darbco.coop", password: "admin123" },
+];
 
 export function Login({ onLogin }: LoginProps) {
   const [email, setEmail] = useState("");
@@ -27,15 +36,20 @@ export function Login({ onLogin }: LoginProps) {
       const user = await login(email, password);
       onLogin(user);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Invalid credentials. Try one of the demo accounts below.");
+      setError(err instanceof Error ? err.message : "Invalid credentials.");
     } finally {
       setLoading(false);
     }
   };
 
-  const fillDemo = (e: string) => {
-    setEmail(e);
-    setPassword(DEMO_ACCOUNTS[e].password);
+  const selectedAccount = LOGIN_ACCOUNTS.find((account) => account.email === email)?.email ?? "";
+
+  const fillAccount = (accountEmail: string) => {
+    const account = LOGIN_ACCOUNTS.find((item) => item.email === accountEmail);
+    if (!account) return;
+
+    setEmail(account.email);
+    setPassword(account.password);
     setError("");
   };
 
@@ -65,6 +79,21 @@ export function Login({ onLogin }: LoginProps) {
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="quick-account">Quick account</Label>
+                <Select value={selectedAccount} onValueChange={fillAccount}>
+                  <SelectTrigger id="quick-account" className="bg-white">
+                    <SelectValue placeholder="Choose an account to fill credentials" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {LOGIN_ACCOUNTS.map((account) => (
+                      <SelectItem key={account.email} value={account.email}>
+                        {account.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
               <div className="space-y-2">
                 <Label htmlFor="email">Email</Label>
                 <Input
@@ -96,22 +125,6 @@ export function Login({ onLogin }: LoginProps) {
               </Button>
             </form>
 
-            <div className="mt-6">
-              <p className="text-muted-foreground mb-2">Demo accounts (click to fill):</p>
-              <div className="grid grid-cols-1 gap-1.5">
-                {Object.entries(DEMO_ACCOUNTS).map(([e, v]) => (
-                  <button
-                    key={e}
-                    type="button"
-                    onClick={() => fillDemo(e)}
-                    className="text-left px-3 py-2 rounded-md border bg-muted/30 hover:bg-muted transition flex flex-col gap-1 sm:flex-row sm:justify-between sm:items-center"
-                  >
-                    <span>{ROLE_LABELS[v.user.role]}</span>
-                    <span className="break-all text-muted-foreground sm:text-right">{e}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
           </CardContent>
         </Card>
       </div>

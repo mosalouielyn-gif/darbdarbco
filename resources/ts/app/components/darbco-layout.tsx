@@ -29,8 +29,8 @@ export function DarbcoLayout({ user, onLogout, navItems, active, onChange, child
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 lg:flex">
-      <aside className="hidden lg:flex lg:w-60 xl:w-64 bg-gradient-to-b from-emerald-900 to-emerald-950 text-emerald-50 flex-col lg:sticky lg:top-0 lg:h-screen">
+    <div className="min-h-screen bg-slate-50 xl:flex">
+      <aside className="hidden xl:flex xl:w-64 2xl:w-72 bg-gradient-to-b from-emerald-900 to-emerald-950 text-emerald-50 flex-col xl:sticky xl:top-0 xl:h-screen">
         <div className="p-5 border-b border-emerald-800">
           <div className="flex items-center gap-2">
             <div className="h-9 w-9 rounded-full bg-emerald-500/20 flex items-center justify-center">
@@ -83,7 +83,7 @@ export function DarbcoLayout({ user, onLogout, navItems, active, onChange, child
       </aside>
 
       <main className="min-w-0 flex-1">
-        <header className="sticky top-0 z-30 border-b border-emerald-900/10 bg-white/95 backdrop-blur lg:hidden relative">
+        <header className="sticky top-0 z-30 border-b border-emerald-900/10 bg-white/95 backdrop-blur xl:hidden relative">
           <div className="flex items-center gap-3 px-3 py-3 sm:px-4">
             <button
               type="button"
@@ -110,7 +110,7 @@ export function DarbcoLayout({ user, onLogout, navItems, active, onChange, child
             </button>
           </div>
           {menuOpen && (
-            <nav className="border-t bg-white px-3 py-3 shadow-sm sm:px-4">
+            <nav className="max-h-[calc(100vh-65px)] overflow-y-auto border-t bg-white px-3 py-3 shadow-sm sm:px-4">
               <div className="grid gap-2 sm:grid-cols-2">
                 {navItems.map((item) => (
                   <button

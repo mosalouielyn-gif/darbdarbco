@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { DarbcoLayout } from "../darbco-layout";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../ui/card";
 import { Input } from "../ui/input";
@@ -10,13 +10,17 @@ import { RadioGroup, RadioGroupItem } from "../ui/radio-group";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table";
 import { Textarea } from "../ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "../ui/dialog";
+import { DateInput } from "../ui/date-input";
 import {
   LayoutDashboard, Boxes, ArrowDownCircle, ArrowUpCircle, CreditCard, History,
   FileBarChart2, AlertTriangle, Package, TrendingUp, Plus, Search, Edit, Eye,
-  Trash2, ChevronLeft, ChevronRight, Calendar, Upload,
+  Trash2, ChevronLeft, ChevronRight, Upload, Lock, Loader2,
 } from "lucide-react";
 import { User } from "../types";
 import { toast } from "sonner";
+import { useAppData } from "../../lib/app-data-context";
+import { adjustInventoryItem, cancelRestockRequest, createInventoryItem, createRestockRequest, deductCreditTransaction, releaseInventoryItem, returnBorrowedMaterial, stockInInventoryItem, updateInventoryItem, updateInventoryItemStatus, updateRestockRequest } from "../../lib/api";
+import { usePersistentState } from "../../lib/use-persistent-state";
 
 interface Props { user: User; onLogout: () => void }
 
@@ -29,12 +33,43 @@ const NAV = [
 ];
 
 export function InventoryBookkeeperDashboard({ user, onLogout }: Props) {
-  const [active, setActive] = useState("dashboard");
+  const { data } = useAppData();
+  const [active, setActive] = usePersistentState("darbco.inventoryBookkeeper.active", "dashboard");
   const [items, setItems] = useState<InventoryItem[]>(seedItems);
   const [creditRows, setCreditRows] = useState<CreditRow[]>(credits);
   const [borrowedRows, setBorrowedRows] = useState<BorrowedMaterialRow[]>(borrowedMaterials);
   const [historyRows, setHistoryRows] = useState<StockHistoryRow[]>(stockHistory);
   const [restockRows, setRestockRows] = useState<RestockRequest[]>(initialRestockRequests(user.name));
+
+  useEffect(() => {
+    if (data?.inventoryItems?.length) {
+      setItems(data.inventoryItems.map(mapInventoryItem));
+    }
+  }, [data?.inventoryItems]);
+
+  useEffect(() => {
+    if (data?.stockTransactions?.length) {
+      setHistoryRows(data.stockTransactions.map(mapStockTransaction));
+    }
+  }, [data?.stockTransactions]);
+
+  useEffect(() => {
+    if (data?.borrowedMaterials?.length) {
+      setBorrowedRows(data.borrowedMaterials.map(mapBorrowedMaterial));
+    }
+  }, [data?.borrowedMaterials]);
+
+  useEffect(() => {
+    if (data?.creditTransactions?.length) {
+      setCreditRows(data.creditTransactions.map(mapCreditTransaction));
+    }
+  }, [data?.creditTransactions]);
+
+  useEffect(() => {
+    if (data?.restockRequests?.length) {
+      setRestockRows(data.restockRequests.map(mapRestockRequest));
+    }
+  }, [data?.restockRequests]);
 
   return (
     <DarbcoLayout user={user} onLogout={onLogout} navItems={NAV} active={active} onChange={setActive}>
@@ -58,9 +93,9 @@ export function InventoryBookkeeperDashboard({ user, onLogout }: Props) {
           user={user}
         />
       )}
-      {active === "credit" && <CreditTransactions credits={creditRows} setCredits={setCreditRows} />}
+      {active === "credit" && <CreditTransactions credits={creditRows} setCredits={setCreditRows} user={user} />}
       {active === "history" && <StockHistory history={historyRows} />}
-      {active === "restock" && <RestockRequests user={user} requests={restockRows} setRequests={setRestockRows} />}
+      {active === "restock" && <RestockRequests user={user} items={items} requests={restockRows} setRequests={setRestockRows} />}
     </DarbcoLayout>
   );
 }
@@ -286,22 +321,169 @@ function DashboardMiniTable({ title, icon, rows, empty }: { title: string; icon:
 }
 
 interface InventoryItem {
-  id: string; name: string; category: string; unit: string;
+  id: string; dbId?: number; name: string; category: string; unit: string;
   onHand: number; stockDate: string; cost: number; expiry: string;
   minimumStock?: number; supplier?: string; createdAt?: string; updatedAt?: string;
   hasTransactions?: boolean; active?: boolean;
 }
 
-const seedItems: InventoryItem[] = [
-  { id: "FERT-001", name: "Urea Fertilizer", category: "Fertilizers and Soil Inputs", unit: "kg", onHand: 40, stockDate: "2026-05-15", cost: 45.0, expiry: "—", hasTransactions: true, active: true },
-  { id: "FERT-002", name: "Complete Fertilizer", category: "Fertilizers and Soil Inputs", unit: "kg", onHand: 220, stockDate: "2026-05-18", cost: 48.0, expiry: "—", hasTransactions: true, active: true },
-  { id: "CHEM-001", name: "Fungicide (Mancozeb)", category: "Chemicals and Crop Protection Materials", unit: "kg", onHand: 15, stockDate: "2026-04-22", cost: 320.0, expiry: "05/2026", hasTransactions: true, active: true },
-  { id: "CHEM-002", name: "Insecticide (Cypermethrin)", category: "Chemicals and Crop Protection Materials", unit: "L", onHand: 28, stockDate: "2026-05-02", cost: 720.0, expiry: "11/2026", active: true },
-  { id: "CHEM-003", name: "Herbicide (Glyphosate)", category: "Chemicals and Crop Protection Materials", unit: "L", onHand: 0, stockDate: "2026-03-12", cost: 540.0, expiry: "08/2026", active: true },
-  { id: "PACK-001", name: "Banana Bags (Blue)", category: "Packaging Materials", unit: "pcs", onHand: 80, stockDate: "2026-05-19", cost: 12.5, expiry: "—", hasTransactions: true, active: true },
-  { id: "PACK-002", name: "Corrugated Boxes", category: "Packaging Materials", unit: "pcs", onHand: 1200, stockDate: "2026-05-10", cost: 28.0, expiry: "—", active: true },
-  { id: "FARM-001", name: "Twine / Rope", category: "Farm Materials", unit: "roll", onHand: 5, stockDate: "2026-04-30", cost: 95.0, expiry: "—", hasTransactions: true, active: true },
-];
+const seedItems: InventoryItem[] = [];
+
+function mapInventoryItem(row: any): InventoryItem {
+  return {
+    id: String(row.code ?? row.item_code ?? row.material_id ?? row.id),
+    dbId: Number(row.id) || undefined,
+    name: row.name ?? row.item_name ?? "",
+    category: row.category ?? "",
+    unit: row.unit ?? "",
+    onHand: Number(row.on_hand ?? row.onHand ?? 0),
+    stockDate: String(row.stock_date ?? row.created_at ?? todayInputDate()).slice(0, 10),
+    cost: Number(row.unit_cost ?? row.cost ?? 0),
+    expiry: row.expiry_date ? String(row.expiry_date).slice(0, 10) : "-",
+    minimumStock: Number(row.minimum_stock ?? row.minimumStock ?? 20),
+    supplier: row.supplier ?? "",
+    createdAt: row.created_at ? String(row.created_at).slice(0, 10) : undefined,
+    updatedAt: row.updated_at ? String(row.updated_at).slice(0, 10) : undefined,
+    hasTransactions: true,
+    active: row.active === true || row.active === 1 || row.active === "1",
+  };
+}
+
+function mapStockTransaction(row: any): StockHistoryRow {
+  const type = row.type ?? row.transaction_type ?? "Stock In";
+  const quantity = Number(row.quantity ?? 0);
+  const isIncreaseAdjustment = type === "Adjustment" && String(row.reason ?? "").startsWith("Increase adjustment");
+  const signedQuantity = isIncreaseAdjustment ? Math.abs(quantity) : [
+    "Release",
+    "Direct Release",
+    "Credit Issued",
+    "Borrowed Material",
+    "Internal Use",
+    "Adjustment",
+    "Stock Out (Expired)",
+  ].includes(type) ? -Math.abs(quantity) : quantity;
+
+  return {
+    date: formatDateTime(String(row.txn_at ?? row.transaction_at ?? row.created_at ?? todayInputDate()).slice(0, 10)),
+    material: row.material ?? row.material_name ?? row.name ?? `Item #${row.inventory_item_id ?? row.item_id ?? ""}`,
+    type,
+    qty: signedQuantity,
+    unit: row.unit ?? "",
+    reason: row.reason ?? "",
+    account: row.user_name ?? row.created_by ?? "Inventory Bookkeeper",
+    ref: row.reference_no ?? `TXN-${row.id}`,
+    previousBalance: Number(row.previous_balance ?? 0),
+    updatedBalance: Number(row.updated_balance ?? 0),
+  };
+}
+
+function mapBorrowedMaterial(row: any): BorrowedMaterialRow {
+  return {
+    dbId: Number(row.id) || undefined,
+    id: String(row.borrow_no ?? row.id),
+    slipNo: String(row.release_reference_no ?? row.borrow_no ?? ""),
+    borrower: row.borrower ?? "",
+    materialId: String(row.material_code ?? row.inventory_item_id ?? ""),
+    material: row.material_name ?? "",
+    qtyBorrowed: Number(row.qty_borrowed ?? 0),
+    qtyReturned: Number(row.qty_returned ?? 0),
+    dateBorrowed: String(row.date_borrowed ?? "").slice(0, 10),
+    expectedReturnDate: String(row.expected_return_date ?? "").slice(0, 10),
+    actualReturnDate: row.actual_return_date ? String(row.actual_return_date).slice(0, 10) : "",
+    unit: row.unit ?? "",
+    status: row.status ?? "Borrowed",
+    notes: row.notes ?? "",
+  };
+}
+
+function mapCreditTransaction(row: any): CreditRow {
+  return {
+    dbId: Number(row.id) || undefined,
+    receipt: String(row.credit_no ?? row.id),
+    date: formatDateLabel(String(row.credit_date ?? row.created_at ?? todayInputDate()).slice(0, 10)),
+    beneficiary: row.beneficiary_name ?? "",
+    beneficiaryId: row.beneficiary_account_id ?? beneficiaryAccountId(row.beneficiary_name ?? ""),
+    material: row.material_name ?? "",
+    qty: Number(row.quantity ?? 0),
+    unit: row.unit ?? "",
+    unitCost: Number(row.unit_cost ?? 0),
+    amount: Number(row.amount ?? 0),
+    remaining: Number(row.remaining_balance ?? 0),
+    status: row.status ?? "Pending",
+    slip: row.release_reference_no ?? "",
+    deductionHistory: (row.deductions ?? []).map((deduction: any) => ({
+      payrollBatch: deduction.payroll_batch ?? "",
+      date: formatDateLabel(String(deduction.deduction_date ?? deduction.created_at ?? todayInputDate()).slice(0, 10)),
+      amount: Number(deduction.amount ?? 0),
+      recordedBy: deduction.recorded_by_name ?? "Payroll Personnel",
+    })),
+  };
+}
+
+function mapRestockRequest(row: any): RestockRequest {
+  const status = row.status === "Returned" ? "Rejected" : row.status ?? "Pending";
+  return {
+    dbId: Number(row.id) || undefined,
+    itemDbId: Number(row.item_id ?? row.inventory_item_id) || undefined,
+    id: String(row.request_no ?? row.id),
+    dateRequested: formatDateLabel(String(row.requested_at ?? row.created_at ?? todayInputDate()).slice(0, 10)),
+    material: row.material_name ?? "",
+    category: row.category ?? "Not specified",
+    current: Number(row.current_quantity ?? 0),
+    minimumStock: Number(row.minimum_stock ?? 0),
+    requested: Number(row.requested_quantity ?? row.quantity ?? 0),
+    reason: row.reason ?? "",
+    requestedBy: row.requested_by_name ?? row.user_name ?? "Inventory Bookkeeper",
+    status,
+    priority: String(row.priority ?? "normal").toLowerCase() === "urgent" ? "Urgent" : "Normal",
+    notes: row.notes ?? "",
+  };
+}
+
+function inventoryRecordId(item: InventoryItem) {
+  return item.dbId ?? item.id;
+}
+
+function currentUserId(user: User) {
+  const id = Number(user.id);
+  return Number.isFinite(id) ? id : undefined;
+}
+
+function generateStockInReference(dateValue = todayInputDate()) {
+  const datePart = dateValue.replaceAll("-", "");
+  const now = new Date();
+  const timePart = [
+    now.getHours(),
+    now.getMinutes(),
+    now.getSeconds(),
+  ].map((part) => String(part).padStart(2, "0")).join("");
+
+  return `STIN-${datePart}-${timePart}`;
+}
+
+function generateReleaseSlip(dateValue = todayInputDate()) {
+  const datePart = dateValue.replaceAll("-", "");
+  const now = new Date();
+  const timePart = [
+    now.getHours(),
+    now.getMinutes(),
+    now.getSeconds(),
+  ].map((part) => String(part).padStart(2, "0")).join("");
+
+  return `RS-${datePart}-${timePart}`;
+}
+
+function generateAdjustmentReference(dateValue = todayInputDate()) {
+  const datePart = dateValue.replaceAll("-", "");
+  const now = new Date();
+  const timePart = [
+    now.getHours(),
+    now.getMinutes(),
+    now.getSeconds(),
+  ].map((part) => String(part).padStart(2, "0")).join("");
+
+  return `ADJ-${datePart}-${timePart}`;
+}
 
 function deriveStatus(i: InventoryItem): "OK" | "Low Stock" | "Out of Stock" {
   if (i.onHand <= 0) return "Out of Stock";
@@ -354,17 +536,7 @@ function addDaysInputDate(value: string, days: number) {
 
 function InventoryDateInput({ value, onChange, className = "" }: { value: string; onChange: (value: string) => void; className?: string }) {
   const dateValue = /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : "";
-  return (
-    <div className={`relative ${className}`}>
-      <Input
-        type="date"
-        value={dateValue}
-        onChange={(event) => onChange(event.target.value)}
-        className="h-9 w-full cursor-pointer bg-muted/50 px-3 pr-10 [color-scheme:light] [&::-webkit-calendar-picker-indicator]:absolute [&::-webkit-calendar-picker-indicator]:inset-0 [&::-webkit-calendar-picker-indicator]:h-full [&::-webkit-calendar-picker-indicator]:w-full [&::-webkit-calendar-picker-indicator]:cursor-pointer [&::-webkit-calendar-picker-indicator]:opacity-0"
-      />
-      <Calendar className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-700" />
-    </div>
-  );
+  return <DateInput value={dateValue} onChange={(event) => onChange(event.target.value)} className={className} />;
 }
 
 const CATEGORIES = [
@@ -396,6 +568,7 @@ function InventoryItems({ items, setItems, setCredits, borrowedRows, setBorrowed
   const [editing, setEditing] = useState<InventoryItem | null>(null);
   const [viewing, setViewing] = useState<InventoryItem | null>(null);
   const [deleting, setDeleting] = useState<InventoryItem | null>(null);
+  const [deleteSaving, setDeleteSaving] = useState(false);
 
   const filtered = items.filter((i) => {
     if (i.active === false) return false;
@@ -416,22 +589,49 @@ function InventoryItems({ items, setItems, setCredits, borrowedRows, setBorrowed
     }
   });
 
-  const handleSaveEdit = (updated: InventoryItem) => {
-    setItems((cur) => cur.map((i) => (i.id === updated.id ? { ...i, ...updated } : i)));
-    setEditing(null);
-    toast.success("Inventory item updated");
+  const handleSaveEdit = async (updated: InventoryItem) => {
+    try {
+      const saved = await updateInventoryItem(inventoryRecordId(updated), {
+        item_code: updated.id,
+        name: updated.name,
+        category: updated.category,
+        unit: updated.unit,
+        on_hand: updated.onHand,
+        minimum_stock: getMinimumStock(updated),
+        unit_cost: updated.cost,
+        stock_date: updated.stockDate,
+        expiry_date: updated.expiry && updated.expiry !== "-" ? updated.expiry : null,
+        supplier: updated.supplier,
+        user_id: currentUserId(user),
+        user_name: user.name,
+      });
+
+      setItems((cur) => cur.map((i) => (i.id === updated.id ? { ...i, ...mapInventoryItem(saved) } : i)));
+      setEditing(null);
+      toast.success("Inventory item updated");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to update inventory item.");
+    }
   };
 
-  const handleConfirmDelete = () => {
+  const handleConfirmDelete = async () => {
     if (!deleting) return;
-    if (deleting.hasTransactions) {
+    setDeleteSaving(true);
+    try {
+      await updateInventoryItemStatus(inventoryRecordId(deleting), {
+        active: false,
+        user_id: currentUserId(user),
+        user_name: user.name,
+        remarks: `Deactivated inventory item ${deleting.name}`,
+      });
       setItems((cur) => cur.map((i) => (i.id === deleting.id ? { ...i, active: false } : i)));
-      toast.message("Item marked Inactive (has transaction history).");
-    } else {
-      setItems((cur) => cur.filter((i) => i.id !== deleting.id));
-      toast.success("Inventory item deleted");
+      toast.message("Item marked Inactive and preserved in the database.");
+      setDeleting(null);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to deactivate inventory item.");
+    } finally {
+      setDeleteSaving(false);
     }
-    setDeleting(null);
   };
 
   return (
@@ -605,9 +805,9 @@ function InventoryItems({ items, setItems, setCredits, borrowedRows, setBorrowed
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleting(null)}>Cancel</Button>
-            <Button className="bg-red-600 hover:bg-red-700 text-white" onClick={handleConfirmDelete}>
-              {deleting?.hasTransactions ? "Mark Inactive" : "Delete"}
+            <Button variant="outline" onClick={() => setDeleting(null)} disabled={deleteSaving}>Cancel</Button>
+            <Button className="bg-red-600 hover:bg-red-700 text-white" onClick={handleConfirmDelete} disabled={deleteSaving}>
+              {deleteSaving ? "Saving..." : deleting?.hasTransactions ? "Mark Inactive" : "Delete"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -659,8 +859,9 @@ function ItemDetailDialog({ item, onClose }: { item: InventoryItem | null; onClo
   );
 }
 
-function EditItemDialog({ item, onClose, onSave }: { item: InventoryItem | null; onClose: () => void; onSave: (i: InventoryItem) => void }) {
+function EditItemDialog({ item, onClose, onSave }: { item: InventoryItem | null; onClose: () => void; onSave: (i: InventoryItem) => Promise<void> }) {
   const [form, setForm] = useState<InventoryItem | null>(item);
+  const [saving, setSaving] = useState(false);
   if (item && form?.id !== item.id) setForm(item);
 
   return (
@@ -737,8 +938,19 @@ function EditItemDialog({ item, onClose, onSave }: { item: InventoryItem | null;
           </div>
         )}
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Cancel</Button>
-          <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={() => form && onSave({ ...form, updatedAt: new Date().toISOString().slice(0, 10) })}>Save Changes</Button>
+          <Button variant="outline" onClick={onClose} disabled={saving}>Cancel</Button>
+          <Button
+            className="bg-emerald-600 hover:bg-emerald-700"
+            disabled={saving}
+            onClick={async () => {
+              if (!form) return;
+              setSaving(true);
+              await onSave({ ...form, updatedAt: new Date().toISOString().slice(0, 10) });
+              setSaving(false);
+            }}
+          >
+            {saving ? "Saving..." : "Save Changes"}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -775,6 +987,7 @@ function AddInventoryItem({ open, onOpenChange, items, setItems, setHistory, use
   const today = new Date().toISOString().slice(0, 10);
   const [date, setDate] = useState(today);
   const [notes, setNotes] = useState("");
+  const [saving, setSaving] = useState(false);
   const [rows, setRows] = useState<StockInRow[]>([
     { name: "", category: "", qty: "", unit: "kg", cost: "", expiry: "", minimumStock: "", supplier: "", notes: "" },
   ]);
@@ -789,7 +1002,7 @@ function AddInventoryItem({ open, onOpenChange, items, setItems, setHistory, use
   const update = (i: number, k: keyof StockInRow, v: string) =>
     setRows(rows.map((r, idx) => (idx === i ? { ...r, [k]: v } : r)));
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (rows.some((r) => !r.category)) { toast.error("Category is required for each item"); return; }
     if (rows.some((r) => !r.name.trim() || !r.qty.trim() || !r.cost.trim())) {
       toast.error("Item Name, Quantity, and Unit Cost are required");
@@ -805,71 +1018,53 @@ function AddInventoryItem({ open, onOpenChange, items, setItems, setHistory, use
       expiryValue: row.expiry || "—",
     }));
 
-    setItems((current) => {
-      let next = [...current];
-      validRows.forEach((row) => {
-        const existingIndex = next.findIndex((item) =>
-          item.active !== false &&
-          item.name.toLowerCase() === row.name.trim().toLowerCase() &&
-          item.category === row.category &&
-          item.expiry === row.expiryValue
-        );
+    setSaving(true);
+    try {
+      const savedItems: InventoryItem[] = [];
 
-        if (existingIndex >= 0) {
-          const existing = next[existingIndex];
-          next[existingIndex] = {
-            ...existing,
-            onHand: existing.onHand + row.qtyValue,
-            stockDate: date,
-            cost: row.costValue,
-            minimumStock: row.minimumStockValue || getMinimumStock(existing),
-            supplier: row.supplierValue,
-            updatedAt: date,
-            hasTransactions: true,
-          };
-        } else {
-          next = [
-            {
-              id: row.id,
-              name: row.name.trim(),
-              category: row.category,
-              unit: row.unit,
-              onHand: row.qtyValue,
-              stockDate: date,
-              cost: row.costValue,
-              minimumStock: row.minimumStockValue,
-              supplier: row.supplierValue,
-              createdAt: date,
-              updatedAt: date,
-              expiry: row.expiryValue,
-              hasTransactions: true,
-              active: true,
-            },
-            ...next,
-          ];
-        }
-      });
-      return next;
-    });
+      for (const row of validRows) {
+        const saved = await createInventoryItem({
+          item_code: row.id,
+          name: row.name.trim(),
+          category: row.category,
+          unit: row.unit,
+          on_hand: row.qtyValue,
+          minimum_stock: row.minimumStockValue,
+          unit_cost: row.costValue,
+          stock_date: date,
+          expiry_date: row.expiry ? row.expiry : null,
+          supplier: row.supplierValue,
+          notes: row.notes.trim() || notes.trim(),
+          user_id: currentUserId(user),
+          user_name: user.name,
+        });
+        savedItems.push(mapInventoryItem(saved));
+      }
 
-    setHistory((current) => [
-      ...validRows.map((row, index) => ({
-        date: formatDateTime(date),
-        material: row.name.trim(),
-        type: "Stock In",
-        qty: row.qtyValue,
-        unit: row.unit,
-        reason: notes.trim() || "Received materials into inventory",
-        account: user.name,
-        ref: `RC-${date.slice(0, 4)}-${String(current.length + index + 1).padStart(4, "0")}`,
-        previousBalance: items.find((item) => item.name.toLowerCase() === row.name.trim().toLowerCase() && item.category === row.category && item.expiry === row.expiryValue)?.onHand ?? 0,
-        updatedBalance: (items.find((item) => item.name.toLowerCase() === row.name.trim().toLowerCase() && item.category === row.category && item.expiry === row.expiryValue)?.onHand ?? 0) + row.qtyValue,
-      })),
-      ...current,
-    ]);
+      setItems((current) => [...savedItems, ...current]);
+      setHistory((current) => [
+        ...validRows.map((row, index) => ({
+          date: formatDateTime(date),
+          material: row.name.trim(),
+          type: "Stock In",
+          qty: row.qtyValue,
+          unit: row.unit,
+          reason: row.notes.trim() || notes.trim() || "Received materials into inventory",
+          account: user.name,
+          ref: `RC-${date.slice(0, 4)}-${String(current.length + index + 1).padStart(4, "0")}`,
+          previousBalance: 0,
+          updatedBalance: row.qtyValue,
+        })),
+        ...current,
+      ]);
 
-    toast.success("Stock-in saved and dashboard updated");
-    onOpenChange(false);
+      toast.success("Inventory item saved to the database");
+      onOpenChange(false);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to save inventory item.");
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -966,7 +1161,7 @@ function AddInventoryItem({ open, onOpenChange, items, setItems, setHistory, use
                 <div className="flex items-end md:col-span-12 md:justify-end">
                   <button
                     className="p-2 rounded border border-red-300 text-red-600 hover:bg-red-50 disabled:opacity-40"
-                    disabled={rows.length === 1}
+                    disabled={rows.length === 1 || saving}
                     onClick={() => setRows(rows.filter((_, idx) => idx !== i))}
                   >
                     <Trash2 className="h-4 w-4" />
@@ -975,7 +1170,7 @@ function AddInventoryItem({ open, onOpenChange, items, setItems, setHistory, use
               </div>
               );
             })}
-            <Button variant="outline" onClick={() => setRows([...rows, { name: "", category: "", qty: "", unit: "kg", cost: "", expiry: "", minimumStock: "", supplier: "", notes: "" }])}>
+            <Button variant="outline" disabled={saving} onClick={() => setRows([...rows, { name: "", category: "", qty: "", unit: "kg", cost: "", expiry: "", minimumStock: "", supplier: "", notes: "" }])}>
               <Plus className="h-4 w-4 mr-1" />Add Item Row
             </Button>
           </div>
@@ -986,8 +1181,10 @@ function AddInventoryItem({ open, onOpenChange, items, setItems, setHistory, use
           </div>
 
           <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={handleSave}>Save Item</Button>
+            <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Cancel</Button>
+            <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={handleSave} disabled={saving}>
+              {saving ? "Saving..." : "Save Item"}
+            </Button>
           </div>
         </div>
       </DialogContent>
@@ -1008,11 +1205,12 @@ function StockIn({ open, onOpenChange, items, setItems, setHistory, user }: {
   const [quantity, setQuantity] = useState("");
   const [unitPrice, setUnitPrice] = useState("");
   const [supplier, setSupplier] = useState("");
-  const [reference, setReference] = useState("");
+  const [reference, setReference] = useState(generateStockInReference());
   const [dateReceived, setDateReceived] = useState(todayInputDate());
   const [expirationDate, setExpirationDate] = useState("");
   const [remarks, setRemarks] = useState("");
   const [documentName, setDocumentName] = useState("");
+  const [saving, setSaving] = useState(false);
   const selectedItem = activeItems.find((item) => item.id === itemId);
   const quantityValue = Number(quantity) || 0;
   const unitPriceValue = Number(unitPrice) || 0;
@@ -1033,12 +1231,19 @@ function StockIn({ open, onOpenChange, items, setItems, setHistory, user }: {
     setQuantity("");
     setUnitPrice("");
     setSupplier("");
-    setReference("");
-    setDateReceived(todayInputDate());
+    const today = todayInputDate();
+    setReference(generateStockInReference(today));
+    setDateReceived(today);
     setExpirationDate("");
     setRemarks("");
     setDocumentName("");
   };
+
+  useEffect(() => {
+    if (open) {
+      setReference(generateStockInReference(dateReceived));
+    }
+  }, [open]);
 
   const handleSave = () => {
     if (!selectedItem) {
@@ -1099,6 +1304,74 @@ function StockIn({ open, onOpenChange, items, setItems, setHistory, user }: {
     onOpenChange(false);
   };
 
+  const handleSaveToDatabase = async () => {
+    if (!selectedItem) {
+      toast.error("Please select an inventory item");
+      return;
+    }
+    if (quantityValue <= 0) {
+      toast.error("Quantity added must be greater than zero");
+      return;
+    }
+    if (unitPriceValue <= 0) {
+      toast.error("Unit price must be greater than zero");
+      return;
+    }
+    if (!reference.trim()) {
+      toast.error("Receipt or delivery reference number is required");
+      return;
+    }
+    if (!supplier.trim()) {
+      toast.error("Supplier is required");
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const saved = await stockInInventoryItem(inventoryRecordId(selectedItem), {
+        quantity: quantityValue,
+        unit_cost: unitPriceValue,
+        supplier: supplier.trim(),
+        reference_no: reference.trim(),
+        stock_date: dateReceived,
+        expiry_date: expirationDate || null,
+        notes: remarks.trim() || `Received from ${supplier.trim()}. Total amount: PHP ${totalAmount.toLocaleString()}.`,
+        document_name: documentName || undefined,
+        user_id: currentUserId(user),
+        user_name: user.name,
+      });
+      const savedItem = mapInventoryItem(saved.item ?? saved);
+
+      setItems((current) => current.map((item) => item.id === selectedItem.id ? savedItem : item));
+
+      const documentText = documentName ? ` Supporting document: ${documentName}.` : "";
+      const remarksText = remarks.trim() ? ` Remarks: ${remarks.trim()}` : "";
+      setHistory((current) => [
+        {
+          date: formatDateTime(dateReceived),
+          material: selectedItem.name,
+          type: "Stock In",
+          qty: quantityValue,
+          unit: selectedItem.unit,
+          reason: `Received from ${supplier.trim()}. Total amount: PHP ${totalAmount.toLocaleString()}. Audit: stock-in recorded by ${user.name}.${remarksText}${documentText}`,
+          account: user.name,
+          ref: reference.trim(),
+          previousBalance: selectedItem.onHand,
+          updatedBalance: selectedItem.onHand + quantityValue,
+        },
+        ...current,
+      ]);
+
+      toast.success("Stock-in saved to Supabase and inventory balance updated");
+      resetForm();
+      onOpenChange(false);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to save stock-in transaction.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="!max-w-[860px] w-[92vw] max-h-[86vh] overflow-y-auto">
@@ -1149,7 +1422,7 @@ function StockIn({ open, onOpenChange, items, setItems, setHistory, user }: {
             </div>
             <div className="space-y-1">
               <Label>Receipt / Delivery Ref. <span className="text-red-500">*</span></Label>
-              <Input value={reference} onChange={(event) => setReference(event.target.value)} placeholder="e.g. DR-2026-0012" />
+              <Input value={reference} onChange={(event) => setReference(event.target.value)} placeholder="Auto-generated, e.g. STIN-20260603-191245" />
             </div>
 
             <div className="space-y-1">
@@ -1193,10 +1466,10 @@ function StockIn({ open, onOpenChange, items, setItems, setHistory, user }: {
           </div>
 
           <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => { resetForm(); onOpenChange(false); }}>Cancel</Button>
-            <Button variant="outline" onClick={resetForm}>Clear</Button>
-            <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={handleSave}>
-              <ArrowDownCircle className="h-4 w-4 mr-1" />Save Stock-In
+            <Button variant="outline" onClick={() => { resetForm(); onOpenChange(false); }} disabled={saving}>Cancel</Button>
+            <Button variant="outline" onClick={resetForm} disabled={saving}>Clear</Button>
+            <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={handleSaveToDatabase} disabled={saving}>
+              <ArrowDownCircle className="h-4 w-4 mr-1" />{saving ? "Saving..." : "Save Stock-In"}
             </Button>
           </div>
         </div>
@@ -1217,7 +1490,7 @@ function ReleaseMaterials({ open, onOpenChange, items, setItems, setCredits, set
 }) {
   const today = new Date().toISOString().slice(0, 10);
   const [type, setType] = useState("direct");
-  const [slipNo, setSlipNo] = useState("RS-2026-0007");
+  const [slipNo, setSlipNo] = useState(generateReleaseSlip(today));
   const [date, setDate] = useState(today);
   const [beneficiary, setBeneficiary] = useState("");
   const [materialId, setMaterialId] = useState("");
@@ -1227,6 +1500,7 @@ function ReleaseMaterials({ open, onOpenChange, items, setItems, setCredits, set
   const [expectedReturnDate, setExpectedReturnDate] = useState(addDaysInputDate(today, 7));
   const [purpose, setPurpose] = useState("");
   const [notes, setNotes] = useState("");
+  const [savingRelease, setSavingRelease] = useState(false);
   const selectedItem = items.find((item) => item.id === materialId);
   const qtyValue = Number(qty) || 0;
   const unitPriceValue = Number(unitPrice) || 0;
@@ -1245,10 +1519,22 @@ function ReleaseMaterials({ open, onOpenChange, items, setItems, setCredits, set
     setMaterialId("");
     setQty("");
     setUnitPrice("");
+    const today = todayInputDate();
+    setSlipNo(generateReleaseSlip(today));
+    setDate(today);
     setExpectedReturnDate(addDaysInputDate(todayInputDate(), 7));
     setPurpose("");
     setNotes("");
   };
+
+  useEffect(() => {
+    if (open) {
+      const today = todayInputDate();
+      setSlipNo(generateReleaseSlip(today));
+      setDate(today);
+      setExpectedReturnDate(addDaysInputDate(today, 7));
+    }
+  }, [open]);
 
   const releaseHistoryType = () => {
     if (type === "credit") return "Credit Issued";
@@ -1352,6 +1638,101 @@ function ReleaseMaterials({ open, onOpenChange, items, setItems, setCredits, set
     onOpenChange(false);
   };
 
+  const handleSaveReleaseToDatabase = async () => {
+    if (!slipNo.trim() || !selectedItem || qtyValue <= 0) {
+      toast.error("Slip number, material, and quantity are required");
+      return;
+    }
+    if (type === "credit" && !beneficiary.trim()) {
+      toast.error("Beneficiary is required for beneficiary credit releases");
+      return;
+    }
+    if (type === "borrowed" && !beneficiary.trim()) {
+      toast.error("Borrower or beneficiary is required for borrowed materials");
+      return;
+    }
+    if (type === "borrowed" && !expectedReturnDate) {
+      toast.error("Expected return date is required for borrowed materials");
+      return;
+    }
+    if (unitPriceValue <= 0) {
+      toast.error("Unit price must be greater than zero");
+      return;
+    }
+    if (qtyValue > selectedItem.onHand) {
+      toast.error(`Only ${selectedItem.onHand} ${selectedItem.unit} available for ${selectedItem.name}`);
+      return;
+    }
+
+    setSavingRelease(true);
+    try {
+      const saved = await releaseInventoryItem(inventoryRecordId(selectedItem), {
+        quantity: qtyValue,
+        unit_cost: unitPriceValue,
+        reference_no: slipNo.trim(),
+        stock_date: date,
+        release_type: type,
+        beneficiary: beneficiary.trim() || undefined,
+        purpose: purpose.trim() || undefined,
+        notes: notes.trim() || undefined,
+        expected_return_date: type === "borrowed" ? expectedReturnDate : undefined,
+        user_id: currentUserId(user),
+        user_name: user.name,
+      });
+      const savedItem = mapInventoryItem(saved);
+
+      setItems((current) => current.map((item) => item.id === selectedItem.id ? savedItem : item));
+
+      if (type === "credit") {
+        setCredits((current) => [
+          {
+            receipt: `CR-${date.slice(0, 4)}-${String(current.length + 1).padStart(4, "0")}`,
+            date: formatDateLabel(date),
+            beneficiary: beneficiary.trim(),
+            beneficiaryId: beneficiaryAccountId(beneficiary),
+            material: selectedItem.name,
+            qty: qtyValue,
+            unit: selectedItem.unit,
+            unitCost: unitPriceValue,
+            amount: totalAmount,
+            status: "Pending",
+            remaining: totalAmount,
+            slip: slipNo.trim(),
+          },
+          ...current,
+        ]);
+      }
+
+      if (type === "borrowed" && saved.borrowed) {
+        setBorrowedRows((current) => [mapBorrowedMaterial(saved.borrowed), ...current]);
+      }
+
+      setHistory((current) => [
+        {
+          date: formatDateTime(date),
+          material: selectedItem.name,
+          type: releaseHistoryType(),
+          qty: -qtyValue,
+          unit: selectedItem.unit,
+          reason: `${purpose.trim() || `Released${beneficiary.trim() ? ` to ${beneficiary.trim()}` : ""}`}. Total amount: PHP ${totalAmount.toLocaleString()}. Audit: material release recorded by ${user.name}.${notes.trim() ? ` Notes: ${notes.trim()}` : ""}`,
+          account: user.name,
+          ref: slipNo.trim(),
+          previousBalance: selectedItem.onHand,
+          updatedBalance: selectedItem.onHand - qtyValue,
+        },
+        ...current,
+      ]);
+
+      toast.success(type === "credit" ? "Credit release saved to Supabase" : "Release saved to Supabase");
+      resetReleaseForm();
+      onOpenChange(false);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to save material release.");
+    } finally {
+      setSavingRelease(false);
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="!max-w-[860px] w-[92vw] max-h-[86vh] overflow-y-auto">
@@ -1365,7 +1746,7 @@ function ReleaseMaterials({ open, onOpenChange, items, setItems, setCredits, set
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <div className="space-y-1">
               <Label>Release Slip No. <span className="text-red-500">*</span></Label>
-              <Input value={slipNo} onChange={(event) => setSlipNo(event.target.value)} />
+              <Input value={slipNo} onChange={(event) => setSlipNo(event.target.value)} placeholder="Auto-generated, e.g. RS-20260603-191245" />
             </div>
             <div className="space-y-1">
               <Label>Date Released <span className="text-red-500">*</span></Label>
@@ -1483,8 +1864,10 @@ function ReleaseMaterials({ open, onOpenChange, items, setItems, setCredits, set
           </div>
 
           <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => { resetReleaseForm(); onOpenChange(false); }}>Cancel</Button>
-            <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={handleSaveRelease}>Save Release</Button>
+            <Button variant="outline" onClick={() => { resetReleaseForm(); onOpenChange(false); }} disabled={savingRelease}>Cancel</Button>
+            <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={handleSaveReleaseToDatabase} disabled={savingRelease}>
+              {savingRelease ? "Saving..." : "Save Release"}
+            </Button>
           </div>
 
           <div className={`p-3 border rounded-md ${banner.bg}`}>
@@ -1497,6 +1880,7 @@ function ReleaseMaterials({ open, onOpenChange, items, setItems, setCredits, set
 }
 
 interface CreditRow {
+  dbId?: number;
   receipt: string; date: string; beneficiary: string; material: string;
   qty: number; unit: string; unitCost: number;
   amount: number; status: string; remaining: number; slip: string;
@@ -1505,6 +1889,7 @@ interface CreditRow {
 }
 
 interface BorrowedMaterialRow {
+  dbId?: number;
   id: string;
   slipNo: string;
   borrower: string;
@@ -1527,36 +1912,14 @@ interface CreditDeduction {
   recordedBy: string;
 }
 
-const credits: CreditRow[] = [
-  { receipt: "CR-2025-0007", date: "May 18, 2025", beneficiary: "Juan Dela Cruz", material: "Complete Fertilizer", qty: 40, unit: "kg", unitCost: 50.0, amount: 2000, status: "Partially Deducted", remaining: 1200, slip: "PB-2025-05" },
-  { receipt: "CR-2025-0008", date: "May 19, 2025", beneficiary: "Maria Santos", material: "Urea Fertilizer", qty: 28, unit: "kg", unitCost: 46.43, amount: 1300, status: "Pending", remaining: 1300, slip: "—" },
-  { receipt: "CR-2025-0009", date: "May 19, 2025", beneficiary: "Pedro Garcia", material: "Insecticide (Chlorpyrifos)", qty: 2, unit: "L", unitCost: 650.0, amount: 1300, status: "Fully Deducted", remaining: 0, slip: "PB-2025-05" },
-  { receipt: "CR-2025-0010", date: "May 20, 2025", beneficiary: "Rosa Mendoza", material: "Banana Bags (Blue)", qty: 60, unit: "pcs", unitCost: 12.5, amount: 750, status: "Partially Deducted", remaining: 300, slip: "PB-2025-05" },
-  { receipt: "CR-2025-0011", date: "May 20, 2025", beneficiary: "Jose Reyes", material: "Cardboard Boxes", qty: 50, unit: "pcs", unitCost: 32.0, amount: 1600, status: "Pending", remaining: 1600, slip: "—" },
-];
+const credits: CreditRow[] = [];
 
 function beneficiaryAccountId(name: string) {
   const normalized = name.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "-").replace(/^-|-$/g, "");
   return normalized ? `BEN-${normalized}` : "";
 }
 
-const borrowedMaterials: BorrowedMaterialRow[] = [
-  {
-    id: "BOR-2025-0012",
-    slipNo: "BOR-2025-0012",
-    borrower: "Ana Reyes",
-    materialId: "FARM-001",
-    material: "Twine / Rope",
-    qtyBorrowed: 2,
-    qtyReturned: 0,
-    dateBorrowed: "2025-05-15",
-    expectedReturnDate: "2025-05-22",
-    actualReturnDate: "",
-    unit: "roll",
-    status: "Overdue",
-    notes: "Borrowed for field work",
-  },
-];
+const borrowedMaterials: BorrowedMaterialRow[] = [];
 
 function borrowedRemaining(row: BorrowedMaterialRow) {
   return Math.max(0, row.qtyBorrowed - row.qtyReturned);
@@ -1596,6 +1959,7 @@ function StockAdjustmentDialog({ open, onOpenChange, items, setItems, setHistory
   const [correctedQty, setCorrectedQty] = useState("");
   const [date, setDate] = useState(todayInputDate());
   const [reason, setReason] = useState("");
+  const [savingAdjustment, setSavingAdjustment] = useState(false);
   const selectedItem = activeItems.find((item) => item.id === itemId);
   const correctedValue = Number(correctedQty);
   const systemQty = selectedItem?.onHand ?? 0;
@@ -1609,7 +1973,7 @@ function StockAdjustmentDialog({ open, onOpenChange, items, setItems, setHistory
     setReason("");
   };
 
-  const saveAdjustment = () => {
+  const saveAdjustment = async () => {
     if (!selectedItem) {
       toast.error("Please select an inventory item");
       return;
@@ -1627,31 +1991,45 @@ function StockAdjustmentDialog({ open, onOpenChange, items, setItems, setHistory
       return;
     }
 
-    setItems((current) => current.map((item) =>
-      item.id === selectedItem.id
-        ? { ...item, onHand: correctedValue, updatedAt: date, hasTransactions: true }
-        : item
-    ));
+    setSavingAdjustment(true);
+    try {
+      const reference = generateAdjustmentReference(date);
+      const saved = await adjustInventoryItem(inventoryRecordId(selectedItem), {
+        corrected_quantity: correctedValue,
+        reference_no: reference,
+        stock_date: date,
+        reason: reason.trim(),
+        user_id: currentUserId(user),
+        user_name: user.name,
+      });
+      const savedItem = mapInventoryItem(saved);
 
-    setHistory((current) => [
-      {
-        date: formatDateTime(date),
-        material: selectedItem.name,
-        type: "Adjustment",
-        qty: difference,
-        unit: selectedItem.unit,
-        reason: `${adjustmentType} adjustment. System quantity: ${systemQty} ${selectedItem.unit}. Corrected quantity: ${correctedValue} ${selectedItem.unit}. Reason: ${reason.trim()}. Audit: stock adjustment recorded by ${user.name}.`,
-        account: user.name,
-        ref: `ADJ-${date.slice(0, 4)}-${String(current.length + 1).padStart(4, "0")}`,
-        previousBalance: systemQty,
-        updatedBalance: correctedValue,
-      },
-      ...current,
-    ]);
+      setItems((current) => current.map((item) => item.id === selectedItem.id ? savedItem : item));
 
-    toast.success("Stock adjustment saved and audit trail recorded");
-    resetForm();
-    onOpenChange(false);
+      setHistory((current) => [
+        {
+          date: formatDateTime(date),
+          material: selectedItem.name,
+          type: "Adjustment",
+          qty: difference,
+          unit: selectedItem.unit,
+          reason: `${adjustmentType} adjustment. System quantity: ${systemQty} ${selectedItem.unit}. Corrected quantity: ${correctedValue} ${selectedItem.unit}. Reason: ${reason.trim()}. Audit: stock adjustment recorded by ${user.name}.`,
+          account: user.name,
+          ref: reference,
+          previousBalance: systemQty,
+          updatedBalance: correctedValue,
+        },
+        ...current,
+      ]);
+
+      toast.success("Stock adjustment saved to Supabase");
+      resetForm();
+      onOpenChange(false);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to save stock adjustment.");
+    } finally {
+      setSavingAdjustment(false);
+    }
   };
 
   return (
@@ -1659,7 +2037,7 @@ function StockAdjustmentDialog({ open, onOpenChange, items, setItems, setHistory
       if (!nextOpen) resetForm();
       onOpenChange(nextOpen);
     }}>
-      <DialogContent className="!max-w-[95vw] w-[95vw] sm:!max-w-[560px] sm:w-[560px]">
+      <DialogContent className="!max-w-[95vw] w-[95vw] sm:!max-w-[560px]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-emerald-700">
             <Edit className="h-5 w-5" />Stock Adjustment
@@ -1716,8 +2094,10 @@ function StockAdjustmentDialog({ open, onOpenChange, items, setItems, setHistory
           </div>
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={() => { resetForm(); onOpenChange(false); }}>Cancel</Button>
-          <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={saveAdjustment}>Save Adjustment</Button>
+          <Button variant="outline" onClick={() => { resetForm(); onOpenChange(false); }} disabled={savingAdjustment}>Cancel</Button>
+          <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={saveAdjustment} disabled={savingAdjustment}>
+            {savingAdjustment ? "Saving..." : "Save Adjustment"}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -1737,6 +2117,7 @@ function BorrowedMaterialsDialog({ open, onOpenChange, items, rows, setRows, set
   const [returning, setReturning] = useState<BorrowedMaterialRow | null>(null);
   const [returnQty, setReturnQty] = useState("");
   const [returnDate, setReturnDate] = useState(todayInputDate());
+  const [savingReturn, setSavingReturn] = useState(false);
 
   const displayRows = rows.map((row) => ({ ...row, status: borrowedStatus(row) }));
 
@@ -1746,7 +2127,7 @@ function BorrowedMaterialsDialog({ open, onOpenChange, items, rows, setRows, set
     setReturnDate(todayInputDate());
   };
 
-  const saveReturn = () => {
+  const saveReturn = async () => {
     if (!returning) return;
     const qty = Number(returnQty) || 0;
     const remaining = borrowedRemaining(returning);
@@ -1760,42 +2141,44 @@ function BorrowedMaterialsDialog({ open, onOpenChange, items, rows, setRows, set
     }
     const itemBeforeReturn = items.find((item) => item.id === returning.materialId);
 
-    setRows((current) => current.map((row) => {
-      if (row.id !== returning.id) return row;
-      const qtyReturned = row.qtyReturned + qty;
-      const updated = {
-        ...row,
-        qtyReturned,
-        actualReturnDate: qtyReturned >= row.qtyBorrowed ? returnDate : row.actualReturnDate,
-      };
-      return { ...updated, status: borrowedStatus(updated) };
-    }));
+    setSavingReturn(true);
+    try {
+      const saved = await returnBorrowedMaterial(returning.dbId ?? returning.id, {
+        quantity: qty,
+        return_date: returnDate,
+        user_id: currentUserId(user),
+        user_name: user.name,
+      });
+      const returnedRow = mapBorrowedMaterial(saved.borrowed);
+      const returnedItem = mapInventoryItem(saved.item);
 
-    setItems((current) => current.map((item) =>
-      item.id === returning.materialId
-        ? { ...item, onHand: item.onHand + qty, updatedAt: returnDate, hasTransactions: true }
-        : item
-    ));
+      setRows((current) => current.map((row) => row.id === returning.id ? returnedRow : row));
+      setItems((current) => current.map((item) => item.id === returnedItem.id ? returnedItem : item));
 
-    setHistory((current) => [
-      {
-        date: formatDateTime(returnDate),
-        material: returning.material,
-        type: "Returned Material",
-        qty,
-        unit: returning.unit,
-        reason: `Returned by ${returning.borrower}. Borrow record: ${returning.id}. Audit: borrowed material return recorded by ${user.name}.`,
-        account: user.name,
-        ref: `RET-${returnDate.slice(0, 4)}-${String(current.length + 1).padStart(4, "0")}`,
-        previousBalance: itemBeforeReturn?.onHand ?? 0,
-        updatedBalance: (itemBeforeReturn?.onHand ?? 0) + qty,
-      },
-      ...current,
-    ]);
+      setHistory((current) => [
+        {
+          date: formatDateTime(returnDate),
+          material: returning.material,
+          type: "Returned Material",
+          qty,
+          unit: returning.unit,
+          reason: `Returned by ${returning.borrower}. Borrow record: ${returning.id}. Audit: borrowed material return recorded by ${user.name}.`,
+          account: user.name,
+          ref: `RET-${returnDate.slice(0, 4)}-${String(current.length + 1).padStart(4, "0")}`,
+          previousBalance: itemBeforeReturn?.onHand ?? 0,
+          updatedBalance: (itemBeforeReturn?.onHand ?? 0) + qty,
+        },
+        ...current,
+      ]);
 
-    toast.success("Borrowed material return recorded and stock updated");
-    setReturning(null);
-    setReturnQty("");
+      toast.success("Borrowed material return saved to Supabase");
+      setReturning(null);
+      setReturnQty("");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to save borrowed material return.");
+    } finally {
+      setSavingReturn(false);
+    }
   };
 
   return (
@@ -1864,7 +2247,7 @@ function BorrowedMaterialsDialog({ open, onOpenChange, items, rows, setRows, set
       </DialogContent>
 
       <Dialog open={!!returning} onOpenChange={(nextOpen) => !nextOpen && setReturning(null)}>
-        <DialogContent className="!max-w-[95vw] w-[95vw] sm:!max-w-[460px] sm:w-[460px]">
+        <DialogContent className="!max-w-[95vw] w-[95vw] sm:!max-w-[460px]">
           {returning && (
             <>
               <DialogHeader>
@@ -1892,8 +2275,10 @@ function BorrowedMaterialsDialog({ open, onOpenChange, items, rows, setRows, set
                 </div>
               </div>
               <DialogFooter>
-                <Button variant="outline" onClick={() => setReturning(null)}>Cancel</Button>
-                <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={saveReturn}>Save Return</Button>
+                <Button variant="outline" onClick={() => setReturning(null)} disabled={savingReturn}>Cancel</Button>
+                <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={saveReturn} disabled={savingReturn}>
+                  {savingReturn ? "Saving..." : "Save Return"}
+                </Button>
               </DialogFooter>
             </>
           )}
@@ -1903,7 +2288,7 @@ function BorrowedMaterialsDialog({ open, onOpenChange, items, rows, setRows, set
   );
 }
 
-function CreditTransactions({ credits, setCredits }: { credits: CreditRow[]; setCredits: React.Dispatch<React.SetStateAction<CreditRow[]>> }) {
+function CreditTransactions({ credits, setCredits, user }: { credits: CreditRow[]; setCredits: React.Dispatch<React.SetStateAction<CreditRow[]>>; user: User }) {
   const displayCredits = credits.map((credit) => ({
     ...credit,
     beneficiaryId: credit.beneficiaryId || beneficiaryAccountId(credit.beneficiary),
@@ -1915,6 +2300,7 @@ function CreditTransactions({ credits, setCredits }: { credits: CreditRow[]; set
   const [deducting, setDeducting] = useState<CreditRow | null>(null);
   const [deductionAmount, setDeductionAmount] = useState("");
   const [payrollBatch, setPayrollBatch] = useState("PB-2026-06");
+  const [savingDeduction, setSavingDeduction] = useState(false);
   const [ledgerOpen, setLedgerOpen] = useState(false);
   const [ledgerSearch, setLedgerSearch] = useState("");
   const [ledgerStatus, setLedgerStatus] = useState("all");
@@ -1939,7 +2325,7 @@ function CreditTransactions({ credits, setCredits }: { credits: CreditRow[]; set
     setPayrollBatch(credit.slip && credit.slip !== "—" && credit.slip !== "â€”" ? credit.slip : "PB-2026-06");
   };
 
-  const saveDeduction = () => {
+  const saveDeduction = async () => {
     if (!deducting) return;
     const amount = Number(deductionAmount) || 0;
     if (amount <= 0) {
@@ -1955,29 +2341,26 @@ function CreditTransactions({ credits, setCredits }: { credits: CreditRow[]; set
       return;
     }
 
-    setCredits((current) => current.map((credit) => {
-      if (credit.receipt !== deducting.receipt) return credit;
-      const remaining = Math.max(0, credit.remaining - amount);
-      return {
-        ...credit,
-        remaining,
-        status: creditStatus(credit.amount, remaining),
-        slip: payrollBatch.trim(),
-        beneficiaryId: credit.beneficiaryId || beneficiaryAccountId(credit.beneficiary),
-        deductionHistory: [
-          ...(credit.deductionHistory ?? []),
-          {
-            payrollBatch: payrollBatch.trim(),
-            date: new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" }),
-            amount,
-            recordedBy: "Payroll Personnel",
-          },
-        ],
-      };
-    }));
-    toast.success("Payroll deduction recorded and credit balance updated");
-    setDeducting(null);
-    setDeductionAmount("");
+    setSavingDeduction(true);
+    try {
+      const saved = await deductCreditTransaction(deducting.dbId ?? deducting.receipt, {
+        amount,
+        payroll_batch: payrollBatch.trim(),
+        deduction_date: todayInputDate(),
+        user_id: currentUserId(user),
+        user_name: user.name,
+      });
+      const savedCredit = mapCreditTransaction(saved);
+
+      setCredits((current) => current.map((credit) => credit.receipt === deducting.receipt ? savedCredit : credit));
+      toast.success("Payroll deduction saved to Supabase");
+      setDeducting(null);
+      setDeductionAmount("");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to save payroll deduction.");
+    } finally {
+      setSavingDeduction(false);
+    }
   };
 
   const printReceipt = () => {
@@ -2228,7 +2611,7 @@ function CreditTransactions({ credits, setCredits }: { credits: CreditRow[]; set
       </Dialog>
 
       <Dialog open={!!view} onOpenChange={(o) => !o && setView(null)}>
-        <DialogContent className="!max-w-[95vw] w-[95vw] sm:!max-w-[640px] sm:w-[640px]">
+        <DialogContent className="!max-w-[95vw] w-[95vw] sm:!max-w-[640px]">
           {view && (
             <>
               <DialogHeader>
@@ -2242,7 +2625,7 @@ function CreditTransactions({ credits, setCredits }: { credits: CreditRow[]; set
                   <div className="text-xs text-muted-foreground">Panabo City, Davao del Norte</div>
                   <div className="text-xs text-muted-foreground">Credit Release Receipt</div>
                 </div>
-                <div className="grid grid-cols-2 gap-x-6 gap-y-3 p-4 bg-slate-50 rounded-md">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 p-4 bg-slate-50 rounded-md">
                   <div><div className="text-xs text-muted-foreground mb-0.5">Receipt No.</div><div>{view.receipt}</div></div>
                   <div><div className="text-xs text-muted-foreground mb-0.5">Date</div><div>{view.date}</div></div>
                   <div><div className="text-xs text-muted-foreground mb-0.5">Beneficiary</div><div>{view.beneficiary}</div></div>
@@ -2303,7 +2686,7 @@ function CreditTransactions({ credits, setCredits }: { credits: CreditRow[]; set
                     </div>
                   )}
                 </div>
-                <div className="grid grid-cols-2 gap-8 pt-8">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-8 pt-6 sm:pt-8">
                   <div className="text-center">
                     <div className="border-t pt-2 text-xs text-muted-foreground">Released By (Bookkeeper)</div>
                   </div>
@@ -2322,7 +2705,7 @@ function CreditTransactions({ credits, setCredits }: { credits: CreditRow[]; set
       </Dialog>
 
       <Dialog open={!!deducting} onOpenChange={(open) => !open && setDeducting(null)}>
-        <DialogContent className="!max-w-[95vw] w-[95vw] sm:!max-w-[460px] sm:w-[460px]">
+        <DialogContent className="!max-w-[95vw] w-[95vw] sm:!max-w-[460px]">
           {deducting && (
             <>
               <DialogHeader>
@@ -2358,8 +2741,10 @@ function CreditTransactions({ credits, setCredits }: { credits: CreditRow[]; set
                 </div>
               </div>
               <DialogFooter>
-                <Button variant="outline" onClick={() => setDeducting(null)}>Cancel</Button>
-                <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={saveDeduction}>Save Deduction</Button>
+                <Button variant="outline" onClick={() => setDeducting(null)} disabled={savingDeduction}>Cancel</Button>
+                <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={saveDeduction} disabled={savingDeduction}>
+                  {savingDeduction ? "Saving..." : "Save Deduction"}
+                </Button>
               </DialogFooter>
             </>
           )}
@@ -2382,17 +2767,7 @@ interface StockHistoryRow {
   updatedBalance?: number;
 }
 
-const stockHistory: StockHistoryRow[] = [
-  { date: "May 21, 2025 03:15 PM", material: "Pruning Shears", type: "Returned Material", qty: +2, unit: "pcs", reason: "Returned by Ana Reyes after use", account: "Bookkeeper", ref: "RET-2025-0005" },
-  { date: "May 20, 2025 09:30 AM", material: "Banana Bags (Blue)", type: "Direct Release", qty: -300, unit: "pcs", reason: "Released to Maria Santos", account: "Bookkeeper", ref: "RS-2025-0050" },
-  { date: "May 19, 2025 02:30 PM", material: "Urea Fertilizer", type: "Stock In", qty: +200, unit: "kg", reason: "Received from AgriSupply Co.", account: "Bookkeeper", ref: "RC-2025-0042" },
-  { date: "May 18, 2025 10:00 AM", material: "Complete Fertilizer", type: "Credit Issued", qty: -100, unit: "kg", reason: "Credit to Juan Dela Cruz", account: "Bookkeeper", ref: "CR-2025-0007" },
-  { date: "May 17, 2025 04:45 PM", material: "Twine / Rope", type: "Adjustment", qty: -5, unit: "roll", reason: "Correction of counting", account: "Bookkeeper", ref: "ADJ-2025-0003" },
-  { date: "May 17, 2025 08:51 AM", material: "Gloves", type: "Direct Release", qty: -10, unit: "pair", reason: "Released to Pedro Garcia", account: "Bookkeeper", ref: "RS-2025-0049" },
-  { date: "May 16, 2025 11:22 AM", material: "Mancozeb Fungicide", type: "Stock Out — Expired", qty: -2, unit: "kg", reason: "Expired product disposal", account: "Bookkeeper", ref: "EXP-2025-0001" },
-  { date: "May 16, 2025 09:00 AM", material: "Cardboard Boxes", type: "Stock In", qty: +300, unit: "pcs", reason: "Received from Farm Plus Inc.", account: "Bookkeeper", ref: "RC-2025-0041" },
-  { date: "May 15, 2025 01:20 PM", material: "Pruning Shears", type: "Borrowed Material", qty: -2, unit: "pcs", reason: "Borrowed by Ana Reyes for field work", account: "Bookkeeper", ref: "BOR-2025-0012" },
-];
+const stockHistory: StockHistoryRow[] = [];
 
 function parseHistoryDate(s: string): Date {
   // e.g. "May 20, 2025 09:30 AM"
@@ -2441,9 +2816,9 @@ function StockHistory({ history }: { history: StockHistoryRow[] }) {
       <Card>
         <CardContent className="p-4 space-y-3">
           <div className="flex flex-wrap gap-2">
-            <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="w-44 h-9" />
+            <DateInput value={from} onChange={(e) => setFrom(e.target.value)} className="w-44" />
             <span className="self-center text-muted-foreground">—</span>
-            <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="w-44 h-9" />
+            <DateInput value={to} onChange={(e) => setTo(e.target.value)} className="w-44" />
             <Select value={type} onValueChange={setType}>
               <SelectTrigger className="w-52 h-9"><SelectValue /></SelectTrigger>
               <SelectContent>
@@ -2522,8 +2897,9 @@ function StockHistory({ history }: { history: StockHistoryRow[] }) {
   );
 }
 
-function RestockRequests({ user, requests, setRequests }: {
+function RestockRequests({ user, items, requests, setRequests }: {
   user: User;
+  items: InventoryItem[];
   requests: RestockRequest[];
   setRequests: React.Dispatch<React.SetStateAction<RestockRequest[]>>;
 }) {
@@ -2531,7 +2907,9 @@ function RestockRequests({ user, requests, setRequests }: {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [viewing, setViewing] = useState<RestockRequest | null>(null);
+  const [editing, setEditing] = useState<RestockRequest | null>(null);
   const [cancelling, setCancelling] = useState<RestockRequest | null>(null);
+  const [savingCancel, setSavingCancel] = useState(false);
 
   const filtered = requests.filter((r) => {
     const q = search.toLowerCase();
@@ -2550,29 +2928,83 @@ function RestockRequests({ user, requests, setRequests }: {
     }
   };
 
-  const handleCreate = (request: Omit<RestockRequest, "id" | "dateRequested" | "requestedBy" | "status">) => {
-    const nextNumber = requests.length > 0
-      ? Math.max(...requests.map((r) => Number(r.id.split("-").at(-1)) || 0)) + 1
-      : 1;
-
-    setRequests((current) => [
-      {
-        ...request,
-        id: `RR-2025-${String(nextNumber).padStart(3, "0")}`,
-        dateRequested: new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" }),
-        requestedBy: user.name,
-        status: "Pending",
-      },
-      ...current,
-    ]);
-    toast.success("Restock request submitted for approval");
+  const handleCreate = async (request: Omit<RestockRequest, "id" | "dateRequested" | "requestedBy" | "status">) => {
+    try {
+      const saved = await createRestockRequest({
+        item_id: request.itemDbId,
+        material_name: request.material,
+        category: request.category,
+        current_quantity: request.current,
+        minimum_stock: request.minimumStock,
+        requested_quantity: request.requested,
+        priority: request.priority,
+        reason: request.reason,
+        notes: request.notes,
+        user_id: currentUserId(user),
+        user_name: user.name,
+      });
+      setRequests((current) => [mapRestockRequest(saved), ...current]);
+      toast.success("Restock request submitted for approval");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to submit restock request.");
+      throw error;
+    }
   };
 
-  const handleConfirmCancel = () => {
+  const handleUpdate = async (updatedRequest: RestockRequest) => {
+    if (updatedRequest.status !== "Pending") {
+      toast.error("This restock request is locked after manager action");
+      return;
+    }
+
+    try {
+      const saved = await updateRestockRequest(updatedRequest.dbId ?? updatedRequest.id, {
+        item_id: updatedRequest.itemDbId,
+        material_name: updatedRequest.material,
+        category: updatedRequest.category,
+        current_quantity: updatedRequest.current,
+        minimum_stock: updatedRequest.minimumStock,
+        requested_quantity: updatedRequest.requested,
+        priority: updatedRequest.priority,
+        reason: updatedRequest.reason,
+        notes: updatedRequest.notes,
+        user_id: currentUserId(user),
+        user_name: user.name,
+      });
+      const mapped = mapRestockRequest(saved);
+      setRequests((current) => current.map((request) => request.id === updatedRequest.id ? mapped : request));
+      toast.success(`${updatedRequest.id} updated`);
+      setEditing(null);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to update restock request.");
+      throw error;
+    }
+  };
+
+  const handleConfirmCancel = async () => {
     if (!cancelling) return;
-    setRequests((current) => current.filter((r) => r.id !== cancelling.id));
-    toast.success("Restock request cancelled");
-    setCancelling(null);
+    if (savingCancel) return;
+    if (cancelling.status !== "Pending") {
+      toast.error("This restock request is locked after manager action");
+      setCancelling(null);
+      return;
+    }
+
+    setSavingCancel(true);
+    try {
+      const saved = await cancelRestockRequest(cancelling.dbId ?? cancelling.id, {
+        user_id: currentUserId(user),
+        user_name: user.name,
+      });
+      const mapped = mapRestockRequest(saved);
+      setRequests((current) => current.map((r) => r.id === cancelling.id ? mapped : r));
+      toast.success("Restock request cancelled");
+      setCancelling(null);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to cancel restock request.");
+    } finally {
+      setSavingCancel(false);
+    }
   };
 
   return (
@@ -2614,17 +3046,18 @@ function RestockRequests({ user, requests, setRequests }: {
                 <TableHead>Material Name</TableHead>
                 <TableHead>Category</TableHead>
                 <TableHead className="text-right">Current Qty</TableHead>
+                <TableHead className="text-right">Minimum Stock</TableHead>
                 <TableHead className="text-right">Requested Qty</TableHead>
                 <TableHead>Reason</TableHead>
                 <TableHead>Requested By</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead className="w-[88px] text-center">Actions</TableHead>
+                <TableHead className="w-[128px] text-center">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filtered.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={10} className="text-center text-muted-foreground">
+                  <TableCell colSpan={11} className="text-center text-muted-foreground">
                     No restock requests available yet.
                   </TableCell>
                 </TableRow>
@@ -2636,19 +3069,30 @@ function RestockRequests({ user, requests, setRequests }: {
                     <TableCell>{r.material}</TableCell>
                     <TableCell className="text-sm text-muted-foreground">{r.category}</TableCell>
                     <TableCell className="text-right">{r.current}</TableCell>
+                    <TableCell className="text-right">{r.minimumStock ?? "-"}</TableCell>
                     <TableCell className="text-right font-medium">{r.requested}</TableCell>
                     <TableCell className="text-sm">{r.reason}</TableCell>
                     <TableCell>{r.requestedBy}</TableCell>
                     <TableCell><Badge className={getStatusClass(r.status)}>{r.status}</Badge></TableCell>
-                    <TableCell className="w-[88px]">
+                    <TableCell className="w-[128px]">
                       <div className="flex items-center justify-center gap-1 whitespace-nowrap">
                         <button className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded bg-sky-100 text-sky-700 hover:bg-sky-200" title="View" aria-label={`View ${r.id}`} onClick={() => setViewing(r)}>
                           <Eye className="h-3.5 w-3.5" />
                         </button>
                         {r.status === "Pending" && (
-                          <button className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded bg-red-100 text-red-700 hover:bg-red-200" title="Cancel" aria-label={`Cancel ${r.id}`} onClick={() => setCancelling(r)}>
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
+                          <>
+                            <button className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded bg-emerald-100 text-emerald-700 hover:bg-emerald-200" title="Edit pending request" aria-label={`Edit ${r.id}`} onClick={() => setEditing(r)}>
+                              <Edit className="h-3.5 w-3.5" />
+                            </button>
+                            <button className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded bg-red-100 text-red-700 hover:bg-red-200" title="Cancel" aria-label={`Cancel ${r.id}`} onClick={() => setCancelling(r)}>
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </>
+                        )}
+                        {r.status !== "Pending" && (
+                          <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded bg-slate-100 text-slate-500" title="Locked after manager action" aria-label={`${r.id} locked`}>
+                            <Lock className="h-3.5 w-3.5" />
+                          </span>
                         )}
                       </div>
                     </TableCell>
@@ -2669,7 +3113,8 @@ function RestockRequests({ user, requests, setRequests }: {
         </CardContent>
       </Card>
 
-      <CreateRestockRequestDialog open={openCreate} onOpenChange={setOpenCreate} onCreate={handleCreate} />
+      <CreateRestockRequestDialog open={openCreate} onOpenChange={setOpenCreate} items={items} onCreate={handleCreate} />
+      <EditRestockRequestDialog request={editing} onOpenChange={(open) => !open && setEditing(null)} onUpdate={handleUpdate} />
 
       <Dialog open={!!viewing} onOpenChange={(o) => !o && setViewing(null)}>
         <DialogContent>
@@ -2690,10 +3135,16 @@ function RestockRequests({ user, requests, setRequests }: {
               <Detail label="Material" value={viewing.material} />
               <Detail label="Category" value={viewing.category || "Not specified"} />
               <Detail label="Current Quantity" value={String(viewing.current)} />
+              <Detail label="Minimum Stock Level" value={typeof viewing.minimumStock === "number" ? String(viewing.minimumStock) : "Not specified"} />
               <Detail label="Requested Quantity" value={String(viewing.requested)} />
               <Detail label="Priority" value={viewing.priority || "Normal"} />
               <Detail className="sm:col-span-2" label="Reason" value={viewing.reason} />
               {viewing.notes && <Detail className="sm:col-span-2" label="Notes" value={viewing.notes} />}
+              {viewing.status !== "Pending" && (
+                <div className="sm:col-span-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+                  This request is locked because a manager has already taken action.
+                </div>
+              )}
             </div>
           )}
           <DialogFooter>
@@ -2702,7 +3153,7 @@ function RestockRequests({ user, requests, setRequests }: {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!cancelling} onOpenChange={(o) => !o && setCancelling(null)}>
+      <Dialog open={!!cancelling} onOpenChange={(o) => !o && !savingCancel && setCancelling(null)}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-red-700">
@@ -2713,8 +3164,11 @@ function RestockRequests({ user, requests, setRequests }: {
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setCancelling(null)}>Keep Request</Button>
-            <Button className="bg-red-600 hover:bg-red-700 text-white" onClick={handleConfirmCancel}>Cancel Request</Button>
+            <Button variant="outline" onClick={() => setCancelling(null)} disabled={savingCancel}>Keep Request</Button>
+            <Button className="bg-red-600 hover:bg-red-700 text-white" onClick={handleConfirmCancel} disabled={savingCancel}>
+              {savingCancel && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}
+              {savingCancel ? "Cancelling..." : "Cancel Request"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -2723,11 +3177,14 @@ function RestockRequests({ user, requests, setRequests }: {
 }
 
 type RestockRequest = {
+  dbId?: number;
+  itemDbId?: number;
   id: string;
   dateRequested: string;
   material: string;
   category: string;
   current: number;
+  minimumStock?: number;
   requested: number;
   reason: string;
   requestedBy: string;
@@ -2736,11 +3193,8 @@ type RestockRequest = {
   notes?: string;
 };
 
-function initialRestockRequests(userName: string): RestockRequest[] {
-  return [
-    { id: "RR-2025-001", dateRequested: "May 20, 2025", material: "Urea Fertilizer", category: "Fertilizers and Soil Inputs", current: 40, requested: 100, reason: "Below minimum stock level", requestedBy: userName, status: "Pending", priority: "Normal", notes: "" },
-    { id: "RR-2025-002", dateRequested: "May 19, 2025", material: "Banana Bags (Blue)", category: "Packaging Materials", current: 80, requested: 150, reason: "High demand this month", requestedBy: userName, status: "Approved", priority: "Normal", notes: "" },
-  ];
+function initialRestockRequests(_userName: string): RestockRequest[] {
+  return [];
 }
 
 function Detail({ label, value, className = "" }: { label: string; value: string; className?: string }) {
@@ -2752,7 +3206,7 @@ function Detail({ label, value, className = "" }: { label: string; value: string
   );
 }
 
-function CreateRestockRequestDialog({ open, onOpenChange, onCreate }: { open: boolean; onOpenChange: (o: boolean) => void; onCreate: (request: Omit<RestockRequest, "id" | "dateRequested" | "requestedBy" | "status">) => void }) {
+function CreateRestockRequestDialog({ open, onOpenChange, items, onCreate }: { open: boolean; onOpenChange: (o: boolean) => void; items: InventoryItem[]; onCreate: (request: Omit<RestockRequest, "id" | "dateRequested" | "requestedBy" | "status">) => Promise<void> | void }) {
   const [material, setMaterial] = useState("");
   const [category, setCategory] = useState("");
   const [currentQty, setCurrentQty] = useState("");
@@ -2761,35 +3215,56 @@ function CreateRestockRequestDialog({ open, onOpenChange, onCreate }: { open: bo
   const [reason, setReason] = useState("");
   const [priority, setPriority] = useState("normal");
   const [notes, setNotes] = useState("");
+  const [saving, setSaving] = useState(false);
+  const activeItems = items.filter((item) => item.active !== false);
+  const selectedItem = activeItems.find((item) => item.id === material);
 
-  const handleSubmit = () => {
-    if (!material || !requestedQty || !reason) {
+  const handleMaterialChange = (itemId: string) => {
+    const item = activeItems.find((option) => option.id === itemId);
+    setMaterial(itemId);
+    setCategory(item?.category ?? "");
+    setCurrentQty(item ? String(item.onHand) : "");
+    setMinStock(item?.minimumStock ? String(item.minimumStock) : "");
+  };
+
+  const handleSubmit = async () => {
+    if (saving) return;
+    if (!selectedItem || !requestedQty || !reason) {
       toast.error("Please fill in all required fields");
       return;
     }
-    onCreate({
-      material,
-      category: CATEGORIES.find((c) => c.toLowerCase().startsWith(category)) || category || "Not specified",
-      current: Number(currentQty) || 0,
-      requested: Number(requestedQty) || 0,
-      reason,
-      priority: priority === "urgent" ? "Urgent" : "Normal",
-      notes,
-    });
-    onOpenChange(false);
-    // Reset form
-    setMaterial("");
-    setCategory("");
-    setCurrentQty("");
-    setMinStock("");
-    setRequestedQty("");
-    setReason("");
-    setPriority("normal");
-    setNotes("");
+
+    setSaving(true);
+    try {
+      await onCreate({
+        itemDbId: Number(inventoryRecordId(selectedItem)) || undefined,
+        material: selectedItem.name,
+        category: category || "Not specified",
+        current: Number(currentQty) || 0,
+        minimumStock: Number(minStock) || 0,
+        requested: Number(requestedQty) || 0,
+        reason,
+        priority: priority === "urgent" ? "Urgent" : "Normal",
+        notes,
+      });
+      onOpenChange(false);
+      setMaterial("");
+      setCategory("");
+      setCurrentQty("");
+      setMinStock("");
+      setRequestedQty("");
+      setReason("");
+      setPriority("normal");
+      setNotes("");
+    } catch {
+      // Parent handler already shows the database error toast.
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(nextOpen) => !saving && onOpenChange(nextOpen)}>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-emerald-700">
@@ -2803,37 +3278,35 @@ function CreateRestockRequestDialog({ open, onOpenChange, onCreate }: { open: bo
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div className="space-y-1">
               <Label>Material Name <span className="text-red-500">*</span></Label>
-              <Input value={material} onChange={(e) => setMaterial(e.target.value)} placeholder="Select or search material" />
-            </div>
-            <div className="space-y-1">
-              <Label>Category</Label>
-              <Select value={category} onValueChange={setCategory}>
-                <SelectTrigger><SelectValue placeholder="Select category" /></SelectTrigger>
+              <Select value={material} onValueChange={handleMaterialChange} disabled={saving}>
+                <SelectTrigger disabled={saving}><SelectValue placeholder="Select inventory item" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="fertilizers">Fertilizers and Soil Inputs</SelectItem>
-                  <SelectItem value="chemicals">Chemicals and Crop Protection Materials</SelectItem>
-                  <SelectItem value="farm">Farm Materials</SelectItem>
-                  <SelectItem value="packaging">Packaging Materials</SelectItem>
-                  <SelectItem value="other">Other Supplies</SelectItem>
+                  {activeItems.map((item) => (
+                    <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
             <div className="space-y-1">
+              <Label>Category</Label>
+              <Input value={category} placeholder="Auto-filled" disabled />
+            </div>
+            <div className="space-y-1">
               <Label>Current Quantity</Label>
-              <Input type="number" value={currentQty} onChange={(e) => setCurrentQty(e.target.value)} placeholder="0" readOnly className="bg-slate-50" />
+              <Input type="number" value={currentQty} placeholder="0" disabled />
             </div>
             <div className="space-y-1">
               <Label>Minimum Stock Level</Label>
-              <Input type="number" value={minStock} onChange={(e) => setMinStock(e.target.value)} placeholder="0" readOnly className="bg-slate-50" />
+              <Input type="number" value={minStock} placeholder="0" disabled />
             </div>
             <div className="space-y-1">
               <Label>Requested Quantity <span className="text-red-500">*</span></Label>
-              <Input type="number" value={requestedQty} onChange={(e) => setRequestedQty(e.target.value)} placeholder="Enter quantity to request" />
+              <Input type="number" value={requestedQty} onChange={(e) => setRequestedQty(e.target.value)} placeholder="Enter quantity to request" disabled={saving} />
             </div>
             <div className="space-y-1">
               <Label>Priority Level</Label>
-              <Select value={priority} onValueChange={setPriority}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+              <Select value={priority} onValueChange={setPriority} disabled={saving}>
+                <SelectTrigger disabled={saving}><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="normal">Normal</SelectItem>
                   <SelectItem value="urgent">Urgent</SelectItem>
@@ -2844,12 +3317,12 @@ function CreateRestockRequestDialog({ open, onOpenChange, onCreate }: { open: bo
 
           <div className="space-y-1">
             <Label>Reason for Restock <span className="text-red-500">*</span></Label>
-            <Textarea value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Below minimum stock level, high demand expected" rows={2} />
+            <Textarea value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Below minimum stock level, high demand expected" rows={2} disabled={saving} />
           </div>
 
           <div className="space-y-1">
             <Label>Additional Notes</Label>
-            <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Optional additional information" rows={2} />
+            <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Optional additional information" rows={2} disabled={saving} />
           </div>
 
           <div className="text-xs text-muted-foreground bg-sky-50 border border-sky-200 rounded-md p-3">
@@ -2857,9 +3330,10 @@ function CreateRestockRequestDialog({ open, onOpenChange, onCreate }: { open: bo
           </div>
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={handleSubmit}>
-              <FileBarChart2 className="h-4 w-4 mr-1" />Submit Request
+            <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Cancel</Button>
+            <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={handleSubmit} disabled={saving}>
+              {saving ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <FileBarChart2 className="h-4 w-4 mr-1" />}
+              {saving ? "Submitting..." : "Submit Request"}
             </Button>
           </DialogFooter>
         </div>
@@ -2868,5 +3342,142 @@ function CreateRestockRequestDialog({ open, onOpenChange, onCreate }: { open: bo
   );
 }
 
+function EditRestockRequestDialog({ request, onOpenChange, onUpdate }: {
+  request: RestockRequest | null;
+  onOpenChange: (open: boolean) => void;
+  onUpdate: (request: RestockRequest) => Promise<void> | void;
+}) {
+  const [material, setMaterial] = useState("");
+  const [category, setCategory] = useState("");
+  const [currentQty, setCurrentQty] = useState("");
+  const [minStock, setMinStock] = useState("");
+  const [requestedQty, setRequestedQty] = useState("");
+  const [reason, setReason] = useState("");
+  const [priority, setPriority] = useState("normal");
+  const [notes, setNotes] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  React.useEffect(() => {
+    if (!request) return;
+
+    setMaterial(request.material);
+    setCategory(request.category === "Not specified" ? "" : request.category);
+    setCurrentQty(String(request.current));
+    setMinStock(typeof request.minimumStock === "number" ? String(request.minimumStock) : "");
+    setRequestedQty(String(request.requested));
+    setReason(request.reason);
+    setPriority(request.priority === "Urgent" ? "urgent" : "normal");
+    setNotes(request.notes || "");
+  }, [request]);
+
+  const handleSubmit = async () => {
+    if (!request) return;
+    if (saving) return;
+
+    if (request.status !== "Pending") {
+      toast.error("This restock request is locked after manager action");
+      onOpenChange(false);
+      return;
+    }
+
+    if (!material || !requestedQty || !reason) {
+      toast.error("Please fill in all required fields");
+      return;
+    }
+
+    setSaving(true);
+    try {
+      await onUpdate({
+        ...request,
+        material,
+        category: category || "Not specified",
+        current: Number(currentQty) || 0,
+        minimumStock: Number(minStock) || 0,
+        requested: Number(requestedQty) || 0,
+        reason,
+        priority: priority === "urgent" ? "Urgent" : "Normal",
+        notes,
+      });
+    } catch {
+      // Parent handler already shows the database error toast.
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open={!!request} onOpenChange={(nextOpen) => !saving && onOpenChange(nextOpen)}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-emerald-700">
+            <Edit className="h-5 w-5" />Edit Restock Request
+          </DialogTitle>
+          <DialogDescription>
+            Pending requests can be corrected before manager approval.
+          </DialogDescription>
+        </DialogHeader>
+        {request && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <Detail label="Request ID" value={request.id} />
+              <Detail label="Date Requested" value={request.dateRequested} />
+              <div className="space-y-1">
+                <Label>Material Name <span className="text-red-500">*</span></Label>
+                <Input value={material} placeholder="Selected material" disabled />
+              </div>
+              <div className="space-y-1">
+                <Label>Category</Label>
+                <Input value={category} placeholder="Auto-filled" disabled />
+              </div>
+              <div className="space-y-1">
+                <Label>Current Quantity</Label>
+                <Input type="number" value={currentQty} placeholder="0" disabled />
+              </div>
+              <div className="space-y-1">
+                <Label>Minimum Stock Level</Label>
+                <Input type="number" value={minStock} placeholder="0" disabled />
+              </div>
+              <div className="space-y-1">
+                <Label>Requested Quantity <span className="text-red-500">*</span></Label>
+                <Input type="number" value={requestedQty} onChange={(e) => setRequestedQty(e.target.value)} placeholder="Enter quantity to request" disabled={saving} />
+              </div>
+              <div className="space-y-1">
+                <Label>Priority Level</Label>
+                <Select value={priority} onValueChange={setPriority} disabled={saving}>
+                  <SelectTrigger disabled={saving}><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="normal">Normal</SelectItem>
+                    <SelectItem value="urgent">Urgent</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <Label>Reason for Restock <span className="text-red-500">*</span></Label>
+              <Textarea value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Below minimum stock level, high demand expected" rows={2} disabled={saving} />
+            </div>
+
+            <div className="space-y-1">
+              <Label>Additional Notes</Label>
+              <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Optional additional information" rows={2} disabled={saving} />
+            </div>
+
+            <DialogFooter>
+              <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Cancel</Button>
+              <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={handleSubmit} disabled={saving}>
+                {saving ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Edit className="h-4 w-4 mr-1" />}
+                {saving ? "Saving..." : "Save Changes"}
+              </Button>
+            </DialogFooter>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 void TrendingUp;
 void ArrowDownCircle;
+
+

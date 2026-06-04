@@ -128,8 +128,10 @@ class HarvestRecordController extends Controller
 
     private function recordValues(array $payload, bool $creating = true): array
     {
+        $beneficiaryId = $this->resolveBeneficiaryId($payload['beneficiary_name']);
         $values = [
             'harvest_date' => $payload['harvest_date'],
+            'beneficiary_id' => $beneficiaryId,
             'beneficiary_name' => $payload['beneficiary_name'],
             'harvester_name' => $payload['harvester_name'],
             'buligs_11_weeks' => $payload['buligs_11_weeks'],
@@ -148,12 +150,50 @@ class HarvestRecordController extends Controller
         return $values;
     }
 
+    private function resolveBeneficiaryId(string $name): ?int
+    {
+        if (! Schema::hasTable('beneficiaries')) {
+            return null;
+        }
+
+        $nameColumn = Schema::hasColumn('beneficiaries', 'full_name') ? 'full_name' : (Schema::hasColumn('beneficiaries', 'name') ? 'name' : null);
+        if (! $nameColumn) {
+            return null;
+        }
+
+        $existing = DB::table('beneficiaries')->where($nameColumn, $name)->value('id');
+        if ($existing) {
+            return (int) $existing;
+        }
+
+        $values = [$nameColumn => $name];
+        $code = 'BEN-'.now()->format('ymdHis');
+        if (Schema::hasColumn('beneficiaries', 'code')) {
+            $values['code'] = $code;
+        }
+        if (Schema::hasColumn('beneficiaries', 'beneficiary_code')) {
+            $values['beneficiary_code'] = $code;
+        }
+        if (Schema::hasColumn('beneficiaries', 'active')) {
+            $values['active'] = true;
+        }
+        if (Schema::hasColumn('beneficiaries', 'created_at')) {
+            $values['created_at'] = now();
+        }
+        if (Schema::hasColumn('beneficiaries', 'updated_at')) {
+            $values['updated_at'] = now();
+        }
+
+        return (int) DB::table('beneficiaries')->insertGetId($values);
+    }
+
     private function recordAudit(?int $userId, ?string $userName, string $action, string $description): void
     {
         if (! Schema::hasTable('audit_logs')) {
             return;
         }
 
+        $userId = $this->resolveUserId($userId, $userName);
         $values = [
             'module' => 'Production',
             'action' => $action,
@@ -192,5 +232,21 @@ class HarvestRecordController extends Controller
         }
 
         DB::table('audit_logs')->insert($values);
+    }
+
+    private function resolveUserId(?int $userId, ?string $userName): ?int
+    {
+        if ($userId) return $userId;
+        if (! Schema::hasTable('users')) return null;
+
+        if ($userName) {
+            $nameColumn = Schema::hasColumn('users', 'full_name') ? 'full_name' : (Schema::hasColumn('users', 'name') ? 'name' : null);
+            if ($nameColumn) {
+                $matched = DB::table('users')->where($nameColumn, $userName)->value('id');
+                if ($matched) return (int) $matched;
+            }
+        }
+
+        return DB::table('users')->value('id');
     }
 }

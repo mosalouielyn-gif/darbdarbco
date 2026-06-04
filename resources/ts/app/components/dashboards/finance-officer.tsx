@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { DarbcoLayout } from "../darbco-layout";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Input } from "../ui/input";
@@ -9,12 +9,16 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Textarea } from "../ui/textarea";
+import { DateInput } from "../ui/date-input";
 import {
   LayoutDashboard, ClipboardCheck, ClipboardList, Undo2, History, FileBarChart2,
-  Search, CheckCircle2, AlertCircle, Eye, Printer, ChevronLeft, ChevronRight, ShieldCheck,
+  Search, CheckCircle2, AlertCircle, Eye, Printer, ChevronLeft, ChevronRight, ShieldCheck, Loader2,
 } from "lucide-react";
 import { User } from "../types";
 import { toast } from "sonner";
+import { usePersistentState } from "../../lib/use-persistent-state";
+import { useAppData } from "../../lib/app-data-context";
+import { returnPayrollSlipForCorrection, validatePayrollSlip } from "../../lib/api";
 
 interface Props { user: User; onLogout: () => void }
 
@@ -41,6 +45,7 @@ interface ProductionSource {
 }
 
 interface FoSlip {
+  dbId?: number;
   slipNo: string;
   productionRecordId: string;
   beneficiaryId: string;
@@ -52,6 +57,7 @@ interface FoSlip {
   status: FoStatus;
   // Payroll record values
   classA: number; classB: number; special: number;
+  classAPrice?: number; classBPrice?: number; specialPrice?: number;
   materialCredits: MaterialCredit[];
   laborDescription: string; laborAmount: number; laborRemarks: string; laborEncodedBy: string; laborDateEncoded: string;
   prevBalance: number;
@@ -61,89 +67,110 @@ interface FoSlip {
   returnReason?: { category: string; reason: string; remarks?: string; returnedBy: string; dateReturned: string };
 }
 
-const SEED: FoSlip[] = [
-  {
-    slipNo: "PB-2026-0002",
-    productionRecordId: "PR-2026-0531-01",
-    beneficiaryId: "B-001",
-    beneficiaryName: "Roberto Cruz",
-    payrollPeriod: "May 16 – May 31, 2026",
-    harvestDate: "2026-05-28",
-    preparedBy: "Ana Dela Cruz",
-    dateSubmitted: "2026-05-31 14:20",
-    status: "Submitted to Finance",
-    classA: 60, classB: 20, special: 6,
-    materialCredits: [
-      { date: "2026-05-15", material: "Complete Fertilizer", qty: 2, unit: "sacks", unitPrice: 1000, status: "Unpaid" },
-      { date: "2026-05-18", material: "Fungicide (Mancozeb)", qty: 1, unit: "bottle", unitPrice: 500, status: "Unpaid" },
-    ],
-    laborDescription: "Harvesting and production labor",
-    laborAmount: 3500,
-    laborRemarks: "Crew A — three-day harvest cycle",
-    laborEncodedBy: "Ana Dela Cruz",
-    laborDateEncoded: "2026-05-31 13:55",
-    prevBalance: 0,
-    otherDeductions: [],
-    productionSource: { classA: 60, classB: 20, special: 6 },
-  },
-  {
-    slipNo: "PB-2026-0003",
-    productionRecordId: "PR-2026-0531-03",
-    beneficiaryId: "B-002",
-    beneficiaryName: "Liza Mariano",
-    payrollPeriod: "May 16 – May 31, 2026",
-    harvestDate: "2026-05-27",
-    preparedBy: "Ana Dela Cruz",
-    dateSubmitted: "2026-05-31 14:42",
-    status: "Submitted to Finance",
-    classA: 48, classB: 12, special: 8,
-    materialCredits: [
-      { date: "2026-05-12", material: "Insecticide (Cypermethrin)", qty: 1, unit: "L", unitPrice: 720, status: "Unpaid" },
-    ],
-    laborDescription: "Harvesting and packing labor",
-    laborAmount: 2800,
+interface ValidationActivity {
+  id: number;
+  slipNo: string;
+  beneficiaryName: string;
+  payrollPeriod: string;
+  action: "Validated" | "Returned";
+  account: string;
+  timestamp: string;
+  remarks: string;
+}
+
+const SEED: FoSlip[] = [];
+
+function currentUserId(user: User) {
+  const id = Number(user.id);
+  return Number.isFinite(id) ? id : undefined;
+}
+
+function financeStatus(row: any): FoStatus {
+  if (row.approval_status === "Approved") return "Approved";
+  if (row.approval_status === "Pending Manager Approval") return "Pending Manager Approval";
+  if (row.validation_status === "Validated") return "Pending Manager Approval";
+  if (row.validation_status === "Returned for Correction") return "Returned for Correction";
+  return "Submitted to Finance";
+}
+
+function mapPayrollSlip(row: any): FoSlip {
+  const classA = Number(row.class_a_boxes ?? 0);
+  const classB = Number(row.class_b_boxes ?? 0);
+  const special = Number(row.special_boxes ?? row.special_product_boxes ?? 0);
+  const creditDeduction = Number(row.credit_deduction ?? row.material_deduction ?? 0);
+  const previousBalance = Number(row.previous_balance ?? 0);
+  const laborAmount = Number(row.labor_cost ?? 0);
+  const otherDeductionAmount = Number(row.other_deductions ?? 0);
+
+  return {
+    dbId: Number(row.id) || undefined,
+    slipNo: String(row.slip_no ?? row.id),
+    productionRecordId: String(row.production_record_id ?? row.production_box_record_id ?? "N/A"),
+    beneficiaryId: String(row.beneficiary_id ?? ""),
+    beneficiaryName: row.beneficiary_name ?? "",
+    payrollPeriod: row.payroll_period ?? "",
+    harvestDate: String(row.harvest_date ?? "").slice(0, 10),
+    preparedBy: row.prepared_by_name ?? String(row.prepared_by ?? ""),
+    dateSubmitted: String(row.submitted_at ?? row.created_at ?? "").slice(0, 16).replace("T", " "),
+    status: financeStatus(row),
+    classA,
+    classB,
+    special,
+    classAPrice: Number(row.class_a_price ?? PRICES.A),
+    classBPrice: Number(row.class_b_price ?? PRICES.B),
+    specialPrice: Number(row.special_price ?? PRICES.special),
+    materialCredits: creditDeduction > 0 ? [{
+      date: String(row.harvest_date ?? "").slice(0, 10),
+      material: "Material credit deduction",
+      qty: 1,
+      unit: "lot",
+      unitPrice: creditDeduction,
+      status: "Unpaid",
+    }] : [],
+    laborDescription: laborAmount > 0 ? "Payroll labor cost" : "No labor cost recorded",
+    laborAmount,
     laborRemarks: "",
-    laborEncodedBy: "Ana Dela Cruz",
-    laborDateEncoded: "2026-05-31 14:30",
-    prevBalance: 0,
-    otherDeductions: [],
-    productionSource: { classA: 48, classB: 14, special: 8 }, // mismatch on Class B for demo
-  },
-  {
-    slipNo: "PB-2026-0001",
-    productionRecordId: "PR-2026-0531-02",
-    beneficiaryId: "B-004",
-    beneficiaryName: "Helena Pascual",
-    payrollPeriod: "May 16 – May 31, 2026",
-    harvestDate: "2026-05-29",
-    preparedBy: "Ana Dela Cruz",
-    dateSubmitted: "2026-05-30 16:10",
-    status: "Approved",
-    classA: 84, classB: 36, special: 4,
-    materialCredits: [
-      { date: "2026-05-10", material: "Banana Bags (Blue)", qty: 200, unit: "pcs", unitPrice: 12.5, status: "Partially Paid" },
-    ],
-    laborDescription: "Harvesting and packing labor",
-    laborAmount: 3500,
-    laborRemarks: "",
-    laborEncodedBy: "Ana Dela Cruz",
-    laborDateEncoded: "2026-05-30 15:45",
-    prevBalance: 1200,
-    otherDeductions: [{ type: "Other Authorized", description: "Tool replacement", amount: 200, ref: "ADJ-2026-0009" }],
-    productionSource: { classA: 84, classB: 36, special: 4 },
-  },
-];
+    laborEncodedBy: row.prepared_by_name ?? String(row.prepared_by ?? ""),
+    laborDateEncoded: String(row.submitted_at ?? row.created_at ?? "").slice(0, 10),
+    prevBalance: previousBalance,
+    otherDeductions: otherDeductionAmount > 0 ? [{
+      type: "Other Deduction",
+      description: "Other authorized deductions",
+      amount: otherDeductionAmount,
+      ref: row.slip_no ?? "",
+    }] : [],
+    productionSource: { classA, classB, special },
+  };
+}
+
+function mapValidationActivity(row: any): ValidationActivity | null {
+  if (row.module !== "Payroll") return null;
+  if (row.action !== "Validated" && row.action !== "Returned") return null;
+  return {
+    id: Number(row.id) || Date.now(),
+    slipNo: String(row.details ?? "").match(/payroll slip ([^ ]+)/i)?.[1] ?? "Payroll Slip",
+    beneficiaryName: "",
+    payrollPeriod: "",
+    action: row.action,
+    account: row.user_name ?? "Finance Officer",
+    timestamp: String(row.created_at ?? ""),
+    remarks: row.details ?? "",
+  };
+}
 
 function compute(s: FoSlip) {
-  const subA = s.classA * PRICES.A;
-  const subB = s.classB * PRICES.B;
-  const subSpecial = s.special * PRICES.special;
+  const priceA = s.classAPrice ?? PRICES.A;
+  const priceB = s.classBPrice ?? PRICES.B;
+  const priceSpecial = s.specialPrice ?? PRICES.special;
+  const subA = s.classA * priceA;
+  const subB = s.classB * priceB;
+  const subSpecial = s.special * priceSpecial;
   const gross = subA + subB + subSpecial;
   const matTotal = s.materialCredits.reduce((sum, d) => sum + d.qty * d.unitPrice, 0);
   const otherTotal = s.otherDeductions.reduce((sum, d) => sum + d.amount, 0);
   const totalDed = matTotal + s.laborAmount + s.prevBalance + otherTotal;
   const net = gross - totalDed;
-  return { subA, subB, subSpecial, gross, matTotal, otherTotal, totalDed, net };
+  return { priceA, priceB, priceSpecial, subA, subB, subSpecial, gross, matTotal, otherTotal, totalDed, net };
 }
 
 function statusClass(s: FoStatus): string {
@@ -157,6 +184,14 @@ function statusClass(s: FoStatus): string {
 }
 function StatusBadge({ s }: { s: FoStatus }) {
   return <Badge className={statusClass(s)}>{s}</Badge>;
+}
+
+function isFinanceValidated(status: FoStatus) {
+  return status === "Validated by Finance" || status === "Pending Manager Approval" || status === "Approved";
+}
+
+function canFinanceAct(status: FoStatus) {
+  return status === "Submitted to Finance" || status === "Returned for Correction";
 }
 
 const ERROR_CATEGORIES = [
@@ -175,37 +210,124 @@ const ERROR_CATEGORIES = [
   "Other issue",
 ];
 
+function returnCategoryForIssue(area: string, slip: FoSlip | null) {
+  if (area === "Beneficiary Information") return "Incorrect beneficiary information";
+  if (area === "Production Record") return "Missing production record";
+  if (area === "Product Classification") return "Incorrect number of boxes";
+  if (area === "Price Computation") return "Incorrect price per box";
+  if (area === "Material Credit Deductions") return "Incorrect material credit amount";
+  if (area === "Labor Cost") return slip && slip.laborAmount > 0 ? "Incorrect labor cost amount" : "Missing labor cost";
+  if (area === "Other Deductions") return "Incomplete deduction details";
+  if (area === "Gross Income" || area === "Total Deductions") return "Incorrect gross income";
+  if (area === "Net Income") return "Incorrect net income";
+  return "Other issue";
+}
+
+function defaultReturnReason(area: string, detail: string) {
+  if (area === "Labor Cost") return "Labor cost is missing or incomplete. Please add the labor cost amount and description, then resubmit the payroll.";
+  return `${area} needs correction: ${detail}.`;
+}
+
 export function FinanceOfficerDashboard({ user, onLogout }: Props) {
-  const [active, setActive] = useState("dashboard");
-  const [slips, setSlips] = useState<FoSlip[]>(SEED);
+  const { data } = useAppData();
+  const [active, setActive] = usePersistentState("darbco.financeOfficer.active", "dashboard");
+  const [slips, setSlips] = useState<FoSlip[]>((data?.payrollSlips ?? []).map(mapPayrollSlip));
   const [reviewSlip, setReviewSlip] = useState<FoSlip | null>(null);
+  const [validationActivities, setValidationActivities] = useState<ValidationActivity[]>((data?.auditLogs ?? []).map(mapValidationActivity).filter(Boolean) as ValidationActivity[]);
+
+  useEffect(() => {
+    setSlips((data?.payrollSlips ?? []).map(mapPayrollSlip));
+    setValidationActivities((data?.auditLogs ?? []).map(mapValidationActivity).filter(Boolean) as ValidationActivity[]);
+  }, [data?.payrollSlips, data?.auditLogs]);
 
   const openReview = (slip: FoSlip) => setReviewSlip(slip);
   const closeReview = () => setReviewSlip(null);
 
-  const validate = (slipNo: string) => {
-    setSlips((cur) => cur.map((s) => s.slipNo === slipNo ? { ...s, status: "Pending Manager Approval" } : s));
-    toast.success(`${slipNo} validated and forwarded to Manager`);
-    closeReview();
+  const validate = async (slipNo: string) => {
+    const slip = slips.find((item) => item.slipNo === slipNo);
+    if (!slip) return;
+    try {
+      const saved = await validatePayrollSlip(slip.dbId ?? slip.slipNo, {
+        user_id: currentUserId(user),
+        user_name: user.name,
+        remarks: "Payroll validated and forwarded to Manager approval.",
+      });
+      const mapped = mapPayrollSlip(saved);
+      setSlips((cur) => cur.map((s) => s.slipNo === slipNo ? mapped : s));
+      setValidationActivities((current) => [
+        {
+          id: Date.now(),
+          slipNo: slip.slipNo,
+          beneficiaryName: slip.beneficiaryName,
+          payrollPeriod: slip.payrollPeriod,
+          action: "Validated",
+          account: user.name,
+          timestamp: new Date().toLocaleString("en-US", {
+            month: "long",
+            day: "numeric",
+            year: "numeric",
+            hour: "numeric",
+            minute: "2-digit",
+          }),
+          remarks: "Payroll validated and forwarded to Manager approval.",
+        },
+        ...current,
+      ]);
+      toast.success(`${slipNo} validated and forwarded to Manager`);
+      closeReview();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to validate payroll slip.");
+    }
   };
 
-  const returnSlip = (slipNo: string, payload: { category: string; reason: string; remarks?: string }) => {
-    setSlips((cur) => cur.map((s) => s.slipNo === slipNo ? {
-      ...s, status: "Returned for Correction",
-      returnReason: { ...payload, returnedBy: user.name, dateReturned: new Date().toISOString().slice(0, 16).replace("T", " ") },
-    } : s));
-    toast.success(`${slipNo} returned to Payroll Personnel`);
-    closeReview();
+  const returnSlip = async (slipNo: string, payload: { category: string; reason: string; remarks?: string }) => {
+    const slip = slips.find((item) => item.slipNo === slipNo);
+    if (!slip) return;
+    try {
+      const saved = await returnPayrollSlipForCorrection(slip.dbId ?? slip.slipNo, {
+        ...payload,
+        user_id: currentUserId(user),
+        user_name: user.name,
+      });
+      const mapped = {
+        ...mapPayrollSlip(saved),
+        returnReason: { ...payload, returnedBy: user.name, dateReturned: new Date().toISOString().slice(0, 16).replace("T", " ") },
+      };
+      setSlips((cur) => cur.map((s) => s.slipNo === slipNo ? mapped : s));
+      setValidationActivities((current) => [
+        {
+          id: Date.now(),
+          slipNo: slip.slipNo,
+          beneficiaryName: slip.beneficiaryName,
+          payrollPeriod: slip.payrollPeriod,
+          action: "Returned",
+          account: user.name,
+          timestamp: new Date().toLocaleString("en-US", {
+            month: "long",
+            day: "numeric",
+            year: "numeric",
+            hour: "numeric",
+            minute: "2-digit",
+          }),
+          remarks: `${payload.category}: ${payload.reason}`,
+        },
+        ...current,
+      ]);
+      toast.success(`${slipNo} returned to Payroll Personnel`);
+      closeReview();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to return payroll slip.");
+    }
   };
 
   return (
     <DarbcoLayout user={user} onLogout={onLogout} navItems={NAV} active={active} onChange={setActive}>
-      {active === "dashboard" && <Dashboard slips={slips} goTo={setActive} onReview={openReview} />}
+      {active === "dashboard" && <Dashboard slips={slips} activities={validationActivities} goTo={setActive} onReview={openReview} />}
       {active === "pending" && <SlipList title="Pending Validation" slips={slips} filter={(s) => s.status === "Submitted to Finance"} onReview={openReview} />}
       {active === "validated" && <SlipList title="Validated Payrolls" slips={slips} filter={(s) => s.status === "Validated by Finance" || s.status === "Pending Manager Approval"} onReview={openReview} />}
       {active === "returned" && <SlipList title="Returned Payrolls" slips={slips} filter={(s) => s.status === "Returned for Correction"} onReview={openReview} />}
       {active === "history" && <SlipList title="Payroll History" slips={slips} filter={() => true} onReview={openReview} />}
-      {active === "reports" && <Reports />}
+      {active === "reports" && <Reports slips={slips} activities={validationActivities} />}
 
       <ValidationDetailsDialog
         slip={reviewSlip}
@@ -217,12 +339,17 @@ export function FinanceOfficerDashboard({ user, onLogout }: Props) {
   );
 }
 
-function Dashboard({ slips, goTo, onReview }: { slips: FoSlip[]; goTo: (id: string) => void; onReview: (s: FoSlip) => void }) {
+function Dashboard({ slips, activities, goTo, onReview }: { slips: FoSlip[]; activities: ValidationActivity[]; goTo: (id: string) => void; onReview: (s: FoSlip) => void }) {
+  const periods = Array.from(new Set(slips.map((s) => s.payrollPeriod)));
+  const [selectedPeriod, setSelectedPeriod] = useState(periods[0] ?? "all");
   const pending = slips.filter((s) => s.status === "Submitted to Finance");
   const validated = slips.filter((s) => s.status === "Validated by Finance" || s.status === "Pending Manager Approval");
   const returned = slips.filter((s) => s.status === "Returned for Correction");
   const pendingMgr = slips.filter((s) => s.status === "Pending Manager Approval");
   const approved = slips.filter((s) => s.status === "Approved");
+  const validatedForPeriod = slips.filter((s) => isFinanceValidated(s.status) && (selectedPeriod === "all" || s.payrollPeriod === selectedPeriod));
+  const validatedAmount = validatedForPeriod.reduce((sum, slip) => sum + compute(slip).net, 0);
+  const recentActivities = activities.slice(0, 5);
 
   return (
     <div className="space-y-6">
@@ -237,6 +364,68 @@ function Dashboard({ slips, goTo, onReview }: { slips: FoSlip[]; goTo: (id: stri
         <Kpi color="red" label="Returned for Correction" value={String(returned.length)} sub="Sent back to Payroll" onClick={() => goTo("returned")} />
         <Kpi color="sky" label="Pending Manager Approval" value={String(pendingMgr.length)} sub="With Manager" onClick={() => goTo("validated")} />
         <Kpi color="emerald" label="Approved Payrolls" value={String(approved.length)} sub="Final approval done" onClick={() => goTo("history")} />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_1.2fr] gap-4">
+        <Card>
+          <CardHeader className="flex-row items-start justify-between gap-3 pb-2">
+            <div>
+              <CardTitle className="text-base flex items-center gap-2">
+                <ClipboardCheck className="h-4 w-4 text-emerald-700" />Validated Payroll Amount
+              </CardTitle>
+              <p className="text-xs text-muted-foreground mt-1">Net income total for payrolls already validated by Finance.</p>
+            </div>
+            <Select value={selectedPeriod} onValueChange={setSelectedPeriod}>
+              <SelectTrigger className="h-9 w-56"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Payroll Periods</SelectItem>
+                {periods.map((period) => (
+                  <SelectItem key={period} value={period}>{period}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-bold text-emerald-700">PHP {validatedAmount.toLocaleString()}</div>
+            <div className="mt-1 text-sm text-muted-foreground">
+              {validatedForPeriod.length} validated payroll{validatedForPeriod.length === 1 ? "" : "s"} included
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base flex items-center gap-2">
+              <History className="h-4 w-4 text-emerald-700" />Recent Validation Activities
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {recentActivities.length === 0 ? (
+              <div className="rounded-md border bg-slate-50 p-3 text-sm text-muted-foreground">
+                No validation activities recorded yet.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {recentActivities.map((activity) => (
+                  <div key={activity.id} className="grid grid-cols-1 gap-2 rounded-md border bg-white p-3 md:grid-cols-[130px_1fr]">
+                    <div>
+                      <Badge className={activity.action === "Validated" ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"}>
+                        {activity.action}
+                      </Badge>
+                      <div className="mt-2 text-xs text-muted-foreground">{activity.timestamp}</div>
+                    </div>
+                    <div>
+                      <div className="text-sm font-semibold">{activity.slipNo} - {activity.beneficiaryName}</div>
+                      <div className="text-xs text-muted-foreground">{activity.payrollPeriod}</div>
+                      <div className="mt-1 text-sm text-muted-foreground">{activity.remarks}</div>
+                      <div className="mt-1 text-xs text-muted-foreground">By {activity.account}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
       </div>
 
       <Card>
@@ -303,7 +492,7 @@ function SlipList({ title, slips, filter, onReview }: { title: string; slips: Fo
               <Input placeholder="Search beneficiary name..." className="pl-8 h-9" value={searchName} onChange={(e) => setSearchName(e.target.value)} />
             </div>
             <Input placeholder="Payroll slip number" className="w-48 h-9" value={slipNo} onChange={(e) => setSlipNo(e.target.value)} />
-            <Input type="date" className="w-44 h-9" value={harvestDate} onChange={(e) => setHarvestDate(e.target.value)} />
+            <DateInput className="w-44" value={harvestDate} onChange={(e) => setHarvestDate(e.target.value)} />
             <Select value={period} onValueChange={setPeriod}>
               <SelectTrigger className="w-56 h-9"><SelectValue /></SelectTrigger>
               <SelectContent>
@@ -384,13 +573,15 @@ function SlipTable({ slips, onReview }: { slips: FoSlip[]; onReview: (s: FoSlip)
 function ValidationDetailsDialog({ slip, onClose, onValidate, onReturn }: {
   slip: FoSlip | null;
   onClose: () => void;
-  onValidate: (slipNo: string) => void;
-  onReturn: (slipNo: string, payload: { category: string; reason: string; remarks?: string }) => void;
+  onValidate: (slipNo: string) => void | Promise<void>;
+  onReturn: (slipNo: string, payload: { category: string; reason: string; remarks?: string }) => void | Promise<void>;
 }) {
   const [showReturn, setShowReturn] = useState(false);
   const [retCategory, setRetCategory] = useState("");
   const [retReason, setRetReason] = useState("");
   const [retRemarks, setRetRemarks] = useState("");
+  const [returning, setReturning] = useState(false);
+  const [validating, setValidating] = useState(false);
 
   const c = useMemo(() => slip ? compute(slip) : null, [slip]);
 
@@ -402,10 +593,10 @@ function ValidationDetailsDialog({ slip, onClose, onValidate, onReturn }: {
       { area: "Beneficiary Information", detail: "Beneficiary name and ID are correct", ok: !!slip.beneficiaryName && !!slip.beneficiaryId },
       { area: "Production Record", detail: "Harvest date and production record are correct", ok: !!slip.harvestDate && !!slip.productionRecordId },
       { area: "Product Classification", detail: "Class A, Class B, and Special Product quantities match", ok: boxesMatch },
-      { area: "Price Computation", detail: "Correct price is applied per classification", ok: PRICES.A > 0 && PRICES.B > 0 && PRICES.special > 0 },
-      { area: "Gross Income", detail: "Earnings computation is accurate", ok: c.gross === slip.classA * PRICES.A + slip.classB * PRICES.B + slip.special * PRICES.special },
+      { area: "Price Computation", detail: "Correct price is applied per classification", ok: c.priceA > 0 && c.priceB > 0 && c.priceSpecial > 0 },
+      { area: "Gross Income", detail: "Earnings computation is accurate", ok: c.gross === slip.classA * c.priceA + slip.classB * c.priceB + slip.special * c.priceSpecial },
       { area: "Material Credit Deductions", detail: "Credit transactions match the Inventory Bookkeeper's records", ok: slip.materialCredits.every((m) => m.status === "Unpaid" || m.status === "Partially Paid") },
-      { area: "Labor Cost", detail: "Labor cost is complete and properly recorded", ok: slip.laborAmount > 0 && slip.laborDescription.trim().length > 0 },
+      { area: "Labor Cost", detail: "Labor cost is optional; ₱0 is allowed when no labor charge applies", ok: slip.laborAmount >= 0 },
       { area: "Other Deductions", detail: "Additional deductions contain valid details", ok: slip.otherDeductions.every((d) => d.description.trim().length > 0 && d.amount > 0) },
       { area: "Total Deductions", detail: "All applicable deductions are included", ok: c.totalDed === c.matTotal + slip.laborAmount + slip.prevBalance + c.otherTotal },
       { area: "Net Income", detail: "Final amount is correct", ok: c.net === c.gross - c.totalDed },
@@ -414,23 +605,48 @@ function ValidationDetailsDialog({ slip, onClose, onValidate, onReturn }: {
 
   const allOk = checklist.length > 0 && checklist.every((x) => x.ok);
 
+  useEffect(() => {
+    if (!showReturn || !slip) return;
+    const failedItem = checklist.find((item) => !item.ok);
+    if (!failedItem) return;
+    if (!retCategory) setRetCategory(returnCategoryForIssue(failedItem.area, slip));
+    if (!retReason.trim()) setRetReason(defaultReturnReason(failedItem.area, failedItem.detail));
+  }, [showReturn, slip, checklist, retCategory, retReason]);
+
   if (!slip || !c) return null;
+  const financeCanAct = canFinanceAct(slip.status);
 
   const closeAndReset = () => {
+    if (returning || validating) return;
     setShowReturn(false); setRetCategory(""); setRetReason(""); setRetRemarks("");
     onClose();
   };
 
-  const submitReturn = () => {
+  const submitValidation = async () => {
+    if (!slip || validating || returning) return;
+    setValidating(true);
+    try {
+      await onValidate(slip.slipNo);
+    } finally {
+      setValidating(false);
+    }
+  };
+
+  const submitReturn = async () => {
     if (!retCategory) { toast.error("Error category is required"); return; }
     if (!retReason.trim()) { toast.error("Reason for return is required"); return; }
-    onReturn(slip.slipNo, { category: retCategory, reason: retReason, remarks: retRemarks });
-    setShowReturn(false); setRetCategory(""); setRetReason(""); setRetRemarks("");
+    setReturning(true);
+    try {
+      await onReturn(slip.slipNo, { category: retCategory, reason: retReason, remarks: retRemarks });
+      setShowReturn(false); setRetCategory(""); setRetReason(""); setRetRemarks("");
+    } finally {
+      setReturning(false);
+    }
   };
 
   return (
     <Dialog open={!!slip} onOpenChange={(o) => !o && closeAndReset()}>
-      <DialogContent className="!max-w-[95vw] w-[95vw] sm:!max-w-[1200px] sm:w-[1200px] max-h-[92vh] overflow-y-auto">
+      <DialogContent className="!max-w-[95vw] w-[95vw] sm:!max-w-[1200px] max-h-[92vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Payroll Validation Details — {slip.slipNo}</DialogTitle>
         </DialogHeader>
@@ -438,7 +654,7 @@ function ValidationDetailsDialog({ slip, onClose, onValidate, onReturn }: {
         <div className="space-y-5">
           {/* Section A */}
           <SectionCard title="Section A — Beneficiary and Payroll Information" tone="emerald">
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
               <Field label="Payroll Slip No." value={slip.slipNo} />
               <Field label="Beneficiary ID" value={slip.beneficiaryId} />
               <Field label="Beneficiary Name" value={slip.beneficiaryName} />
@@ -499,9 +715,9 @@ function ValidationDetailsDialog({ slip, onClose, onValidate, onReturn }: {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                <TableRow><TableCell>Class A</TableCell><TableCell className="text-right">{slip.classA}</TableCell><TableCell className="text-right">₱{PRICES.A.toLocaleString()}</TableCell><TableCell className="text-right">₱{c.subA.toLocaleString()}</TableCell><TableCell><Badge className="bg-emerald-100 text-emerald-800">Correct</Badge></TableCell></TableRow>
-                <TableRow><TableCell>Class B</TableCell><TableCell className="text-right">{slip.classB}</TableCell><TableCell className="text-right">₱{PRICES.B.toLocaleString()}</TableCell><TableCell className="text-right">₱{c.subB.toLocaleString()}</TableCell><TableCell><Badge className="bg-emerald-100 text-emerald-800">Correct</Badge></TableCell></TableRow>
-                <TableRow><TableCell>Special Product</TableCell><TableCell className="text-right">{slip.special}</TableCell><TableCell className="text-right">₱{PRICES.special.toLocaleString()}</TableCell><TableCell className="text-right">₱{c.subSpecial.toLocaleString()}</TableCell><TableCell><Badge className="bg-emerald-100 text-emerald-800">Correct</Badge></TableCell></TableRow>
+                <TableRow><TableCell>Class A</TableCell><TableCell className="text-right">{slip.classA}</TableCell><TableCell className="text-right">₱{c.priceA.toLocaleString()}</TableCell><TableCell className="text-right">₱{c.subA.toLocaleString()}</TableCell><TableCell><Badge className="bg-emerald-100 text-emerald-800">Correct</Badge></TableCell></TableRow>
+                <TableRow><TableCell>Class B</TableCell><TableCell className="text-right">{slip.classB}</TableCell><TableCell className="text-right">₱{c.priceB.toLocaleString()}</TableCell><TableCell className="text-right">₱{c.subB.toLocaleString()}</TableCell><TableCell><Badge className="bg-emerald-100 text-emerald-800">Correct</Badge></TableCell></TableRow>
+                <TableRow><TableCell>Special Product</TableCell><TableCell className="text-right">{slip.special}</TableCell><TableCell className="text-right">₱{c.priceSpecial.toLocaleString()}</TableCell><TableCell className="text-right">₱{c.subSpecial.toLocaleString()}</TableCell><TableCell><Badge className="bg-emerald-100 text-emerald-800">Correct</Badge></TableCell></TableRow>
                 <TableRow className="border-t-2">
                   <TableCell colSpan={3}><strong>Gross Income</strong></TableCell>
                   <TableCell className="text-right"><strong className="text-emerald-700">₱{c.gross.toLocaleString()}</strong></TableCell>
@@ -548,7 +764,7 @@ function ValidationDetailsDialog({ slip, onClose, onValidate, onReturn }: {
 
           {/* Section E */}
           <SectionCard title="Section E — Labor Cost Verification" tone="sky">
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
               <Field label="Labor Cost Description" value={slip.laborDescription} />
               <Field label="Labor Cost Amount" value={`₱${slip.laborAmount.toLocaleString()}`} />
               <Field label="Remarks" value={slip.laborRemarks || "—"} />
@@ -556,7 +772,7 @@ function ValidationDetailsDialog({ slip, onClose, onValidate, onReturn }: {
               <Field label="Date Encoded" value={slip.laborDateEncoded} />
               <div className="space-y-1">
                 <div className="text-xs text-muted-foreground">Validation Result</div>
-                {slip.laborAmount > 0 && slip.laborDescription.trim().length > 0
+                {slip.laborAmount >= 0
                   ? <Badge className="bg-emerald-100 text-emerald-800"><CheckCircle2 className="h-3 w-3 mr-1" />Correct</Badge>
                   : <Badge className="bg-amber-100 text-amber-800"><AlertCircle className="h-3 w-3 mr-1" />Needs Review</Badge>}
               </div>
@@ -655,22 +871,22 @@ function ValidationDetailsDialog({ slip, onClose, onValidate, onReturn }: {
           <div className="flex flex-wrap justify-end gap-2 pt-2 border-t">
             <Button variant="outline" onClick={() => toast.success("Slip sent to printer")}><Printer className="h-4 w-4 mr-1" />Print</Button>
             <Button variant="outline" className="border-red-300 text-red-700 hover:bg-red-50"
-              disabled={slip.status !== "Submitted to Finance"}
+              disabled={!financeCanAct || returning || validating}
               onClick={() => setShowReturn(true)}>
-              <Undo2 className="h-4 w-4 mr-1" />Return for Correction
+              {returning ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Undo2 className="h-4 w-4 mr-1" />}Return for Correction
             </Button>
             <Button className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50"
-              disabled={!allOk || slip.status !== "Submitted to Finance"}
-              onClick={() => onValidate(slip.slipNo)}>
-              <CheckCircle2 className="h-4 w-4 mr-1" />Validate Payroll
+              disabled={!allOk || !financeCanAct || validating || returning}
+              onClick={submitValidation}>
+              {validating ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <CheckCircle2 className="h-4 w-4 mr-1" />}Validate Payroll
             </Button>
-            <Button variant="outline" onClick={closeAndReset}>Cancel</Button>
+            <Button variant="outline" disabled={returning || validating} onClick={closeAndReset}>Cancel</Button>
           </div>
         </div>
 
         {/* Return for Correction Modal */}
-        <Dialog open={showReturn} onOpenChange={(o) => !o && setShowReturn(false)}>
-          <DialogContent className="!max-w-[95vw] w-[95vw] sm:!max-w-[640px] sm:w-[640px]">
+        <Dialog open={showReturn} onOpenChange={(o) => !o && !returning && setShowReturn(false)}>
+          <DialogContent className="!max-w-[95vw] w-[95vw] sm:!max-w-[640px]">
             <DialogHeader><DialogTitle>Return for Correction — {slip.slipNo}</DialogTitle></DialogHeader>
             <div className="space-y-3">
               <div className="space-y-1">
@@ -696,9 +912,9 @@ function ValidationDetailsDialog({ slip, onClose, onValidate, onReturn }: {
                 <Field label="Date Returned" value={new Date().toISOString().slice(0, 16).replace("T", " ")} />
               </div>
               <div className="flex justify-end gap-2 pt-2 border-t">
-                <Button variant="outline" onClick={() => setShowReturn(false)}>Cancel</Button>
-                <Button className="bg-red-600 hover:bg-red-700" onClick={submitReturn}>
-                  <Undo2 className="h-4 w-4 mr-1" />Confirm Return
+                <Button variant="outline" disabled={returning} onClick={() => setShowReturn(false)}>Cancel</Button>
+                <Button className="bg-red-600 hover:bg-red-700" disabled={returning} onClick={submitReturn}>
+                  {returning ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Undo2 className="h-4 w-4 mr-1" />}Confirm Return
                 </Button>
               </div>
             </div>
@@ -734,7 +950,24 @@ function Field({ label, value }: { label: string; value: string }) {
   );
 }
 
-function Reports() {
+function Reports({ slips, activities }: { slips: FoSlip[]; activities: ValidationActivity[] }) {
+  const validatedCount = slips.filter((slip) => isFinanceValidated(slip.status)).length;
+  const returnedCount = slips.filter((slip) => slip.status === "Returned for Correction").length;
+  const pendingManagerCount = slips.filter((slip) => slip.status === "Pending Manager Approval").length;
+  const materialCreditTotal = slips.reduce((sum, slip) => sum + compute(slip).matTotal, 0);
+  const laborCostTotal = slips.reduce((sum, slip) => sum + slip.laborAmount, 0);
+  const validatedAmount = slips.filter((slip) => isFinanceValidated(slip.status)).reduce((sum, slip) => sum + compute(slip).net, 0);
+  const returnedActivities = activities.filter((activity) => activity.action === "Returned").length;
+
+  const reports = [
+    { name: "Validated Payroll Register", desc: `${validatedCount} payroll slips validated by Finance.`, metric: `PHP ${validatedAmount.toLocaleString()}` },
+    { name: "Returned Payroll Register", desc: `${returnedCount} slips currently returned for correction.`, metric: `${returnedActivities} return actions` },
+    { name: "Validation Turnaround", desc: "Average time from submission to validation.", metric: `${activities.length} activities` },
+    { name: "Material Credit Audit", desc: "Material credits charged in validated payrolls.", metric: `PHP ${materialCreditTotal.toLocaleString()}` },
+    { name: "Labor Cost Audit", desc: "Labor cost amounts across validated payrolls.", metric: `PHP ${laborCostTotal.toLocaleString()}` },
+    { name: "Approval Pipeline Status", desc: "Slips awaiting Manager approval.", metric: `${pendingManagerCount} pending` },
+  ];
+
   return (
     <div className="space-y-4">
       <div>
@@ -742,14 +975,7 @@ function Reports() {
         <p className="text-muted-foreground">Generate payroll validation reports for the selected period or date range.</p>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {[
-          { name: "Validated Payroll Register", desc: "All payroll slips validated by Finance." },
-          { name: "Returned Payroll Register", desc: "Slips returned for correction with categories." },
-          { name: "Validation Turnaround", desc: "Average time from submission to validation." },
-          { name: "Material Credit Audit", desc: "Material credits charged in validated payrolls." },
-          { name: "Labor Cost Audit", desc: "Labor cost amounts across validated payrolls." },
-          { name: "Approval Pipeline Status", desc: "Slips awaiting Manager approval." },
-        ].map((r) => (
+        {reports.map((r) => (
           <Card key={r.name} className="hover:border-emerald-400 transition cursor-pointer">
             <CardContent className="p-5">
               <div className="flex items-center gap-3 mb-2">
@@ -757,6 +983,7 @@ function Reports() {
                 <div>{r.name}</div>
               </div>
               <p className="text-xs text-muted-foreground mb-3">{r.desc}</p>
+              <div className="mb-3 text-lg font-semibold text-emerald-700">{r.metric}</div>
               <Button variant="outline" size="sm">Generate</Button>
             </CardContent>
           </Card>
@@ -765,3 +992,4 @@ function Reports() {
     </div>
   );
 }
+

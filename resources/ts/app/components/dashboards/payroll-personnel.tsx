@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, type Dispatch, type SetStateAction } from "react";
 import { DarbcoLayout } from "../darbco-layout";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Input } from "../ui/input";
@@ -9,12 +9,16 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Textarea } from "../ui/textarea";
+import { DateInput } from "../ui/date-input";
 import {
   LayoutDashboard, Wallet, FileText, History, Plus, Search, Eye, Edit, Trash2,
-  Send, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Printer, Download, Save, X,
+  Send, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Printer, Download, Save, X, Loader2,
 } from "lucide-react";
 import { User } from "../types";
 import { toast } from "sonner";
+import { usePersistentState } from "../../lib/use-persistent-state";
+import { useAppData } from "../../lib/app-data-context";
+import { createPayrollSlip, deletePayrollSlip, submitPayrollSlip, updatePayrollSlip } from "../../lib/api";
 
 interface Props { user: User; onLogout: () => void }
 
@@ -25,13 +29,21 @@ const NAV = [
 ];
 
 export function PayrollPersonnelDashboard({ user, onLogout }: Props) {
-  const [active, setActive] = useState("dashboard");
+  const { data } = useAppData();
+  const [active, setActive] = usePersistentState("darbco.payrollPersonnel.active", "dashboard");
+  const [payrollRecords, setPayrollRecords] = useState<PayrollRecord[]>([]);
+  const beneficiaries = (data?.beneficiaries ?? []).map(mapBeneficiary);
+  const productionRecords = (data?.productionRecords ?? []).map(mapProductionRecord);
+
+  useEffect(() => {
+    setPayrollRecords((data?.payrollSlips ?? []).map(mapPayrollSlip));
+  }, [data?.payrollSlips]);
 
   return (
     <DarbcoLayout user={user} onLogout={onLogout} navItems={NAV} active={active} onChange={setActive}>
       {active === "dashboard" && <Dashboard onNavigate={setActive} />}
-      {active === "beneficiary" && <BeneficiaryPayroll user={user} />}
-      {active === "records" && <PayrollRecords />}
+      {active === "beneficiary" && <BeneficiaryPayroll user={user} beneficiaries={beneficiaries} productionRecords={productionRecords} payrollRecords={payrollRecords} setPayrollRecords={setPayrollRecords} />}
+      {active === "records" && <PayrollRecords records={payrollRecords} />}
     </DarbcoLayout>
   );
 }
@@ -127,11 +139,30 @@ function KpiCard({ label, value, subtext, color, onClick }: any) {
   );
 }
 
+function CurrencyInput({ value, onChange, label }: { value: string; onChange: (value: string) => void; label: string }) {
+  return (
+    <div className="relative ml-auto w-32">
+      <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">₱</span>
+      <Input
+        aria-label={label}
+        type="number"
+        min="0"
+        step="0.01"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="h-8 pl-7 text-right"
+      />
+    </div>
+  );
+}
+
 type PayrollRecord = {
   id: number;
   slipNo: string;
   period: string;
   beneficiary: string;
+  beneficiaryId?: number;
+  productionRecordId?: number;
   harvestDate: string;
   totalBoxes: number;
   grossIncome: number;
@@ -139,9 +170,168 @@ type PayrollRecord = {
   netIncome: number;
   validationStatus: string;
   approvalStatus: string;
+  classABoxes?: number;
+  classBBoxes?: number;
+  specialBoxes?: number;
+  classAPrice?: number;
+  classBPrice?: number;
+  specialPrice?: number;
+  creditDeduction?: number;
+  previousBalance?: number;
+  laborCost?: number;
+  otherDeductions?: number;
 };
 
-function BeneficiaryPayroll({ user }: { user: User }) {
+type BeneficiaryOption = { id: string; dbId: number; code: string; name: string };
+type PayrollProductionRecord = {
+  dbId: number;
+  sourceTable: string;
+  refNo: string;
+  beneficiaryId?: number;
+  beneficiaryName: string;
+  harvestDate: string;
+  classA: number;
+  classB: number;
+  special: number;
+  total: number;
+  classA_big: number;
+  classA_small: number;
+  classA_cp: number;
+  classB_big: number;
+  classB_small: number;
+  classB_cp: number;
+};
+
+function mapBeneficiary(row: any): BeneficiaryOption {
+  return {
+    id: String(row.id),
+    dbId: Number(row.id),
+    code: String(row.code ?? row.beneficiary_code ?? row.id),
+    name: row.name ?? row.full_name ?? "",
+  };
+}
+
+function mapPayrollSlip(row: any): PayrollRecord {
+  const classABoxes = Number(row.class_a_boxes ?? 0);
+  const classBBoxes = Number(row.class_b_boxes ?? 0);
+  const specialBoxes = Number(row.special_boxes ?? row.special_product_boxes ?? 0);
+
+  return {
+    id: Number(row.id),
+    slipNo: String(row.slip_no ?? row.slipNo ?? row.id),
+    period: row.payroll_period ?? row.period ?? "",
+    beneficiary: row.beneficiary_name ?? row.beneficiary ?? "",
+    beneficiaryId: Number(row.beneficiary_id) || undefined,
+    productionRecordId: Number(row.production_record_id ?? row.production_box_record_id) || undefined,
+    harvestDate: String(row.harvest_date ?? row.created_at ?? new Date().toISOString()).slice(0, 10),
+    totalBoxes: Number(row.total_boxes ?? classABoxes + classBBoxes + specialBoxes),
+    grossIncome: Number(row.gross_amount ?? row.gross_income ?? 0),
+    totalDeductions: Number(row.total_deductions ?? 0),
+    netIncome: Number(row.net_amount ?? row.net_income ?? 0),
+    validationStatus: row.validation_status ?? "Draft",
+    approvalStatus: row.approval_status ?? "Pending Approval",
+    classABoxes,
+    classBBoxes,
+    specialBoxes,
+    classAPrice: Number(row.class_a_price ?? 0),
+    classBPrice: Number(row.class_b_price ?? 0),
+    specialPrice: Number(row.special_price ?? 0),
+    creditDeduction: Number(row.credit_deduction ?? row.material_deduction ?? 0),
+    previousBalance: Number(row.previous_balance ?? 0),
+    laborCost: Number(row.labor_cost ?? 0),
+    otherDeductions: Number(row.other_deductions ?? 0),
+  };
+}
+
+function mapProductionRecord(row: any): PayrollProductionRecord {
+  const classABig = Number(row.class_a_big_hands ?? row.class_a_big ?? 0);
+  const classASmall = Number(row.class_a_small_hands ?? row.class_a_small ?? 0);
+  const classACp = Number(row.class_a_cps ?? row.class_a_cp ?? 0);
+  const classBBig = Number(row.class_b_big_hands ?? row.class_b_big ?? 0);
+  const classBSmall = Number(row.class_b_small_hands ?? row.class_b_small ?? 0);
+  const classBCp = Number(row.class_b_cps ?? row.class_b_cp ?? 0);
+  const classA = classABig + classASmall + classACp;
+  const classB = classBBig + classBSmall + classBCp;
+  const special = Number(row.special_total ?? row.special_product ?? row.special ?? 0);
+
+  return {
+    dbId: Number(row.id),
+    sourceTable: String(row.source_table ?? "production_records"),
+    refNo: String(row.record_no ?? row.reference_no ?? row.id),
+    beneficiaryId: Number(row.beneficiary_id) || undefined,
+    beneficiaryName: row.beneficiary_name ?? "",
+    harvestDate: String(row.harvest_date ?? row.packing_date ?? row.production_date ?? "").slice(0, 10),
+    classA,
+    classB,
+    special,
+    total: Number(row.total_boxes ?? classA + classB + special),
+    classA_big: classABig,
+    classA_small: classASmall,
+    classA_cp: classACp,
+    classB_big: classBBig,
+    classB_small: classBSmall,
+    classB_cp: classBCp,
+  };
+}
+
+function payrollPeriodRange(period: string): { start: Date; end: Date } | null {
+  const match = period.match(/([A-Za-z]+)\s+(\d{1,2})-(\d{1,2}),\s*(\d{4})/);
+  if (!match) return null;
+  const start = new Date(`${match[1]} ${match[2]}, ${match[4]} 00:00:00`);
+  const end = new Date(`${match[1]} ${match[3]}, ${match[4]} 23:59:59`);
+  return Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) ? null : { start, end };
+}
+
+function currentUserId(user: User) {
+  const id = Number(user.id);
+  return Number.isFinite(id) ? id : undefined;
+}
+
+function payrollPayload(record: PayrollRecord, user: User) {
+  return {
+    slip_no: record.slipNo,
+    beneficiary_id: record.beneficiaryId ?? 0,
+    production_record_id: record.productionRecordId,
+    payroll_period: record.period,
+    harvest_date: record.harvestDate,
+    class_a_boxes: record.classABoxes ?? 0,
+    class_b_boxes: record.classBBoxes ?? 0,
+    special_boxes: record.specialBoxes ?? 0,
+    class_a_price: record.classAPrice ?? 0,
+    class_b_price: record.classBPrice ?? 0,
+    special_price: record.specialPrice ?? 0,
+    material_deduction: record.creditDeduction ?? 0,
+    previous_balance: record.previousBalance ?? 0,
+    labor_cost: record.laborCost ?? 0,
+    other_deductions: record.otherDeductions ?? 0,
+    gross_amount: record.grossIncome,
+    credit_deduction: record.creditDeduction ?? 0,
+    total_deductions: record.totalDeductions,
+    net_amount: record.netIncome,
+    validation_status: record.validationStatus,
+    approval_status: record.approvalStatus,
+    user_id: currentUserId(user),
+    user_name: user.name,
+  };
+}
+
+type PayrollAuditRecord = {
+  id: number;
+  slipNo: string;
+  action: "Created" | "Edited" | "Submitted" | "Resubmitted";
+  account: string;
+  role: string;
+  timestamp: string;
+  remarks: string;
+};
+
+function BeneficiaryPayroll({ user, beneficiaries, productionRecords, payrollRecords, setPayrollRecords }: {
+  user: User;
+  beneficiaries: BeneficiaryOption[];
+  productionRecords: PayrollProductionRecord[];
+  payrollRecords: PayrollRecord[];
+  setPayrollRecords: Dispatch<SetStateAction<PayrollRecord[]>>;
+}) {
   const [openPrepare, setOpenPrepare] = useState(false);
   const [viewSlip, setViewSlip] = useState<PayrollRecord | null>(null);
   const [editRecord, setEditRecord] = useState<PayrollRecord | null>(null);
@@ -150,87 +340,9 @@ function BeneficiaryPayroll({ user }: { user: User }) {
   const [periodFilter, setPeriodFilter] = useState("all-period");
   const [validationFilter, setValidationFilter] = useState("all-validation");
   const [approvalFilter, setApprovalFilter] = useState("all-approval");
-
-  const [payrollRecords, setPayrollRecords] = useState<PayrollRecord[]>([
-    {
-      id: 1,
-      slipNo: "BP-2026-001",
-      period: "May 16-31, 2026",
-      beneficiary: "SALUDEZ LISA",
-      harvestDate: "May 30, 2026",
-      totalBoxes: 87,
-      grossIncome: 34800.00,
-      totalDeductions: 4500.00,
-      netIncome: 30300.00,
-      validationStatus: "Validated",
-      approvalStatus: "Approved"
-    },
-    {
-      id: 2,
-      slipNo: "BP-2026-002",
-      period: "May 16-31, 2026",
-      beneficiary: "GARCIA MARIA",
-      harvestDate: "May 28, 2026",
-      totalBoxes: 95,
-      grossIncome: 38000.00,
-      totalDeductions: 2800.00,
-      netIncome: 35200.00,
-      validationStatus: "Validated",
-      approvalStatus: "Approved"
-    },
-    {
-      id: 3,
-      slipNo: "BP-2026-003",
-      period: "May 16-31, 2026",
-      beneficiary: "REYES JUAN",
-      harvestDate: "May 29, 2026",
-      totalBoxes: 78,
-      grossIncome: 31200.00,
-      totalDeductions: 5200.00,
-      netIncome: 26000.00,
-      validationStatus: "Validated",
-      approvalStatus: "Approved"
-    },
-    {
-      id: 4,
-      slipNo: "BP-2026-004",
-      period: "May 16-31, 2026",
-      beneficiary: "SANTOS PEDRO",
-      harvestDate: "May 31, 2026",
-      totalBoxes: 102,
-      grossIncome: 40800.00,
-      totalDeductions: 3600.00,
-      netIncome: 37200.00,
-      validationStatus: "Submitted for Validation",
-      approvalStatus: "Pending Approval"
-    },
-    {
-      id: 5,
-      slipNo: "BP-2026-005",
-      period: "June 1-15, 2026",
-      beneficiary: "CRUZ ANNA",
-      harvestDate: "June 2, 2026",
-      totalBoxes: 68,
-      grossIncome: 27200.00,
-      totalDeductions: 1800.00,
-      netIncome: 25400.00,
-      validationStatus: "Draft",
-      approvalStatus: "Pending Approval"
-    },
-    {
-      id: 6,
-      slipNo: "BP-2026-006",
-      period: "June 1-15, 2026",
-      beneficiary: "MENDOZA CARLO",
-      harvestDate: "June 1, 2026",
-      totalBoxes: 84,
-      grossIncome: 33600.00,
-      totalDeductions: 4100.00,
-      netIncome: 29500.00,
-      validationStatus: "Draft",
-      approvalStatus: "Pending Approval"
-    }
-  ]);
+  const [submittingRecordId, setSubmittingRecordId] = useState<number | null>(null);
+  const [isDeletingPayroll, setIsDeletingPayroll] = useState(false);
+  const [auditRecords, setAuditRecords] = useState<PayrollAuditRecord[]>([]);
 
   const getValidationBadge = (status: string) => {
     if (status === "Draft") return <Badge className="bg-slate-100 text-slate-700">Draft</Badge>;
@@ -268,19 +380,72 @@ function BeneficiaryPayroll({ user }: { user: User }) {
     return true;
   });
 
-  const handleSavePayroll = (record: PayrollRecord) => {
-    setPayrollRecords((current) => {
-      const exists = current.some((item) => item.id === record.id);
-      return exists
-        ? current.map((item) => item.id === record.id ? record : item)
-        : [record, ...current];
-    });
-    setOpenPrepare(false);
-    setEditRecord(null);
-    toast.success(record.validationStatus === "Submitted for Validation" ? "Payroll submitted for validation" : "Payroll draft saved");
+  const createAuditRecord = (slip: PayrollRecord, action: PayrollAuditRecord["action"], remarks: string) => {
+    setAuditRecords((current) => [
+      {
+        id: Date.now() + current.length,
+        slipNo: slip.slipNo,
+        action,
+        account: user.name,
+        role: "Payroll Personnel",
+        timestamp: new Date().toLocaleString("en-US", {
+          month: "long",
+          day: "numeric",
+          year: "numeric",
+          hour: "numeric",
+          minute: "2-digit",
+        }),
+        remarks,
+      },
+      ...current,
+    ]);
   };
 
-  const handleSubmitForValidation = (record: PayrollRecord) => {
+  const handleSavePayroll = async (record: PayrollRecord) => {
+    const existing = payrollRecords.find((item) => item.id === record.id);
+    const isSubmitted = record.validationStatus === "Submitted for Validation";
+
+    try {
+      const payload = payrollPayload(record, user);
+      const saved = existing
+        ? await updatePayrollSlip(existing.id, payload)
+        : await createPayrollSlip(payload);
+      const savedRecord = mapPayrollSlip(saved);
+
+      setPayrollRecords((current) => {
+        return existing
+          ? current.map((item) => item.id === existing.id ? savedRecord : item)
+          : [savedRecord, ...current];
+      });
+
+      if (!existing) {
+        createAuditRecord(savedRecord, "Created", `Payroll slip ${savedRecord.slipNo} created for ${savedRecord.beneficiary}.`);
+        if (isSubmitted) {
+          createAuditRecord(savedRecord, "Submitted", `Payroll slip ${savedRecord.slipNo} submitted to Finance for validation.`);
+        }
+      } else if (isSubmitted) {
+        const action = existing.validationStatus === "Returned for Correction" ? "Resubmitted" : "Submitted";
+        createAuditRecord(
+          savedRecord,
+          action,
+          action === "Resubmitted"
+            ? `Corrected payroll slip ${savedRecord.slipNo} resubmitted to Finance for validation.`
+            : `Payroll slip ${savedRecord.slipNo} submitted to Finance for validation.`
+        );
+      } else {
+        createAuditRecord(savedRecord, "Edited", `Payroll slip ${savedRecord.slipNo} draft details updated.`);
+      }
+
+      setOpenPrepare(false);
+      setEditRecord(null);
+      toast.success(savedRecord.validationStatus === "Submitted for Validation" ? "Payroll submitted for validation" : "Payroll draft saved");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to save payroll slip.");
+      throw error;
+    }
+  };
+
+  const handleSubmitForValidation = async (record: PayrollRecord) => {
     if (record.validationStatus === "Submitted for Validation") {
       toast.message(`${record.slipNo} is already submitted for validation.`);
       return;
@@ -289,18 +454,48 @@ function BeneficiaryPayroll({ user }: { user: User }) {
       toast.message(`${record.slipNo} has already passed validation.`);
       return;
     }
-    setPayrollRecords((current) => current.map((item) => item.id === record.id
-      ? { ...item, validationStatus: "Submitted for Validation", approvalStatus: "Pending Approval" }
-      : item
-    ));
-    toast.success(`${record.slipNo} submitted for validation`);
+    const action = record.validationStatus === "Returned for Correction" ? "Resubmitted" : "Submitted";
+
+    try {
+      setSubmittingRecordId(record.id);
+      const saved = await submitPayrollSlip(record.id, {
+        user_id: currentUserId(user),
+        user_name: user.name,
+      });
+      const updatedRecord = mapPayrollSlip(saved);
+      setPayrollRecords((current) => current.map((item) => item.id === record.id ? updatedRecord : item));
+      createAuditRecord(
+        updatedRecord,
+        action,
+        action === "Resubmitted"
+          ? `Corrected payroll slip ${updatedRecord.slipNo} resubmitted to Finance for validation.`
+          : `Payroll slip ${updatedRecord.slipNo} submitted to Finance for validation.`
+      );
+      toast.success(`${updatedRecord.slipNo} submitted for validation`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to submit payroll slip.");
+      throw error;
+    } finally {
+      setSubmittingRecordId(null);
+    }
   };
 
-  const handleConfirmDelete = () => {
+  const handleConfirmDelete = async () => {
     if (!deleteRecord) return;
-    setPayrollRecords((current) => current.filter((record) => record.id !== deleteRecord.id));
-    toast.success(`${deleteRecord.slipNo} deleted`);
-    setDeleteRecord(null);
+    try {
+      setIsDeletingPayroll(true);
+      await deletePayrollSlip(deleteRecord.id, {
+        user_id: currentUserId(user),
+        user_name: user.name,
+      });
+      setPayrollRecords((current) => current.filter((record) => record.id !== deleteRecord.id));
+      toast.success(`${deleteRecord.slipNo} deleted`);
+      setDeleteRecord(null);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to delete payroll slip.");
+    } finally {
+      setIsDeletingPayroll(false);
+    }
   };
 
   return (
@@ -429,10 +624,11 @@ function BeneficiaryPayroll({ user }: { user: User }) {
                           size="sm"
                           className="h-8 w-8 shrink-0 p-0 text-violet-600 hover:text-violet-700"
                           onClick={() => handleSubmitForValidation(record)}
+                          disabled={submittingRecordId === record.id}
                           title="Submit for Validation"
                           aria-label={`Submit ${record.slipNo} for validation`}
                         >
-                          <Send className="h-4 w-4" />
+                          {submittingRecordId === record.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                         </Button>
                       </div>
                     </TableCell>
@@ -465,12 +661,15 @@ function BeneficiaryPayroll({ user }: { user: User }) {
         }}
         user={user}
         editRecord={editRecord}
+        beneficiaries={beneficiaries}
+        productionRecords={productionRecords}
         nextSlipNo={`BP-2026-${String(payrollRecords.length + 1).padStart(3, "0")}`}
         onSave={handleSavePayroll}
       />
       {viewSlip && (
         <ViewPayrollSlipDialog
           slip={viewSlip}
+          auditEntries={auditRecords.filter((entry) => entry.slipNo === viewSlip.slipNo)}
           onClose={() => setViewSlip(null)}
           onEdit={(record) => {
             setViewSlip(null);
@@ -492,8 +691,11 @@ function BeneficiaryPayroll({ user }: { user: User }) {
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteRecord(null)}>Cancel</Button>
-            <Button className="bg-red-600 hover:bg-red-700 text-white" onClick={handleConfirmDelete}>Delete Payroll</Button>
+            <Button variant="outline" onClick={() => setDeleteRecord(null)} disabled={isDeletingPayroll}>Cancel</Button>
+            <Button className="bg-red-600 hover:bg-red-700 text-white" onClick={handleConfirmDelete} disabled={isDeletingPayroll}>
+              {isDeletingPayroll ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Trash2 className="h-4 w-4 mr-1" />}
+              {isDeletingPayroll ? "Deleting..." : "Delete Payroll"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -501,109 +703,128 @@ function BeneficiaryPayroll({ user }: { user: User }) {
   );
 }
 
-function PreparePayrollDialog({ open, onOpenChange, user, editRecord, nextSlipNo, onSave }: { open: boolean; onOpenChange: (o: boolean) => void; user: User; editRecord?: PayrollRecord | null; nextSlipNo: string; onSave: (record: PayrollRecord) => void }) {
+function PreparePayrollDialog({ open, onOpenChange, user, editRecord, beneficiaries, productionRecords, nextSlipNo, onSave }: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  user: User;
+  editRecord?: PayrollRecord | null;
+  beneficiaries: BeneficiaryOption[];
+  productionRecords: PayrollProductionRecord[];
+  nextSlipNo: string;
+  onSave: (record: PayrollRecord) => Promise<void> | void;
+}) {
   const today = new Date().toISOString().slice(0, 10);
   const [showProductionDetails, setShowProductionDetails] = useState(false);
   const [otherDeductions, setOtherDeductions] = useState<any[]>([]);
+  const [laborCost, setLaborCost] = useState("0");
   const [selectedBeneficiary, setSelectedBeneficiary] = useState("");
   const [payrollPeriod, setPayrollPeriod] = useState("June 1-15, 2026");
-
-  const beneficiaries = [
-    { id: "BEN-001", name: "SALUDEZ LISA" },
-    { id: "BEN-002", name: "GARCIA MARIA" },
-    { id: "BEN-003", name: "REYES JUAN" },
-    { id: "BEN-004", name: "SANTOS PEDRO" },
-    { id: "BEN-005", name: "CRUZ ANNA" },
-    { id: "BEN-006", name: "MENDOZA CARLO" }
-  ];
+  const [priceClassABig, setPriceClassABig] = useState("400");
+  const [priceClassASmall, setPriceClassASmall] = useState("400");
+  const [priceClassACp, setPriceClassACp] = useState("400");
+  const [priceClassBBig, setPriceClassBBig] = useState("350");
+  const [priceClassBSmall, setPriceClassBSmall] = useState("350");
+  const [priceClassBCp, setPriceClassBCp] = useState("350");
+  const [priceSpecial, setPriceSpecial] = useState("300");
+  const [savingAction, setSavingAction] = useState<"draft" | "submit" | null>(null);
 
   // Populate form with edit data when editRecord is provided
   useEffect(() => {
     if (editRecord && open) {
       // Map beneficiary name to ID
-      const beneficiary = beneficiaries.find(b => b.name === editRecord.beneficiary);
+      const beneficiary = beneficiaries.find(b => b.dbId === editRecord.beneficiaryId || b.name === editRecord.beneficiary);
       setSelectedBeneficiary(beneficiary?.id || "");
       setPayrollPeriod(editRecord.period);
+      setLaborCost(String(editRecord.laborCost ?? 0));
       setOtherDeductions([]);
       setShowProductionDetails(false);
+      resetPayrollPrices();
     } else if (!open) {
       // Reset form when closing
       setSelectedBeneficiary("");
       setPayrollPeriod("June 1-15, 2026");
+      setLaborCost("0");
       setOtherDeductions([]);
       setShowProductionDetails(false);
+      resetPayrollPrices();
     }
   }, [editRecord, open]);
 
-  const productionRecords = selectedBeneficiary ? [
-    {
-      refNo: "PR-2026-0245",
-      harvestDate: "June 2, 2026",
-      classA: 52,
-      classB: 28,
-      special: 8,
-      total: 88,
-      classA_big: 30,
-      classA_small: 15,
-      classA_cp: 7,
-      classB_big: 16,
-      classB_small: 8,
-      classB_cp: 4
-    }
-  ] : [];
+  const selectedBeneficiaryId = Number(selectedBeneficiary);
+  const selectedBeneficiaryOption = beneficiaries.find((item) => item.id === selectedBeneficiary);
+  const periodRange = payrollPeriodRange(payrollPeriod);
+  const matchedProductionRecords = productionRecords.filter((record) => {
+    if (!selectedBeneficiaryId) return false;
+    if (record.beneficiaryId && record.beneficiaryId !== selectedBeneficiaryId) return false;
+    if (!record.beneficiaryId && selectedBeneficiaryOption && record.beneficiaryName !== selectedBeneficiaryOption.name) return false;
+    if (!periodRange || !record.harvestDate) return true;
+    const harvestDate = new Date(`${record.harvestDate}T00:00:00`);
+    if (Number.isNaN(harvestDate.getTime())) return true;
+    return harvestDate >= periodRange.start && harvestDate <= periodRange.end;
+  });
 
-  const creditMaterials = selectedBeneficiary ? [
-    {
-      refNo: "CR-2026-0089",
-      dateIssued: "May 25, 2026",
-      materialName: "Fertilizer - Urea",
-      quantity: 2,
-      unit: "sacks",
-      amountCharged: 1800.00,
-      status: "Pending",
-      remaining: 1800.00
-    },
-    {
-      refNo: "CR-2026-0102",
-      dateIssued: "May 28, 2026",
-      materialName: "Fungicide Spray",
-      quantity: 3,
-      unit: "liters",
-      amountCharged: 1200.00,
-      status: "Pending",
-      remaining: 1200.00
-    }
-  ] : [];
+  const creditMaterials: { refNo: string; dateIssued: string; materialName: string; quantity: number; unit: string; amountCharged: number; status: string; remaining: number }[] = [];
 
-  const classABoxes = productionRecords.reduce((sum, r) => sum + r.classA, 0);
-  const classBBoxes = productionRecords.reduce((sum, r) => sum + r.classB, 0);
-  const specialBoxes = productionRecords.reduce((sum, r) => sum + r.special, 0);
-  const totalBoxes = productionRecords.reduce((sum, r) => sum + r.total, 0);
+  const classABoxes = matchedProductionRecords.reduce((sum, r) => sum + r.classA, 0);
+  const classBBoxes = matchedProductionRecords.reduce((sum, r) => sum + r.classB, 0);
+  const specialBoxes = matchedProductionRecords.reduce((sum, r) => sum + r.special, 0);
+  const classABigBoxes = matchedProductionRecords.reduce((sum, r) => sum + r.classA_big, 0);
+  const classASmallBoxes = matchedProductionRecords.reduce((sum, r) => sum + r.classA_small, 0);
+  const classACpBoxes = matchedProductionRecords.reduce((sum, r) => sum + r.classA_cp, 0);
+  const classBBigBoxes = matchedProductionRecords.reduce((sum, r) => sum + r.classB_big, 0);
+  const classBSmallBoxes = matchedProductionRecords.reduce((sum, r) => sum + r.classB_small, 0);
+  const classBCpBoxes = matchedProductionRecords.reduce((sum, r) => sum + r.classB_cp, 0);
+  const totalBoxes = matchedProductionRecords.reduce((sum, r) => sum + r.total, 0);
 
-  const priceClassA = 400.00;
-  const priceClassB = 350.00;
-  const priceSpecial = 300.00;
+  const rateClassABig = parseFloat(priceClassABig) || 0;
+  const rateClassASmall = parseFloat(priceClassASmall) || 0;
+  const rateClassACp = parseFloat(priceClassACp) || 0;
+  const rateClassBBig = parseFloat(priceClassBBig) || 0;
+  const rateClassBSmall = parseFloat(priceClassBSmall) || 0;
+  const rateClassBCp = parseFloat(priceClassBCp) || 0;
+  const rateSpecial = parseFloat(priceSpecial) || 0;
 
-  const subtotalA = classABoxes * priceClassA;
-  const subtotalB = classBBoxes * priceClassB;
-  const subtotalSpecial = specialBoxes * priceSpecial;
+  const subtotalClassABig = classABigBoxes * rateClassABig;
+  const subtotalClassASmall = classASmallBoxes * rateClassASmall;
+  const subtotalClassACp = classACpBoxes * rateClassACp;
+  const subtotalClassBBig = classBBigBoxes * rateClassBBig;
+  const subtotalClassBSmall = classBSmallBoxes * rateClassBSmall;
+  const subtotalClassBCp = classBCpBoxes * rateClassBCp;
+  const subtotalA = subtotalClassABig + subtotalClassASmall + subtotalClassACp;
+  const subtotalB = subtotalClassBBig + subtotalClassBSmall + subtotalClassBCp;
+  const subtotalSpecial = specialBoxes * rateSpecial;
   const grossIncome = subtotalA + subtotalB + subtotalSpecial;
+
+  const resetPayrollPrices = () => {
+    setPriceClassABig("400");
+    setPriceClassASmall("400");
+    setPriceClassACp("400");
+    setPriceClassBBig("350");
+    setPriceClassBSmall("350");
+    setPriceClassBCp("350");
+    setPriceSpecial("300");
+  };
 
   const totalCreditDeductions = creditMaterials.reduce((sum, c) => sum + c.remaining, 0);
   const previousBalance = 0;
+  const laborCostAmount = Math.max(0, parseFloat(laborCost) || 0);
   const otherDeductionsTotal = otherDeductions.reduce((sum, d) => sum + (parseFloat(d.amount) || 0), 0);
-  const totalDeductions = totalCreditDeductions + previousBalance + otherDeductionsTotal;
+  const totalDeductions = totalCreditDeductions + previousBalance + laborCostAmount + otherDeductionsTotal;
   const netIncome = grossIncome - totalDeductions;
 
   const handleClose = () => {
+    if (savingAction) return;
     setSelectedBeneficiary("");
     setPayrollPeriod("June 1-15, 2026");
+    setLaborCost("0");
     setOtherDeductions([]);
     setShowProductionDetails(false);
+    resetPayrollPrices();
     onOpenChange(false);
   };
 
-  const handleSave = (validationStatus: "Draft" | "Submitted for Validation") => {
+  const handleSave = async (validationStatus: "Draft" | "Submitted for Validation") => {
+    if (savingAction) return;
     const beneficiary = beneficiaries.find((item) => item.id === selectedBeneficiary);
 
     if (!beneficiary || !payrollPeriod.trim()) {
@@ -611,44 +832,69 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, nextSlipNo
       return;
     }
 
-    onSave({
-      id: editRecord?.id ?? Date.now(),
-      slipNo: editRecord?.slipNo ?? nextSlipNo,
-      period: payrollPeriod,
-      beneficiary: beneficiary.name,
-      harvestDate: productionRecords[0]?.harvestDate ?? today,
-      totalBoxes,
-      grossIncome,
-      totalDeductions,
-      netIncome,
-      validationStatus,
-      approvalStatus: validationStatus === "Submitted for Validation" ? "Pending Approval" : editRecord?.approvalStatus ?? "Pending Approval",
-    });
+    if (matchedProductionRecords.length === 0) {
+      toast.error("No production records found for this beneficiary and payroll period.");
+      return;
+    }
 
-    setSelectedBeneficiary("");
-    setPayrollPeriod("June 1-15, 2026");
-    setOtherDeductions([]);
-    setShowProductionDetails(false);
+    setSavingAction(validationStatus === "Submitted for Validation" ? "submit" : "draft");
+
+    try {
+      await onSave({
+        id: editRecord?.id ?? Date.now(),
+        slipNo: editRecord?.slipNo ?? nextSlipNo,
+        period: payrollPeriod,
+        beneficiary: beneficiary.name,
+        beneficiaryId: beneficiary.dbId,
+        productionRecordId: matchedProductionRecords[0]?.sourceTable === "production_records" ? matchedProductionRecords[0]?.dbId : undefined,
+        harvestDate: matchedProductionRecords[0]?.harvestDate ?? today,
+        totalBoxes,
+        grossIncome,
+        totalDeductions,
+        netIncome,
+        classABoxes,
+        classBBoxes,
+        specialBoxes,
+        classAPrice: rateClassABig,
+        classBPrice: rateClassBBig,
+        specialPrice: rateSpecial,
+        creditDeduction: totalCreditDeductions,
+        previousBalance,
+        laborCost: laborCostAmount,
+        otherDeductions: otherDeductionsTotal,
+        validationStatus,
+        approvalStatus: validationStatus === "Submitted for Validation" ? "Pending Approval" : editRecord?.approvalStatus ?? "Pending Approval",
+      });
+
+      setSelectedBeneficiary("");
+      setPayrollPeriod("June 1-15, 2026");
+      setLaborCost("0");
+      setOtherDeductions([]);
+      setShowProductionDetails(false);
+      resetPayrollPrices();
+    } finally {
+      setSavingAction(null);
+    }
   };
 
   return (
     <Dialog open={open} onOpenChange={(open) => { if (!open) handleClose(); }}>
-      <DialogContent className="!max-w-[1500px] w-[90vw] max-h-[90vh] overflow-y-auto p-0 overflow-x-hidden">
+      <DialogContent className="!max-w-[1080px] w-[95vw] max-h-[86vh] overflow-y-auto p-0 overflow-x-hidden">
         {/* Header */}
-        <div className="sticky top-0 z-10 bg-white border-b-2 border-emerald-200 shadow-sm px-8 py-5">
+        <div className="bg-white border-b border-emerald-200 px-5 py-4">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-emerald-700 text-xl">
+            <DialogTitle className="flex items-center gap-2 text-emerald-700 text-lg">
               {editRecord ? (
                 <>
-                  <Edit className="h-6 w-6" />Edit Beneficiary Payroll - {editRecord.slipNo}
+                  <Edit className="h-5 w-5" />Edit Beneficiary Payroll - {editRecord.slipNo}
                 </>
               ) : (
                 <>
-                  <Plus className="h-6 w-6" />Prepare Beneficiary Payroll
+                  <Plus className="h-5 w-5" />Prepare Beneficiary Payroll
                 </>
               )}
             </DialogTitle>
-            <DialogDescription className="text-base">
+            <DialogDescription className="text-sm">
               {editRecord
                 ? "Update the payroll slip details for the selected beneficiary"
                 : "Create a new payroll slip for beneficiary earnings and deductions"
@@ -657,14 +903,14 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, nextSlipNo
           </DialogHeader>
         </div>
 
-        <div className="px-8 py-6 space-y-6">
+        <div className="px-5 py-4 space-y-4">
           {/* Section A: Beneficiary Information */}
           <Card className="border-emerald-200">
-            <CardHeader className="pb-3">
+            <CardHeader className="p-4 pb-2">
               <CardTitle className="text-base">Beneficiary Information</CardTitle>
             </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-3 gap-4">
+            <CardContent className="p-4 pt-2">
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
                     <div className="space-y-1">
                       <Label>Beneficiary <span className="text-red-500">*</span></Label>
                       <Select value={selectedBeneficiary} onValueChange={setSelectedBeneficiary}>
@@ -696,7 +942,7 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, nextSlipNo
                     </div>
                     <div className="space-y-1">
                       <Label>Harvest Date / Production Period</Label>
-                      <Input type="date" defaultValue={today} />
+                      <DateInput defaultValue={today} />
                     </div>
                     <div className="space-y-1">
                       <Label>Date Created</Label>
@@ -712,13 +958,13 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, nextSlipNo
 
           {/* Section B: Production Records from Production Clerk */}
           <Card>
-            <CardHeader className="pb-3">
+            <CardHeader className="p-4 pb-2">
               <div className="flex items-center justify-between">
                 <CardTitle className="text-base text-emerald-700">Production Records from Production Clerk</CardTitle>
                 <p className="text-xs text-muted-foreground">Read-only</p>
               </div>
             </CardHeader>
-            <CardContent className="space-y-3">
+            <CardContent className="p-4 pt-2 space-y-3">
               <div className="w-full overflow-x-auto">
                 <Table>
                   <TableHeader>
@@ -732,14 +978,14 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, nextSlipNo
                     </TableRow>
                   </TableHeader>
                 <TableBody>
-                  {productionRecords.length === 0 ? (
+                  {matchedProductionRecords.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={6} className="text-center text-muted-foreground h-24">
+                      <TableCell colSpan={6} className="text-center text-muted-foreground h-16">
                         No verified production records found for the selected beneficiary and payroll period.
                       </TableCell>
                     </TableRow>
                   ) : (
-                    productionRecords.map((record) => (
+                    matchedProductionRecords.map((record) => (
                       <TableRow key={record.refNo}>
                         <TableCell className="font-medium">{record.refNo}</TableCell>
                         <TableCell>{record.harvestDate}</TableCell>
@@ -764,24 +1010,24 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, nextSlipNo
 
               {showProductionDetails && (
                 <div className="border rounded-md p-4 bg-slate-50 space-y-2">
-                  {productionRecords.length === 0 ? (
+                  {matchedProductionRecords.length === 0 ? (
                     <p className="text-sm text-muted-foreground text-center">No production details available</p>
                   ) : (
                     <div className="grid grid-cols-2 gap-4">
                       <div>
                         <p className="text-sm font-semibold mb-2 text-emerald-700">Class A Boxes</p>
                         <div className="space-y-1 text-sm">
-                          <div className="flex justify-between"><span>Big Hands:</span><span>{productionRecords[0].classA_big}</span></div>
-                          <div className="flex justify-between"><span>Small Hands:</span><span>{productionRecords[0].classA_small}</span></div>
-                          <div className="flex justify-between"><span>CPs:</span><span>{productionRecords[0].classA_cp}</span></div>
+                          <div className="flex justify-between"><span>Big Hands:</span><span>{classABigBoxes}</span></div>
+                          <div className="flex justify-between"><span>Small Hands:</span><span>{classASmallBoxes}</span></div>
+                          <div className="flex justify-between"><span>CPs:</span><span>{classACpBoxes}</span></div>
                         </div>
                       </div>
                       <div>
                         <p className="text-sm font-semibold mb-2 text-amber-700">Class B Boxes</p>
                         <div className="space-y-1 text-sm">
-                          <div className="flex justify-between"><span>Big Hands:</span><span>{productionRecords[0].classB_big}</span></div>
-                          <div className="flex justify-between"><span>Small Hands:</span><span>{productionRecords[0].classB_small}</span></div>
-                          <div className="flex justify-between"><span>CPs:</span><span>{productionRecords[0].classB_cp}</span></div>
+                          <div className="flex justify-between"><span>Big Hands:</span><span>{classBBigBoxes}</span></div>
+                          <div className="flex justify-between"><span>Small Hands:</span><span>{classBSmallBoxes}</span></div>
+                          <div className="flex justify-between"><span>CPs:</span><span>{classBCpBoxes}</span></div>
                         </div>
                       </div>
                     </div>
@@ -793,10 +1039,10 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, nextSlipNo
 
           {/* Section C: Earnings Computation */}
           <Card>
-            <CardHeader className="pb-3">
+            <CardHeader className="p-4 pb-2">
               <CardTitle className="text-base text-emerald-700">Earnings Computation</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-3">
+            <CardContent className="p-4 pt-2 space-y-3">
               <div className="w-full overflow-x-auto">
                 <Table>
                   <TableHeader>
@@ -806,45 +1052,95 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, nextSlipNo
                       <TableHead className="text-right">Price per Box</TableHead>
                       <TableHead className="text-right">Subtotal</TableHead>
                     </TableRow>
-                  </TableHeader>
+                </TableHeader>
                 <TableBody>
                   <TableRow>
-                    <TableCell>Class A</TableCell>
-                    <TableCell className="text-right">{classABoxes || "—"}</TableCell>
-                    <TableCell className="text-right">₱{priceClassA.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
-                    <TableCell className="text-right">₱{subtotalA.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
+                    <TableCell>Class A - Big Hands</TableCell>
+                    <TableCell className="text-right">{classABigBoxes || "—"}</TableCell>
+                    <TableCell className="text-right">
+                      <CurrencyInput value={priceClassABig} onChange={setPriceClassABig} label="Class A Big Hands price" />
+                    </TableCell>
+                    <TableCell className="text-right">₱{subtotalClassABig.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
                   </TableRow>
                   <TableRow>
-                    <TableCell>Class B</TableCell>
-                    <TableCell className="text-right">{classBBoxes || "—"}</TableCell>
-                    <TableCell className="text-right">₱{priceClassB.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
-                    <TableCell className="text-right">₱{subtotalB.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
+                    <TableCell>Class A - Small Hands</TableCell>
+                    <TableCell className="text-right">{classASmallBoxes || "—"}</TableCell>
+                    <TableCell className="text-right">
+                      <CurrencyInput value={priceClassASmall} onChange={setPriceClassASmall} label="Class A Small Hands price" />
+                    </TableCell>
+                    <TableCell className="text-right">₱{subtotalClassASmall.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
+                  </TableRow>
+                  <TableRow>
+                    <TableCell>Class A - CPs</TableCell>
+                    <TableCell className="text-right">{classACpBoxes || "—"}</TableCell>
+                    <TableCell className="text-right">
+                      <CurrencyInput value={priceClassACp} onChange={setPriceClassACp} label="Class A CPs price" />
+                    </TableCell>
+                    <TableCell className="text-right">₱{subtotalClassACp.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
+                  </TableRow>
+                  <TableRow>
+                    <TableCell>Class B - Big Hands</TableCell>
+                    <TableCell className="text-right">{classBBigBoxes || "—"}</TableCell>
+                    <TableCell className="text-right">
+                      <CurrencyInput value={priceClassBBig} onChange={setPriceClassBBig} label="Class B Big Hands price" />
+                    </TableCell>
+                    <TableCell className="text-right">₱{subtotalClassBBig.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
+                  </TableRow>
+                  <TableRow>
+                    <TableCell>Class B - Small Hands</TableCell>
+                    <TableCell className="text-right">{classBSmallBoxes || "—"}</TableCell>
+                    <TableCell className="text-right">
+                      <CurrencyInput value={priceClassBSmall} onChange={setPriceClassBSmall} label="Class B Small Hands price" />
+                    </TableCell>
+                    <TableCell className="text-right">₱{subtotalClassBSmall.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
+                  </TableRow>
+                  <TableRow>
+                    <TableCell>Class B - CPs</TableCell>
+                    <TableCell className="text-right">{classBCpBoxes || "—"}</TableCell>
+                    <TableCell className="text-right">
+                      <CurrencyInput value={priceClassBCp} onChange={setPriceClassBCp} label="Class B CPs price" />
+                    </TableCell>
+                    <TableCell className="text-right">₱{subtotalClassBCp.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
                   </TableRow>
                   <TableRow>
                     <TableCell>Special Product</TableCell>
                     <TableCell className="text-right">{specialBoxes || "—"}</TableCell>
-                    <TableCell className="text-right">₱{priceSpecial.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
+                    <TableCell className="text-right">
+                      <CurrencyInput value={priceSpecial} onChange={setPriceSpecial} label="Special Product price" />
+                    </TableCell>
                     <TableCell className="text-right">₱{subtotalSpecial.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
+                  </TableRow>
+                  <TableRow className="bg-emerald-50/50">
+                    <TableCell className="font-semibold">Class A Total</TableCell>
+                    <TableCell className="text-right font-semibold">{classABoxes || "—"}</TableCell>
+                    <TableCell />
+                    <TableCell className="text-right font-semibold">₱{subtotalA.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
+                  </TableRow>
+                  <TableRow className="bg-amber-50/50">
+                    <TableCell className="font-semibold">Class B Total</TableCell>
+                    <TableCell className="text-right font-semibold">{classBBoxes || "—"}</TableCell>
+                    <TableCell />
+                    <TableCell className="text-right font-semibold">₱{subtotalB.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
                   </TableRow>
                 </TableBody>
                 </Table>
               </div>
-              <div className="flex justify-between items-center p-4 bg-emerald-50 rounded-md">
+              <div className="flex justify-between items-center p-3 bg-emerald-50 rounded-md">
                 <span className="font-semibold text-emerald-700">Gross Income</span>
-                <span className="text-2xl font-bold text-emerald-700">₱{grossIncome.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+                <span className="text-xl font-bold text-emerald-700">₱{grossIncome.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
               </div>
             </CardContent>
           </Card>
 
           {/* Section D: Material Credit Deductions */}
           <Card>
-            <CardHeader className="pb-3">
+            <CardHeader className="p-4 pb-2">
               <div className="flex items-center justify-between">
                 <CardTitle className="text-base text-amber-700">Credit Materials from Inventory Bookkeeper</CardTitle>
                 <p className="text-xs text-muted-foreground">Read-only</p>
               </div>
             </CardHeader>
-            <CardContent className="space-y-3">
+            <CardContent className="p-4 pt-2 space-y-3">
               <div className="w-full overflow-x-auto">
                 <Table>
                   <TableHeader>
@@ -862,7 +1158,7 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, nextSlipNo
                 <TableBody>
                   {creditMaterials.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={8} className="text-center text-muted-foreground h-24">
+                      <TableCell colSpan={8} className="text-center text-muted-foreground h-16">
                         No credit material deductions found for this beneficiary.
                       </TableCell>
                     </TableRow>
@@ -896,9 +1192,39 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, nextSlipNo
             </CardContent>
           </Card>
 
-          {/* Section E: Other Authorized Deductions */}
+          {/* Section E: Labor Cost */}
           <Card>
-            <CardHeader className="pb-3 flex-row items-center justify-between">
+            <CardHeader className="p-4 pb-2">
+              <CardTitle className="text-base">Labor Cost</CardTitle>
+            </CardHeader>
+            <CardContent className="p-4 pt-2">
+              <div className="grid grid-cols-1 gap-x-3 gap-y-1.5 lg:grid-cols-[260px_1fr]">
+                <Label htmlFor="labor-cost-amount" className="lg:col-start-1">Labor Cost Amount</Label>
+                <div className="relative lg:col-start-1 lg:row-start-2">
+                  <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">₱</span>
+                  <Input
+                    id="labor-cost-amount"
+                    type="text"
+                    inputMode="decimal"
+                    value={laborCost}
+                    onFocus={(event) => event.currentTarget.select()}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      if (/^\d*\.?\d{0,2}$/.test(value)) setLaborCost(value);
+                    }}
+                    className="h-9 pl-7 text-right"
+                  />
+                </div>
+                <div className="flex h-9 items-center rounded-md border border-slate-200 bg-slate-50 px-3 text-sm text-muted-foreground lg:col-start-2 lg:row-start-2">
+                  Leave this as ₱0.00 when no labor charge applies to this payroll.
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Section F: Other Authorized Deductions */}
+          <Card>
+            <CardHeader className="p-4 pb-2 flex-row items-center justify-between">
               <CardTitle className="text-base">Other Authorized Deductions</CardTitle>
               <Button
                 variant="outline"
@@ -908,15 +1234,15 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, nextSlipNo
                 <Plus className="h-4 w-4 mr-1" />Add Authorized Deduction
               </Button>
             </CardHeader>
-            <CardContent>
+            <CardContent className="p-4 pt-2">
               {otherDeductions.length === 0 ? (
-                <div className="text-center text-muted-foreground py-8 border rounded-md bg-slate-50">
+                <div className="text-center text-muted-foreground py-5 border rounded-md bg-slate-50">
                   No authorized deductions added.
                 </div>
               ) : (
                 <div className="space-y-3">
                   {otherDeductions.map((deduction, i) => (
-                    <div key={i} className="border rounded-md p-3 bg-slate-50 grid grid-cols-4 gap-3 items-start">
+                    <div key={i} className="border rounded-md p-3 bg-slate-50 grid grid-cols-1 lg:grid-cols-4 gap-3 items-start">
                       <Input
                         placeholder="Deduction type"
                         className="h-9"
@@ -975,12 +1301,12 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, nextSlipNo
             </CardContent>
           </Card>
 
-          {/* Section F: Final Payroll Summary */}
+          {/* Section G: Final Payroll Summary */}
           <Card className="border-emerald-200 bg-gradient-to-br from-emerald-50 to-white">
-            <CardHeader className="pb-3">
+            <CardHeader className="p-4 pb-2">
               <CardTitle className="text-base text-emerald-700">Final Payroll Summary</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-2">
+            <CardContent className="p-4 pt-2 space-y-2">
               <div className="flex justify-between text-sm">
                 <span>Gross Income</span>
                 <span className="font-semibold">₱{grossIncome.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
@@ -994,6 +1320,10 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, nextSlipNo
                 <span className="font-semibold">−₱{previousBalance.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
               </div>
               <div className="flex justify-between text-sm text-red-600">
+                <span>Labor Cost</span>
+                <span className="font-semibold">−₱{laborCostAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+              </div>
+              <div className="flex justify-between text-sm text-red-600">
                 <span>Other Authorized Deductions</span>
                 <span className="font-semibold">−₱{otherDeductionsTotal.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
               </div>
@@ -1003,18 +1333,18 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, nextSlipNo
               </div>
               <div className="border-t-2 border-emerald-300 pt-3 flex justify-between items-center">
                 <span className="text-lg font-bold text-emerald-700">Net Income</span>
-                <span className="text-3xl font-bold text-emerald-700">₱{netIncome.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+                <span className="text-2xl font-bold text-emerald-700">₱{netIncome.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
               </div>
             </CardContent>
           </Card>
 
-          {/* Section G: Payroll Tracking */}
+          {/* Section H: Payroll Tracking */}
           <Card>
-            <CardHeader className="pb-3">
+            <CardHeader className="p-4 pb-2">
               <CardTitle className="text-base">Payroll Tracking</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="grid grid-cols-3 gap-4">
+            <CardContent className="p-4 pt-2 space-y-3">
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
                 <div className="space-y-1">
                   <Label>Payroll Slip Number</Label>
                   <Input
@@ -1058,25 +1388,47 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, nextSlipNo
         </div>
 
         {/* Sticky Footer with Buttons */}
-        <div className="sticky bottom-0 bg-white border-t-2 border-slate-200 px-8 py-4">
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={handleClose}>Cancel</Button>
+        <div className="bg-white border-t border-slate-200 px-5 py-3">
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button variant="outline" onClick={handleClose} disabled={!!savingAction}>Cancel</Button>
             {editRecord ? (
               <>
-                <Button variant="outline" className="border-emerald-600 text-emerald-700 hover:bg-emerald-50" onClick={() => handleSave("Draft")}>
-                  <Save className="h-4 w-4 mr-1" />Update Draft
+                <Button
+                  variant="outline"
+                  className="border-emerald-600 text-emerald-700 hover:bg-emerald-50"
+                  onClick={() => handleSave("Draft")}
+                  disabled={!!savingAction}
+                >
+                  {savingAction === "draft" ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Save className="h-4 w-4 mr-1" />}
+                  {savingAction === "draft" ? "Updating..." : "Update Draft"}
                 </Button>
-                <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={() => handleSave("Submitted for Validation")}>
-                  <Send className="h-4 w-4 mr-1" />Update & Submit for Validation
+                <Button
+                  className="bg-emerald-600 hover:bg-emerald-700"
+                  onClick={() => handleSave("Submitted for Validation")}
+                  disabled={!!savingAction}
+                >
+                  {savingAction === "submit" ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Send className="h-4 w-4 mr-1" />}
+                  {savingAction === "submit" ? "Submitting..." : "Update & Submit for Validation"}
                 </Button>
               </>
             ) : (
               <>
-                <Button variant="outline" className="border-emerald-600 text-emerald-700 hover:bg-emerald-50" onClick={() => handleSave("Draft")}>
-                  <Save className="h-4 w-4 mr-1" />Save as Draft
+                <Button
+                  variant="outline"
+                  className="border-emerald-600 text-emerald-700 hover:bg-emerald-50"
+                  onClick={() => handleSave("Draft")}
+                  disabled={!!savingAction}
+                >
+                  {savingAction === "draft" ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Save className="h-4 w-4 mr-1" />}
+                  {savingAction === "draft" ? "Saving..." : "Save as Draft"}
                 </Button>
-                <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={() => handleSave("Submitted for Validation")}>
-                  <Send className="h-4 w-4 mr-1" />Submit for Validation
+                <Button
+                  className="bg-emerald-600 hover:bg-emerald-700"
+                  onClick={() => handleSave("Submitted for Validation")}
+                  disabled={!!savingAction}
+                >
+                  {savingAction === "submit" ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Send className="h-4 w-4 mr-1" />}
+                  {savingAction === "submit" ? "Submitting..." : "Submit for Validation"}
                 </Button>
               </>
             )}
@@ -1087,11 +1439,18 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, nextSlipNo
   );
 }
 
-function ViewPayrollSlipDialog({ slip, onClose, onEdit, onSubmit }: { slip: PayrollRecord; onClose: () => void; onEdit?: (record: PayrollRecord) => void; onSubmit?: (record: PayrollRecord) => void }) {
+function ViewPayrollSlipDialog({ slip, auditEntries = [], onClose, onEdit, onSubmit }: {
+  slip: PayrollRecord;
+  auditEntries?: PayrollAuditRecord[];
+  onClose: () => void;
+  onEdit?: (record: PayrollRecord) => void;
+  onSubmit?: (record: PayrollRecord) => Promise<void> | void;
+}) {
   if (!slip) return null;
 
   const [showBoxBreakdown, setShowBoxBreakdown] = useState(false);
   const [materialCategory, setMaterialCategory] = useState("all");
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const getValidationBadge = (status: string) => {
     if (status === "Draft") return <Badge className="bg-slate-100 text-slate-700">Draft</Badge>;
@@ -1106,91 +1465,48 @@ function ViewPayrollSlipDialog({ slip, onClose, onEdit, onSubmit }: { slip: Payr
     return <Badge className="bg-slate-100 text-slate-700">Pending</Badge>;
   };
 
-  // Production data from production clerk
+  const classABoxes = slip.classABoxes ?? 0;
+  const classBBoxes = slip.classBBoxes ?? 0;
+  const specialBoxes = slip.specialBoxes ?? 0;
+
   const productionData = {
-    refNo: "PR-2026-0245",
+    refNo: slip.productionRecordId ? String(slip.productionRecordId) : "-",
     harvestDate: slip.harvestDate,
-    classA: { total: 52, bigHands: 30, smallHands: 15, cps: 7 },
-    classB: { total: 28, bigHands: 16, smallHands: 8, cps: 4 },
-    special: 8
+    classA: { total: classABoxes, bigHands: classABoxes, smallHands: 0, cps: 0 },
+    classB: { total: classBBoxes, bigHands: classBBoxes, smallHands: 0, cps: 0 },
+    special: specialBoxes
   };
 
   // Pricing
-  const priceClassA = 400.00;
-  const priceClassB = 350.00;
-  const priceSpecial = 300.00;
+  const priceClassA = slip.classAPrice ?? 0;
+  const priceClassB = slip.classBPrice ?? 0;
+  const priceSpecial = slip.specialPrice ?? 0;
 
   // Computed earnings
   const subtotalClassA = productionData.classA.total * priceClassA;
   const subtotalClassB = productionData.classB.total * priceClassB;
   const subtotalSpecial = productionData.special * priceSpecial;
-  const grossIncome = subtotalClassA + subtotalClassB + subtotalSpecial;
+  const computedGrossIncome = subtotalClassA + subtotalClassB + subtotalSpecial;
+  const grossIncome = computedGrossIncome > 0 ? computedGrossIncome : slip.grossIncome;
 
-  // Sample detailed material deductions with categories
-  const materialDeductions = [
-    {
-      refNo: "CR-2026-0089",
-      dateIssued: "May 25, 2026",
-      category: "Fertilizers",
-      materialName: "Fertilizer - Urea",
-      quantity: 2,
-      unit: "sacks",
-      unitPrice: 450.00,
-      totalCredit: 900.00,
-      deductionApplied: 900.00,
-      remainingBalance: 0
-    },
-    {
-      refNo: "CR-2026-0102",
-      dateIssued: "May 28, 2026",
-      category: "Pesticides",
-      materialName: "Fungicide Spray",
-      quantity: 2,
-      unit: "liters",
-      unitPrice: 300.00,
-      totalCredit: 600.00,
-      deductionApplied: 600.00,
-      remainingBalance: 0
-    },
-    {
-      refNo: "CR-2026-0098",
-      dateIssued: "May 26, 2026",
-      category: "Tools",
-      materialName: "Pruning Shears",
-      quantity: 1,
-      unit: "piece",
-      unitPrice: 400.00,
-      totalCredit: 400.00,
-      deductionApplied: 400.00,
-      remainingBalance: 0
-    },
-    {
-      refNo: "CR-2026-0095",
-      dateIssued: "May 24, 2026",
-      category: "Packaging",
-      materialName: "Plastic Bags - Large",
-      quantity: 2,
-      unit: "bundles",
-      unitPrice: 150.00,
-      totalCredit: 300.00,
-      deductionApplied: 300.00,
-      remainingBalance: 0
-    }
-  ];
+  const materialDeductions: { refNo: string; dateIssued: string; category: string; materialName: string; quantity: number; unit: string; unitPrice: number; totalCredit: number; deductionApplied: number; remainingBalance: number }[] = [];
 
   const filteredMaterials = materialCategory === "all"
     ? materialDeductions
     : materialDeductions.filter(m => m.category === materialCategory);
 
   // Total material deductions (all materials, not filtered)
-  const totalMaterialDeductions = materialDeductions.reduce((sum, m) => sum + m.deductionApplied, 0);
-  const previousUnpaid = 500.00;
-  const otherDeductions = 0.00;
-  const totalDeductions = totalMaterialDeductions + previousUnpaid + otherDeductions;
+  const totalMaterialDeductions = slip.creditDeduction ?? materialDeductions.reduce((sum, m) => sum + m.deductionApplied, 0);
+  const previousUnpaid = slip.previousBalance ?? 0;
+  const laborCostAmount = slip.laborCost ?? 0;
+  const otherDeductions = slip.otherDeductions ?? 0;
+  const computedTotalDeductions = totalMaterialDeductions + previousUnpaid + laborCostAmount + otherDeductions;
+  const totalDeductions = computedTotalDeductions > 0 ? computedTotalDeductions : slip.totalDeductions;
   const netIncome = grossIncome - totalDeductions;
 
   // Validation checks
-  const totalBoxesProduction = productionData.classA.total + productionData.classB.total + productionData.special;
+  const computedTotalBoxes = productionData.classA.total + productionData.classB.total + productionData.special;
+  const totalBoxesProduction = computedTotalBoxes > 0 ? computedTotalBoxes : slip.totalBoxes;
   const validationErrors = [];
 
   if (totalBoxesProduction !== slip.totalBoxes) {
@@ -1214,32 +1530,11 @@ function ViewPayrollSlipDialog({ slip, onClose, onEdit, onSubmit }: { slip: Payr
 
   const isValid = validationErrors.length === 0;
 
-  const approvalHistory = [
-    {
-      date: "May 31, 2026 10:45 AM",
-      action: "Submitted for Validation",
-      by: "Maria Santos (Payroll Personnel)",
-      notes: "Payroll slip prepared and submitted for validation"
-    },
-    {
-      date: "May 31, 2026 2:30 PM",
-      action: "Validated",
-      by: "Jose Reyes (Finance Officer)",
-      notes: "All production records and deductions verified. Approved for final review."
-    },
-    {
-      date: "June 1, 2026 9:15 AM",
-      action: "Approved",
-      by: "Admin Manager",
-      notes: "Payroll approved for release"
-    }
-  ];
-
   return (
     <Dialog open={!!slip} onOpenChange={onClose}>
-      <DialogContent className="!max-w-[1500px] w-[90vw] max-h-[90vh] overflow-y-auto p-0 overflow-x-hidden">
+      <DialogContent className="!max-w-[1500px] w-[95vw] max-h-[90vh] overflow-y-auto p-0 overflow-x-hidden">
         {/* Header */}
-        <div className="sticky top-0 z-10 bg-white border-b-2 border-emerald-200 shadow-md">
+        <div className="bg-white border-b border-emerald-200">
           <div className="px-8 py-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-8">
@@ -1254,7 +1549,7 @@ function ViewPayrollSlipDialog({ slip, onClose, onEdit, onSubmit }: { slip: Payr
                   </div>
                 </div>
                 <div className="h-12 w-px bg-slate-300"></div>
-                <div className="grid grid-cols-4 gap-6">
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 xl:gap-6">
                   <div>
                     <p className="text-xs text-muted-foreground mb-0.5">Beneficiary</p>
                     <p className="font-semibold">{slip.beneficiary}</p>
@@ -1269,7 +1564,7 @@ function ViewPayrollSlipDialog({ slip, onClose, onEdit, onSubmit }: { slip: Payr
                   </div>
                   <div>
                     <p className="text-xs text-muted-foreground mb-0.5">Prepared By</p>
-                    <p className="font-semibold">Maria Santos</p>
+                    <p className="font-semibold">-</p>
                   </div>
                 </div>
               </div>
@@ -1317,7 +1612,7 @@ function ViewPayrollSlipDialog({ slip, onClose, onEdit, onSubmit }: { slip: Payr
                   <CardTitle className="text-base font-bold text-emerald-700">Beneficiary Information</CardTitle>
                 </CardHeader>
                 <CardContent className="pt-5 px-6 pb-5">
-                  <div className="grid grid-cols-3 gap-x-8 gap-y-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-8 gap-y-4">
                     <div>
                       <p className="text-xs font-semibold text-muted-foreground mb-1">BENEFICIARY NAME</p>
                       <p className="font-semibold">{slip.beneficiary}</p>
@@ -1404,7 +1699,7 @@ function ViewPayrollSlipDialog({ slip, onClose, onEdit, onSubmit }: { slip: Payr
 
                   {showBoxBreakdown && (
                     <div className="border border-emerald-200 rounded-lg p-5 bg-gradient-to-r from-emerald-50 to-slate-50">
-                      <div className="grid grid-cols-2 gap-8">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-8">
                         <div>
                           <p className="font-bold mb-3 text-emerald-700 border-b-2 border-emerald-300 pb-2">
                             Class A Boxes ({productionData.classA.total})
@@ -1598,6 +1893,10 @@ function ViewPayrollSlipDialog({ slip, onClose, onEdit, onSubmit }: { slip: Payr
                     <TableCell className="text-right py-4 font-semibold text-red-600 whitespace-nowrap">₱{previousUnpaid.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
                   </TableRow>
                   <TableRow className="hover:bg-red-50/30">
+                    <TableCell className="py-4 pl-8">Labor Cost</TableCell>
+                    <TableCell className="text-right py-4 font-semibold text-red-600 whitespace-nowrap">₱{laborCostAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
+                  </TableRow>
+                  <TableRow className="hover:bg-red-50/30">
                     <TableCell className="py-4 pl-8">Other Adjustments</TableCell>
                     <TableCell className="text-right py-4 font-semibold text-red-600 whitespace-nowrap">₱{otherDeductions.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
                   </TableRow>
@@ -1622,58 +1921,41 @@ function ViewPayrollSlipDialog({ slip, onClose, onEdit, onSubmit }: { slip: Payr
             </CardContent>
           </Card>
 
-          {/* Approval History Timeline */}
-          {slip.approvalStatus === "Approved" && (
-            <Card className="border-blue-200 shadow-sm">
-              <CardHeader className="pb-4 pt-4 px-8 bg-gradient-to-r from-blue-50 to-white border-b border-blue-200">
-                <CardTitle className="text-base font-bold text-blue-700">Approval History Timeline</CardTitle>
-              </CardHeader>
-              <CardContent className="pt-6 px-8 pb-6">
-                <div className="relative">
-                  {/* Timeline Line */}
-                  <div className="absolute top-10 left-0 right-0 h-1 bg-gradient-to-r from-amber-300 via-violet-300 to-emerald-300"></div>
-
-                  {/* Timeline Steps */}
-                  <div className="relative grid grid-cols-3 gap-8">
-                    {approvalHistory.map((history, idx) => (
-                      <div key={idx} className="relative">
-                        {/* Circle Marker */}
-                        <div className="flex justify-center mb-4">
-                          <div className={`h-20 w-20 rounded-full flex items-center justify-center border-4 shadow-lg z-10 ${
-                            idx === 0 ? 'bg-amber-100 border-amber-400' :
-                            idx === 1 ? 'bg-violet-100 border-violet-400' :
-                            'bg-emerald-100 border-emerald-400'
-                          }`}>
-                            <span className={`text-3xl font-bold ${
-                              idx === 0 ? 'text-amber-700' :
-                              idx === 1 ? 'text-violet-700' :
-                              'text-emerald-700'
-                            }`}>{idx + 1}</span>
-                          </div>
-                        </div>
-
-                        {/* Content Card */}
-                        <div className={`p-4 rounded-lg border-2 shadow-sm ${
-                          idx === 0 ? 'bg-amber-50 border-amber-200' :
-                          idx === 1 ? 'bg-violet-50 border-violet-200' :
-                          'bg-emerald-50 border-emerald-200'
-                        }`}>
-                          <Badge className={`mb-2 ${
-                            idx === 0 ? 'bg-amber-600' :
-                            idx === 1 ? 'bg-violet-600' :
-                            'bg-emerald-600'
-                          }`}>{history.action}</Badge>
-                          <p className="text-xs text-muted-foreground font-semibold mb-2">{history.date}</p>
-                          <p className="font-bold text-sm mb-2">{history.by}</p>
-                          <p className="text-sm text-muted-foreground leading-relaxed">{history.notes}</p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+          {/* Payroll Audit Trail */}
+          <Card className="border-blue-200 shadow-sm">
+            <CardHeader className="pb-4 pt-4 px-8 bg-gradient-to-r from-blue-50 to-white border-b border-blue-200">
+              <CardTitle className="text-base font-bold text-blue-700">Payroll Audit Trail</CardTitle>
+            </CardHeader>
+            <CardContent className="pt-4 px-8 pb-6">
+              {auditEntries.length === 0 ? (
+                <div className="rounded-md border bg-slate-50 p-4 text-sm text-muted-foreground">
+                  No payroll personnel audit records have been captured for this slip yet.
                 </div>
-              </CardContent>
-            </Card>
-          )}
+              ) : (
+                <div className="space-y-3">
+                  {auditEntries.map((entry) => (
+                    <div key={entry.id} className="grid grid-cols-1 gap-2 rounded-md border bg-white p-3 md:grid-cols-[160px_1fr]">
+                      <div>
+                        <Badge className={
+                          entry.action === "Created" ? "bg-slate-100 text-slate-700" :
+                          entry.action === "Edited" ? "bg-amber-100 text-amber-700" :
+                          entry.action === "Resubmitted" ? "bg-violet-100 text-violet-700" :
+                          "bg-emerald-100 text-emerald-700"
+                        }>
+                          {entry.action}
+                        </Badge>
+                        <p className="mt-2 text-xs text-muted-foreground">{entry.timestamp}</p>
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-sm font-semibold">{entry.account} <span className="font-normal text-muted-foreground">({entry.role})</span></p>
+                        <p className="text-sm text-muted-foreground">{entry.remarks}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
 
           {/* Action Buttons */}
           <div className="flex justify-between items-center border-t pt-3 mt-2">
@@ -1698,14 +1980,21 @@ function ViewPayrollSlipDialog({ slip, onClose, onEdit, onSubmit }: { slip: Payr
                   </Button>
                   <Button
                     className="bg-emerald-600 hover:bg-emerald-700"
-                    disabled={!isValid}
-                    onClick={() => {
-                      onSubmit?.(slip);
-                      onClose();
+                    disabled={!isValid || isSubmitting}
+                    onClick={async () => {
+                      try {
+                        setIsSubmitting(true);
+                        await onSubmit?.(slip);
+                        onClose();
+                      } catch {
+                        // The parent submit handler already reports the error toast.
+                      } finally {
+                        setIsSubmitting(false);
+                      }
                     }}
                   >
-                    <Send className="h-4 w-4 mr-1" />
-                    Submit for Validation
+                    {isSubmitting ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Send className="h-4 w-4 mr-1" />}
+                    {isSubmitting ? "Submitting..." : "Submit for Validation"}
                   </Button>
                 </>
               )}
@@ -1730,96 +2019,14 @@ function ViewPayrollSlipDialog({ slip, onClose, onEdit, onSubmit }: { slip: Payr
 }
 
 
-function PayrollRecords() {
-  const [viewSlip, setViewSlip] = useState<any | null>(null);
+function PayrollRecords({ records }: { records: PayrollRecord[] }) {
+  const [viewSlip, setViewSlip] = useState<PayrollRecord | null>(null);
   const [statusFilter, setStatusFilter] = useState("all-status");
+  const [search, setSearch] = useState("");
 
-  const allRecords = [
-    {
-      id: 1,
-      slipNo: "BP-2026-001",
-      period: "May 16-31, 2026",
-      beneficiary: "SALUDEZ LISA",
-      harvestDate: "May 30, 2026",
-      totalBoxes: 88,
-      grossIncome: 33000.00,
-      totalDeductions: 2700.00,
-      netIncome: 30300.00,
-      validationStatus: "Validated",
-      approvalStatus: "Approved",
-      type: "Beneficiary"
-    },
-    {
-      id: 2,
-      slipNo: "BP-2026-002",
-      period: "May 16-31, 2026",
-      beneficiary: "GARCIA MARIA",
-      harvestDate: "May 28, 2026",
-      totalBoxes: 95,
-      grossIncome: 38000.00,
-      totalDeductions: 2800.00,
-      netIncome: 35200.00,
-      validationStatus: "Validated",
-      approvalStatus: "Approved",
-      type: "Beneficiary"
-    },
-    {
-      id: 3,
-      slipNo: "BP-2026-003",
-      period: "May 16-31, 2026",
-      beneficiary: "REYES JUAN",
-      harvestDate: "May 29, 2026",
-      totalBoxes: 78,
-      grossIncome: 31200.00,
-      totalDeductions: 5200.00,
-      netIncome: 26000.00,
-      validationStatus: "Validated",
-      approvalStatus: "Approved",
-      type: "Beneficiary"
-    },
-    {
-      id: 4,
-      slipNo: "BP-2026-004",
-      period: "May 16-31, 2026",
-      beneficiary: "SANTOS PEDRO",
-      harvestDate: "May 31, 2026",
-      totalBoxes: 102,
-      grossIncome: 40800.00,
-      totalDeductions: 3600.00,
-      netIncome: 37200.00,
-      validationStatus: "Submitted for Validation",
-      approvalStatus: "Pending Approval",
-      type: "Beneficiary"
-    },
-    {
-      id: 5,
-      slipNo: "BP-2026-005",
-      period: "June 1-15, 2026",
-      beneficiary: "CRUZ ANNA",
-      harvestDate: "June 2, 2026",
-      totalBoxes: 68,
-      grossIncome: 27200.00,
-      totalDeductions: 1800.00,
-      netIncome: 25400.00,
-      validationStatus: "Draft",
-      approvalStatus: "Pending Approval",
-      type: "Beneficiary"
-    },
-    {
-      id: 6,
-      slipNo: "BP-2026-006",
-      period: "June 1-15, 2026",
-      beneficiary: "MENDOZA CARLO",
-      harvestDate: "June 1, 2026",
-      totalBoxes: 84,
-      grossIncome: 33600.00,
-      totalDeductions: 4100.00,
-      netIncome: 29500.00,
-      validationStatus: "Draft",
-      approvalStatus: "Pending Approval",
-      type: "Beneficiary"
-    }
-  ];
+  const auditRecords: PayrollAuditRecord[] = [];
+
+  const allRecords: (PayrollRecord & { type: string })[] = records.map((record) => ({ ...record, type: "Beneficiary" }));
 
   const getValidationBadge = (status: string) => {
     if (status === "Draft") return <Badge className="bg-slate-100 text-slate-700">Draft</Badge>;
@@ -1838,6 +2045,8 @@ function PayrollRecords() {
   const filteredRecords = allRecords.filter((record) => {
     // Only show beneficiary records
     if (record.type !== "Beneficiary") return false;
+    const q = search.trim().toLowerCase();
+    if (q && !record.slipNo.toLowerCase().includes(q) && !record.beneficiary.toLowerCase().includes(q)) return false;
 
     // Approval status filter
     if (statusFilter === "approved" && record.approvalStatus !== "Approved") return false;
@@ -1862,7 +2071,7 @@ function PayrollRecords() {
           <div className="flex gap-2">
             <div className="relative flex-1">
               <Search className="h-4 w-4 absolute left-2.5 top-2.5 text-muted-foreground" />
-              <Input placeholder="Search beneficiary payroll records..." className="pl-8 h-9" />
+              <Input placeholder="Search beneficiary payroll records..." className="pl-8 h-9" value={search} onChange={(event) => setSearch(event.target.value)} />
             </div>
             <Select value={statusFilter} onValueChange={setStatusFilter}>
               <SelectTrigger className="w-44 h-9"><SelectValue /></SelectTrigger>
@@ -1940,7 +2149,15 @@ function PayrollRecords() {
         </CardContent>
       </Card>
 
-      {viewSlip && <ViewPayrollSlipDialog slip={viewSlip} onClose={() => setViewSlip(null)} />}
+      {viewSlip && (
+        <ViewPayrollSlipDialog
+          slip={viewSlip}
+          auditEntries={auditRecords.filter((entry) => entry.slipNo === viewSlip.slipNo)}
+          onClose={() => setViewSlip(null)}
+        />
+      )}
     </div>
   );
 }
+
+
