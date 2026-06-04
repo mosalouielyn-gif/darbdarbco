@@ -133,7 +133,7 @@ function KpiCard({ label, value, subtext, color, onClick }: any) {
     <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={onClick}>
       <CardContent className="p-5">
         <div className="text-muted-foreground text-xs mb-1">{label}</div>
-        <div className={`text-3xl font-bold ${textColor}`}>{value}</div>
+        <div className={`break-words text-2xl font-bold sm:text-3xl ${textColor}`}>{value}</div>
         <div className="text-xs text-muted-foreground mt-1">{subtext}</div>
       </CardContent>
     </Card>
@@ -495,7 +495,7 @@ function BeneficiaryPayroll({ user, beneficiaries, productionRecords, payrollRec
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="flex items-center gap-2">
             <Wallet className="h-6 w-6 text-emerald-700" />Beneficiary Payroll
@@ -634,7 +634,7 @@ function BeneficiaryPayroll({ user, beneficiaries, productionRecords, payrollRec
             </TableBody>
           </Table>
 
-          <div className="flex items-center justify-between pt-2">
+          <div className="flex flex-col gap-2 pt-2 sm:flex-row sm:items-center sm:justify-between">
             <span className="text-sm text-muted-foreground">Showing {filteredRecords.length} of {payrollRecords.length} records</span>
             <div className="flex gap-1">
               <Button variant="outline" size="sm" className="h-8 w-8 p-0" disabled>
@@ -876,9 +876,9 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, beneficiar
 
   return (
     <Dialog open={open} onOpenChange={(open) => { if (!open) handleClose(); }}>
-      <DialogContent className="!max-w-[1080px] w-[95vw] max-h-[86vh] overflow-y-auto p-0 overflow-x-hidden">
+      <DialogContent className="!max-w-[1080px] w-[calc(100vw-1rem)] max-h-[86dvh] overflow-y-auto p-0 overflow-x-hidden">
         {/* Header */}
-        <div className="bg-white border-b border-emerald-200 px-5 py-4">
+        <div className="bg-white border-b border-emerald-200 px-4 py-3 sm:px-5 sm:py-4">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-emerald-700 text-lg">
               {editRecord ? (
@@ -900,7 +900,7 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, beneficiar
           </DialogHeader>
         </div>
 
-        <div className="px-5 py-4 space-y-4">
+        <div className="px-4 py-4 space-y-4 sm:px-5">
           {/* Section A: Beneficiary Information */}
           <Card className="border-emerald-200">
             <CardHeader className="p-4 pb-2">
@@ -1385,8 +1385,8 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, beneficiar
         </div>
 
         {/* Sticky Footer with Buttons */}
-        <div className="bg-white border-t border-slate-200 px-5 py-3">
-          <div className="flex flex-wrap justify-end gap-2">
+        <div className="bg-white border-t border-slate-200 px-4 py-3 sm:px-5">
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:flex-wrap sm:justify-end [&>button]:w-full sm:[&>button]:w-auto">
             <Button variant="outline" onClick={handleClose} disabled={!!savingAction}>Cancel</Button>
             {editRecord ? (
               <>
@@ -1529,23 +1529,23 @@ function ViewPayrollSlipDialog({ slip, auditEntries = [], onClose, onEdit, onSub
 
   return (
     <Dialog open={!!slip} onOpenChange={onClose}>
-      <DialogContent className="!max-w-[1500px] w-[95vw] max-h-[90vh] overflow-y-auto p-0 overflow-x-hidden">
+      <DialogContent className="!max-w-[1500px] w-[calc(100vw-1rem)] max-h-[90dvh] overflow-y-auto p-0 overflow-x-hidden">
         {/* Header */}
         <div className="bg-white border-b border-emerald-200">
-          <div className="px-8 py-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-8">
+          <div className="px-4 py-4 sm:px-8">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+              <div className="flex min-w-0 flex-col gap-4 lg:flex-row lg:items-center lg:gap-8">
                 <div className="flex items-center gap-3">
                   <FileText className="h-6 w-6 text-emerald-700" />
-                  <div>
+                  <div className="min-w-0">
                     <p className="text-xs text-muted-foreground">Payroll Slip</p>
-                    <DialogTitle className="text-2xl font-bold text-emerald-700">{slip.slipNo}</DialogTitle>
+                    <DialogTitle className="break-words text-xl font-bold text-emerald-700 sm:text-2xl">{slip.slipNo}</DialogTitle>
                     <DialogDescription className="sr-only">
                       Detailed view of payroll slip for {slip.beneficiary} covering period {slip.period}
                     </DialogDescription>
                   </div>
                 </div>
-                <div className="h-12 w-px bg-slate-300"></div>
+                <div className="hidden h-12 w-px bg-slate-300 lg:block"></div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 xl:gap-6">
                   <div>
                     <p className="text-xs text-muted-foreground mb-0.5">Beneficiary</p>
@@ -1565,7 +1565,7 @@ function ViewPayrollSlipDialog({ slip, auditEntries = [], onClose, onEdit, onSub
                   </div>
                 </div>
               </div>
-              <div className="flex flex-col gap-2">
+              <div className="flex flex-row flex-wrap gap-2 lg:flex-col">
                 {getValidationBadge(slip.validationStatus)}
                 {getApprovalBadge(slip.approvalStatus)}
                 {isValid ? (
@@ -1578,7 +1578,7 @@ function ViewPayrollSlipDialog({ slip, auditEntries = [], onClose, onEdit, onSub
           </div>
         </div>
 
-        <div className="px-8 py-6 space-y-6">
+        <div className="px-4 py-4 space-y-4 sm:px-8 sm:py-6 sm:space-y-6">
           {/* Validation Errors */}
           {!isValid && (
             <Card className="border-red-300 bg-red-50">
@@ -1641,7 +1641,7 @@ function ViewPayrollSlipDialog({ slip, auditEntries = [], onClose, onEdit, onSub
               {/* Production Earnings */}
               <Card className="border-emerald-200 shadow-sm">
                 <CardHeader className="pb-4 pt-4 px-6 bg-gradient-to-r from-emerald-50 to-white border-b border-emerald-200">
-                  <div className="flex items-center justify-between">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                     <CardTitle className="text-base font-bold text-emerald-700">Production Earnings</CardTitle>
                     <p className="text-sm text-muted-foreground">Formula: Subtotal = Number of Boxes × Price per Box</p>
                   </div>
@@ -1744,7 +1744,7 @@ function ViewPayrollSlipDialog({ slip, auditEntries = [], onClose, onEdit, onSub
             {/* Material Credit Deductions */}
             <Card className="border-amber-200 shadow-sm">
                 <CardHeader className="pb-4 pt-4 px-6 bg-gradient-to-r from-amber-50 to-white border-b border-amber-200">
-                  <div className="flex items-center justify-between">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                     <CardTitle className="text-base font-bold text-amber-700">Material Credit Deductions</CardTitle>
                     <p className="text-sm text-muted-foreground">Total Credit = Qty × Unit Price</p>
                   </div>
@@ -1856,10 +1856,10 @@ function ViewPayrollSlipDialog({ slip, auditEntries = [], onClose, onEdit, onSub
 
           {/* Computation Summary - Full Width */}
           <Card className="border-emerald-300 shadow-lg bg-gradient-to-br from-emerald-50 via-white to-blue-50">
-            <CardHeader className="pb-5 pt-5 px-8 bg-gradient-to-r from-emerald-100 to-blue-100 border-b-2 border-emerald-300">
-              <div className="flex items-center justify-between">
+            <CardHeader className="px-4 pb-4 pt-4 bg-gradient-to-r from-emerald-100 to-blue-100 border-b-2 border-emerald-300 sm:px-8 sm:pb-5 sm:pt-5">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                  <CardTitle className="text-xl font-bold text-emerald-700">Computation Summary</CardTitle>
+                  <CardTitle className="text-lg font-bold text-emerald-700 sm:text-xl">Computation Summary</CardTitle>
                   <p className="text-sm text-muted-foreground mt-1">Complete breakdown and final payroll computation</p>
                 </div>
                 <div className="text-sm text-muted-foreground bg-white px-4 py-2 rounded-lg border">
@@ -1867,7 +1867,7 @@ function ViewPayrollSlipDialog({ slip, auditEntries = [], onClose, onEdit, onSub
                 </div>
               </div>
             </CardHeader>
-            <CardContent className="pt-6 px-8 pb-6">
+            <CardContent className="px-4 pb-4 pt-4 sm:px-8 sm:pb-6 sm:pt-6">
               <div className="w-full overflow-x-auto">
                 <Table>
                   <TableHeader>
@@ -1903,7 +1903,7 @@ function ViewPayrollSlipDialog({ slip, auditEntries = [], onClose, onEdit, onSub
                   </TableRow>
                   <TableRow className="border-t-4 border-emerald-400 bg-gradient-to-r from-emerald-100 to-emerald-50">
                     <TableCell className="py-6 font-bold text-emerald-700 text-lg">NET INCOME <span className="text-muted-foreground font-normal text-sm ml-2">(Amount to be released)</span></TableCell>
-                    <TableCell className="text-right py-6 font-bold text-emerald-700 text-3xl whitespace-nowrap">₱{netIncome.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
+                    <TableCell className="text-right py-6 font-bold text-emerald-700 text-2xl whitespace-nowrap sm:text-3xl">₱{netIncome.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
                   </TableRow>
                   {Math.abs(netIncome - slip.netIncome) > 0.01 && (
                     <TableRow className="bg-red-50 border-2 border-red-400">
@@ -1920,10 +1920,10 @@ function ViewPayrollSlipDialog({ slip, auditEntries = [], onClose, onEdit, onSub
 
           {/* Payroll Audit Trail */}
           <Card className="border-blue-200 shadow-sm">
-            <CardHeader className="pb-4 pt-4 px-8 bg-gradient-to-r from-blue-50 to-white border-b border-blue-200">
+            <CardHeader className="px-4 pb-4 pt-4 bg-gradient-to-r from-blue-50 to-white border-b border-blue-200 sm:px-8">
               <CardTitle className="text-base font-bold text-blue-700">Payroll Audit Trail</CardTitle>
             </CardHeader>
-            <CardContent className="pt-4 px-8 pb-6">
+            <CardContent className="px-4 pb-4 pt-4 sm:px-8 sm:pb-6">
               {auditEntries.length === 0 ? (
                 <div className="rounded-md border bg-slate-50 p-4 text-sm text-muted-foreground">
                   No payroll personnel audit records have been captured for this slip yet.
@@ -2055,7 +2055,7 @@ function PayrollRecords({ records }: { records: PayrollRecord[] }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="flex items-center gap-2">
             <History className="h-6 w-6 text-emerald-700" />Payroll Records
@@ -2131,7 +2131,7 @@ function PayrollRecords({ records }: { records: PayrollRecord[] }) {
             </TableBody>
           </Table>
 
-          <div className="flex items-center justify-between pt-2">
+          <div className="flex flex-col gap-2 pt-2 sm:flex-row sm:items-center sm:justify-between">
             <span className="text-sm text-muted-foreground">Showing {filteredRecords.length} of {allRecords.length} records</span>
             <div className="flex gap-1">
               <Button variant="outline" size="sm" className="h-8 w-8 p-0" disabled>

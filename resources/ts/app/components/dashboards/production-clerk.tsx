@@ -437,7 +437,7 @@ function ProductionRecords({ tab, setTab, user }: { tab: string; setTab: (t: str
                 <div className="text-muted-foreground">{deletingHarvest.date} • {deletingHarvest.harvester}</div>
               </div>
             )}
-            <div className="flex justify-end gap-2">
+            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end [&>button]:w-full sm:[&>button]:w-auto">
               <Button variant="outline" onClick={() => setDeletingHarvest(null)} disabled={deletingHarvestBusy}>Cancel</Button>
               <Button
                 className="bg-red-600 hover:bg-red-700"
@@ -484,7 +484,7 @@ function ProductionRecords({ tab, setTab, user }: { tab: string; setTab: (t: str
                 <div className="text-muted-foreground">{deletingProduction.date}</div>
               </div>
             )}
-            <div className="flex justify-end gap-2">
+            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end [&>button]:w-full sm:[&>button]:w-auto">
               <Button variant="outline" onClick={() => setDeletingProduction(null)} disabled={deletingProductionBusy}>Cancel</Button>
               <Button
                 className="bg-red-600 hover:bg-red-700"
@@ -963,7 +963,7 @@ function HarvestDialog({ open, onOpenChange, record, onSave }: {
             </div>
           </div>
 
-          <div className="flex justify-end gap-2 pt-2">
+          <div className="flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:justify-end [&>button]:w-full sm:[&>button]:w-auto">
             <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isSaving}>Cancel</Button>
             <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={submit} disabled={isSaving}>
               {isSaving ? (
@@ -1157,7 +1157,7 @@ function ProductionBoxesDialog({ open, onOpenChange, record, beneficiaryOptions,
             </div>
           </div>
 
-          <div className="flex justify-end gap-2 pt-2">
+          <div className="flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:justify-end [&>button]:w-full sm:[&>button]:w-auto">
             <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isSaving}>Cancel</Button>
             <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={submit} disabled={isSaving}>
               {isSaving ? (

@@ -29,7 +29,7 @@ export function DarbcoLayout({ user, onLogout, navItems, active, onChange, child
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 xl:flex">
+    <div className="min-h-screen overflow-x-hidden bg-slate-50 xl:flex">
       <aside className="hidden xl:flex xl:w-64 2xl:w-72 bg-gradient-to-b from-emerald-900 to-emerald-950 text-emerald-50 flex-col xl:sticky xl:top-0 xl:h-screen">
         <div className="p-5 border-b border-emerald-800">
           <div className="flex items-center gap-2">
@@ -82,7 +82,7 @@ export function DarbcoLayout({ user, onLogout, navItems, active, onChange, child
         </div>
       </aside>
 
-      <main className="min-w-0 flex-1">
+      <main className="min-w-0 flex-1 overflow-x-hidden">
         <header className="sticky top-0 z-30 border-b border-emerald-900/10 bg-white/95 backdrop-blur xl:hidden relative">
           <div className="flex items-center gap-3 px-3 py-3 sm:px-4">
             <button

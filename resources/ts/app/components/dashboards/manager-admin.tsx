@@ -513,7 +513,7 @@ function Dashboard({ goTo, payroll, restock, audit, inventoryItems, productionRe
               </li>
             ))}
           </ul>
-          <div className="mt-3 flex justify-end">
+          <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:justify-end [&>button]:w-full sm:[&>button]:w-auto">
             <Button variant="link" className="text-emerald-700" onClick={() => goTo("audit")}>View full audit history →</Button>
           </div>
         </CardContent>
@@ -606,7 +606,7 @@ function ProductionSummary({ records }: { records: ProductionSummaryRow[] }) {
       </Card>
 
       <Dialog open={!!viewDay} onOpenChange={(open) => !open && setViewDay(null)}>
-        <DialogContent className="!max-w-[95vw] w-[95vw] sm:!max-w-[560px]">
+        <DialogContent className="!max-w-[calc(100vw-1rem)] w-[calc(100vw-1rem)] sm:!max-w-[560px]">
           {viewDay && (
             <>
               <DialogHeader><DialogTitle>Daily Boxes Record — {viewDay.date}</DialogTitle></DialogHeader>
@@ -619,7 +619,7 @@ function ProductionSummary({ records }: { records: ProductionSummaryRow[] }) {
                 <Field label="Special Product Boxes" value={String(viewDay.special)} />
                 <Field label="Total Boxes" value={String(viewDay.total)} />
               </div>
-              <div className="flex justify-end"><Button variant="outline" onClick={() => setViewDay(null)}>Close</Button></div>
+              <div className="flex flex-col gap-2 sm:flex-row sm:justify-end [&>button]:w-full sm:[&>button]:w-auto"><Button variant="outline" onClick={() => setViewDay(null)}>Close</Button></div>
             </>
           )}
         </DialogContent>
@@ -804,14 +804,14 @@ function PayrollApprovals({ payroll, onApprove, onReturn }: { payroll: PayrollRo
               )}
             </TableBody>
           </Table>
-          <div className="mt-3 flex justify-end">
+          <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:justify-end [&>button]:w-full sm:[&>button]:w-auto">
             <Button variant="link" className="text-emerald-700">View All Payrolls →</Button>
           </div>
         </CardContent>
       </Card>
 
       <Dialog open={!!view} onOpenChange={(o) => !o && setView(null)}>
-        <DialogContent className="!max-w-[95vw] w-[95vw] sm:!max-w-[700px]">
+        <DialogContent className="!max-w-[calc(100vw-1rem)] w-[calc(100vw-1rem)] sm:!max-w-[700px]">
           {view && (
             <>
               <DialogHeader><DialogTitle>Payroll Slip — {view.id}</DialogTitle></DialogHeader>
@@ -829,7 +829,7 @@ function PayrollApprovals({ payroll, onApprove, onReturn }: { payroll: PayrollRo
                     <TableRow className="bg-emerald-50"><TableCell><strong>Net Pay</strong></TableCell><TableCell className="text-right"><strong className="text-emerald-800">₱{view.net.toLocaleString()}</strong></TableCell></TableRow>
                   </TableBody>
                 </Table>
-                <div className="flex justify-end gap-2">
+                <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end [&>button]:w-full sm:[&>button]:w-auto">
                   <Button variant="outline" onClick={() => setView(null)}>Close</Button>
                 </div>
               </div>
@@ -839,7 +839,7 @@ function PayrollApprovals({ payroll, onApprove, onReturn }: { payroll: PayrollRo
       </Dialog>
 
       <Dialog open={!!returning} onOpenChange={(o) => { if (!o) { setReturning(null); setReason(""); } }}>
-        <DialogContent className="!max-w-[95vw] w-[95vw] sm:!max-w-[560px]">
+        <DialogContent className="!max-w-[calc(100vw-1rem)] w-[calc(100vw-1rem)] sm:!max-w-[560px]">
           {returning && (
             <>
               <DialogHeader><DialogTitle>Return Payroll — {returning.id}</DialogTitle></DialogHeader>
@@ -848,7 +848,7 @@ function PayrollApprovals({ payroll, onApprove, onReturn }: { payroll: PayrollRo
                   <Label>Reason for Return <span className="text-red-500">*</span></Label>
                   <Textarea value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Explain why this payroll is being returned for correction." />
                 </div>
-                <div className="flex justify-end gap-2">
+                <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end [&>button]:w-full sm:[&>button]:w-auto">
                   <Button variant="outline" disabled={!!returningId} onClick={() => { setReturning(null); setReason(""); }}>Cancel</Button>
                   <Button className="bg-red-600 hover:bg-red-700" disabled={!!returningId} onClick={async () => {
                     if (!reason.trim()) { toast.error("Reason is required"); return; }
@@ -969,7 +969,7 @@ function PayrollHistory({ payroll }: { payroll: PayrollRow[] }) {
       </Card>
 
       <Dialog open={!!view} onOpenChange={(open) => !open && setView(null)}>
-        <DialogContent className="!max-w-[95vw] w-[95vw] sm:!max-w-[700px]">
+        <DialogContent className="!max-w-[calc(100vw-1rem)] w-[calc(100vw-1rem)] sm:!max-w-[700px]">
           {view && (
             <>
               <DialogHeader><DialogTitle>Payroll Record - {view.id}</DialogTitle></DialogHeader>
@@ -992,7 +992,7 @@ function PayrollHistory({ payroll }: { payroll: PayrollRow[] }) {
                     <TableRow className="bg-emerald-50"><TableCell><strong>Net Pay</strong></TableCell><TableCell className="text-right"><strong className="text-emerald-800">₱{view.net.toLocaleString()}</strong></TableCell></TableRow>
                   </TableBody>
                 </Table>
-                <div className="flex justify-end">
+                <div className="flex flex-col gap-2 sm:flex-row sm:justify-end [&>button]:w-full sm:[&>button]:w-auto">
                   <Button variant="outline" onClick={() => setView(null)}>Close</Button>
                 </div>
               </div>
@@ -1093,7 +1093,7 @@ function RestockRequests({ restock, onApprove, onReturn }: { restock: RestockRow
       </Card>
 
       <Dialog open={!!view} onOpenChange={(o) => !o && setView(null)}>
-        <DialogContent className="!max-w-[95vw] w-[95vw] sm:!max-w-[640px]">
+        <DialogContent className="!max-w-[calc(100vw-1rem)] w-[calc(100vw-1rem)] sm:!max-w-[640px]">
           {view && (
             <>
               <DialogHeader><DialogTitle>Restock Request — {view.id}</DialogTitle></DialogHeader>
@@ -1112,14 +1112,14 @@ function RestockRequests({ restock, onApprove, onReturn }: { restock: RestockRow
                   <strong>Return Reason:</strong> {view.returnReason}
                 </div>
               )}
-              <div className="flex justify-end"><Button variant="outline" onClick={() => setView(null)}>Close</Button></div>
+              <div className="flex flex-col gap-2 sm:flex-row sm:justify-end [&>button]:w-full sm:[&>button]:w-auto"><Button variant="outline" onClick={() => setView(null)}>Close</Button></div>
             </>
           )}
         </DialogContent>
       </Dialog>
 
       <Dialog open={!!returning} onOpenChange={(o) => { if (!o) { setReturning(null); setReason(""); } }}>
-        <DialogContent className="!max-w-[95vw] w-[95vw] sm:!max-w-[560px]">
+        <DialogContent className="!max-w-[calc(100vw-1rem)] w-[calc(100vw-1rem)] sm:!max-w-[560px]">
           {returning && (
             <>
               <DialogHeader><DialogTitle>Return Restock Request — {returning.id}</DialogTitle></DialogHeader>
@@ -1128,7 +1128,7 @@ function RestockRequests({ restock, onApprove, onReturn }: { restock: RestockRow
                   <Label>Reason for Return <span className="text-red-500">*</span></Label>
                   <Textarea value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Explain why this request is being returned." />
                 </div>
-                <div className="flex justify-end gap-2">
+                <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end [&>button]:w-full sm:[&>button]:w-auto">
                   <Button variant="outline" disabled={!!returningId} onClick={() => { setReturning(null); setReason(""); }}>Cancel</Button>
                   <Button className="bg-red-600 hover:bg-red-700" disabled={!!returningId} onClick={async () => {
                     if (!reason.trim()) { toast.error("Reason is required"); return; }
@@ -1217,7 +1217,7 @@ function OperationsMonitor() {
                 ))}
               </TableBody>
             </Table>
-            <div className="mt-3 flex justify-end">
+            <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:justify-end [&>button]:w-full sm:[&>button]:w-auto">
               <Button variant="link" className="text-emerald-700">View Full Monitor →</Button>
             </div>
           </CardContent>
@@ -1440,15 +1440,15 @@ function Reports({ payroll, restock, users, audit, inventoryItems, productionRec
       </Card>
 
       <Dialog open={!!selected} onOpenChange={(open) => !open && setSelected(null)}>
-        <DialogContent className="max-h-[88vh] w-[calc(100vw-2rem)] max-w-5xl overflow-hidden p-0">
+        <DialogContent className="max-h-[88dvh] w-[calc(100vw-1rem)] max-w-5xl overflow-hidden p-0">
           {selected && selectedReport && (
             <>
-              <DialogHeader className="border-b px-6 py-4">
+              <DialogHeader className="border-b px-4 py-3 sm:px-6 sm:py-4">
                 <DialogTitle className="flex items-center gap-2">
                   <FileBarChart2 className="h-5 w-5 text-emerald-700" />{selectedReport.title}
                 </DialogTitle>
               </DialogHeader>
-              <div className="max-h-[calc(88vh-76px)] overflow-y-auto px-6 py-4">
+              <div className="max-h-[calc(88dvh-76px)] overflow-y-auto px-4 py-4 sm:px-6">
                 <div className="space-y-4">
                   <p className="text-sm text-muted-foreground">{selectedReport.desc}</p>
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -1478,7 +1478,7 @@ function Reports({ payroll, restock, users, audit, inventoryItems, productionRec
                       </TableBody>
                     </Table>
                   </div>
-                  <div className="sticky bottom-0 -mx-6 flex flex-wrap justify-end gap-2 border-t bg-white px-6 py-3">
+                  <div className="sticky bottom-0 -mx-4 flex flex-col-reverse gap-2 border-t bg-white px-4 py-3 sm:-mx-6 sm:flex-row sm:justify-end sm:px-6 [&>button]:w-full sm:[&>button]:w-auto">
                     <Button variant="outline" onClick={() => setSelected(null)}>Close</Button>
                     <Button variant="outline" onClick={() => printManagerReport(selectedReport)}>Print</Button>
                     <Button variant="outline" onClick={() => exportReportCsv(selectedReport)}>Export CSV</Button>
@@ -1955,12 +1955,12 @@ function UserManagement({ users, setUsers, setAudit, adminId, adminName }: { use
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="flex items-center gap-2"><Users className="h-6 w-6 text-emerald-700" />User Management</h1>
           <p className="text-muted-foreground">Manage system user accounts and access.</p>
         </div>
-        <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={() => setOpenAdd(true)}>
+        <Button className="w-full bg-emerald-600 hover:bg-emerald-700 sm:w-auto" onClick={() => setOpenAdd(true)}>
           <Plus className="h-4 w-4 mr-1" />Add User
         </Button>
       </div>
@@ -2009,7 +2009,7 @@ function UserManagement({ users, setUsers, setAudit, adminId, adminName }: { use
       </Card>
 
       <Dialog open={openAdd} onOpenChange={setOpenAdd}>
-        <DialogContent className="!max-w-[95vw] w-[95vw] sm:!max-w-[640px]">
+        <DialogContent className="!max-w-[calc(100vw-1rem)] w-[calc(100vw-1rem)] sm:!max-w-[640px]">
           <DialogHeader><DialogTitle>Add User</DialogTitle></DialogHeader>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div className="space-y-1"><Label>Full Name</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
@@ -2042,7 +2042,7 @@ function UserManagement({ users, setUsers, setAudit, adminId, adminName }: { use
               <Textarea value={form.remarks} onChange={(e) => setForm({ ...form, remarks: e.target.value })} placeholder="Optional account notes or onboarding remarks." />
             </div>
           </div>
-          <div className="flex justify-end gap-2 pt-2 border-t">
+          <div className="flex flex-col-reverse gap-2 pt-2 border-t sm:flex-row sm:justify-end [&>button]:w-full sm:[&>button]:w-auto">
             <Button variant="outline" onClick={() => setOpenAdd(false)}>Cancel</Button>
             <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={submit}>Create User</Button>
           </div>
@@ -2050,7 +2050,7 @@ function UserManagement({ users, setUsers, setAudit, adminId, adminName }: { use
       </Dialog>
 
       <Dialog open={!!view} onOpenChange={(o) => !o && setView(null)}>
-        <DialogContent className="!max-w-[95vw] w-[95vw] sm:!max-w-[560px]">
+        <DialogContent className="!max-w-[calc(100vw-1rem)] w-[calc(100vw-1rem)] sm:!max-w-[560px]">
           {view && (
             <>
               <DialogHeader><DialogTitle>User Profile — {view.name}</DialogTitle></DialogHeader>
@@ -2065,7 +2065,7 @@ function UserManagement({ users, setUsers, setAudit, adminId, adminName }: { use
                 <Field label="Last Login" value={view.lastLogin} />
                 <div className="col-span-2"><Field label="Remarks" value={view.remarks || "—"} /></div>
               </div>
-              <div className="flex justify-end"><Button variant="outline" onClick={() => setView(null)}>Close</Button></div>
+              <div className="flex flex-col gap-2 sm:flex-row sm:justify-end [&>button]:w-full sm:[&>button]:w-auto"><Button variant="outline" onClick={() => setView(null)}>Close</Button></div>
             </>
           )}
         </DialogContent>
@@ -2074,7 +2074,7 @@ function UserManagement({ users, setUsers, setAudit, adminId, adminName }: { use
       <EditUserDialog account={editing} onClose={() => setEditing(null)} onSave={saveEdit} />
 
       <Dialog open={!!deactivating} onOpenChange={(o) => !o && !savingUser && setDeactivating(null)}>
-        <DialogContent className="!max-w-[95vw] w-[95vw] sm:!max-w-[480px]">
+        <DialogContent className="!max-w-[calc(100vw-1rem)] w-[calc(100vw-1rem)] sm:!max-w-[480px]">
           {deactivating && (
             <>
               <DialogHeader>
@@ -2090,7 +2090,7 @@ function UserManagement({ users, setUsers, setAudit, adminId, adminName }: { use
                   <p className="text-muted-foreground">The account will be disabled but their previous activity logs will be preserved for audit purposes.</p>
                 )}
               </div>
-              <div className="flex justify-end gap-2 pt-2">
+              <div className="flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:justify-end [&>button]:w-full sm:[&>button]:w-auto">
                 <Button variant="outline" onClick={() => setDeactivating(null)} disabled={savingUser}>Cancel</Button>
                 <Button
                   className={deactivating.active ? "bg-red-600 hover:bg-red-700 text-white" : "bg-emerald-600 hover:bg-emerald-700"}
@@ -2114,7 +2114,7 @@ function EditUserDialog({ account, onClose, onSave }: { account: Account | null;
 
   return (
     <Dialog open={!!account} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="!max-w-[95vw] w-[95vw] sm:!max-w-[640px]">
+      <DialogContent className="!max-w-[calc(100vw-1rem)] w-[calc(100vw-1rem)] sm:!max-w-[640px]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-emerald-700">
             <Edit className="h-5 w-5" />Edit User
@@ -2151,7 +2151,7 @@ function EditUserDialog({ account, onClose, onSave }: { account: Account | null;
             </div>
           </div>
         )}
-        <div className="flex justify-end gap-2 pt-2 border-t">
+        <div className="flex flex-col-reverse gap-2 pt-2 border-t sm:flex-row sm:justify-end [&>button]:w-full sm:[&>button]:w-auto">
           <Button variant="outline" onClick={onClose}>Cancel</Button>
           <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={() => form && onSave(form)}>Save Changes</Button>
         </div>
@@ -2288,7 +2288,7 @@ function SettingsRoleAccess({ permissions, setPermissions, adminId, adminName }:
               </div>
             ))}
           </div>
-          <div className="mt-4 flex justify-end">
+          <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:justify-end [&>button]:w-full sm:[&>button]:w-auto">
             <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={savePermissions} disabled={saving}>
               {saving ? "Saving..." : "Save Role Access"}
             </Button>

@@ -710,7 +710,7 @@ function InventoryItems({ items, setItems, setCredits, borrowedRows, setBorrowed
             </TableBody>
           </Table>
 
-          <div className="flex items-center justify-between pt-2">
+          <div className="flex flex-col gap-2 pt-2 sm:flex-row sm:items-center sm:justify-between">
             <span className="text-sm text-muted-foreground">Showing 1 to {filtered.length} of {filtered.length} items</span>
             <div className="flex gap-1">
               <Button variant="outline" size="sm" className="h-8 w-8 p-0"><ChevronLeft className="h-4 w-4" /></Button>
@@ -1048,7 +1048,7 @@ function AddInventoryItem({ open, onOpenChange, items, setItems, setHistory, use
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="!max-w-[920px] w-[92vw] max-h-[86vh] overflow-y-auto">
+      <DialogContent className="!max-w-[920px] w-[calc(100vw-1rem)] max-h-[86dvh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-emerald-700">
             <Plus className="h-5 w-5" />Add Inventory Item
@@ -1159,7 +1159,7 @@ function AddInventoryItem({ open, onOpenChange, items, setItems, setHistory, use
             <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Delivered in good condition." />
           </div>
 
-          <div className="flex justify-end gap-2">
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end [&>button]:w-full sm:[&>button]:w-auto">
             <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Cancel</Button>
             <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={handleSave} disabled={saving}>
               {saving ? "Saving..." : "Save Item"}
@@ -1353,7 +1353,7 @@ function StockIn({ open, onOpenChange, items, setItems, setHistory, user }: {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="!max-w-[860px] w-[92vw] max-h-[86vh] overflow-y-auto">
+      <DialogContent className="!max-w-[860px] w-[calc(100vw-1rem)] max-h-[86dvh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-emerald-700">
             <ArrowDownCircle className="h-5 w-5" />Stock-In
@@ -1444,7 +1444,7 @@ function StockIn({ open, onOpenChange, items, setItems, setHistory, user }: {
             <Textarea value={remarks} onChange={(event) => setRemarks(event.target.value)} placeholder="Optional receiving notes, condition, or delivery remarks." />
           </div>
 
-          <div className="flex justify-end gap-2">
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end [&>button]:w-full sm:[&>button]:w-auto">
             <Button variant="outline" onClick={() => { resetForm(); onOpenChange(false); }} disabled={saving}>Cancel</Button>
             <Button variant="outline" onClick={resetForm} disabled={saving}>Clear</Button>
             <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={handleSaveToDatabase} disabled={saving}>
@@ -1714,7 +1714,7 @@ function ReleaseMaterials({ open, onOpenChange, items, setItems, setCredits, set
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="!max-w-[860px] w-[92vw] max-h-[86vh] overflow-y-auto">
+      <DialogContent className="!max-w-[860px] w-[calc(100vw-1rem)] max-h-[86dvh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-emerald-700">
             <ArrowUpCircle className="h-5 w-5" />Release Materials
@@ -1842,7 +1842,7 @@ function ReleaseMaterials({ open, onOpenChange, items, setItems, setCredits, set
             <Textarea value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Release for Block 12 — Weekly operations." />
           </div>
 
-          <div className="flex justify-end gap-2">
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end [&>button]:w-full sm:[&>button]:w-auto">
             <Button variant="outline" onClick={() => { resetReleaseForm(); onOpenChange(false); }} disabled={savingRelease}>Cancel</Button>
             <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={handleSaveReleaseToDatabase} disabled={savingRelease}>
               {savingRelease ? "Saving..." : "Save Release"}
@@ -2016,7 +2016,7 @@ function StockAdjustmentDialog({ open, onOpenChange, items, setItems, setHistory
       if (!nextOpen) resetForm();
       onOpenChange(nextOpen);
     }}>
-      <DialogContent className="!max-w-[95vw] w-[95vw] sm:!max-w-[560px]">
+      <DialogContent className="!max-w-[calc(100vw-1rem)] w-[calc(100vw-1rem)] sm:!max-w-[560px]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-emerald-700">
             <Edit className="h-5 w-5" />Stock Adjustment
@@ -2162,7 +2162,7 @@ function BorrowedMaterialsDialog({ open, onOpenChange, items, rows, setRows, set
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="!max-w-[95vw] w-[95vw] max-h-[88vh] overflow-y-auto">
+      <DialogContent className="!max-w-[calc(100vw-1rem)] w-[calc(100vw-1rem)] max-h-[88dvh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-emerald-700">
             <History className="h-5 w-5" />Borrowed Materials
@@ -2226,7 +2226,7 @@ function BorrowedMaterialsDialog({ open, onOpenChange, items, rows, setRows, set
       </DialogContent>
 
       <Dialog open={!!returning} onOpenChange={(nextOpen) => !nextOpen && setReturning(null)}>
-        <DialogContent className="!max-w-[95vw] w-[95vw] sm:!max-w-[460px]">
+        <DialogContent className="!max-w-[calc(100vw-1rem)] w-[calc(100vw-1rem)] sm:!max-w-[460px]">
           {returning && (
             <>
               <DialogHeader>
@@ -2480,14 +2480,14 @@ function CreditTransactions({ credits, setCredits, user }: { credits: CreditRow[
             <strong>Total Outstanding Balance</strong>
             <strong className="text-emerald-700">₱ {total.toLocaleString()}.00</strong>
           </div>
-          <div className="flex justify-end mt-2">
+          <div className="flex flex-col gap-2 mt-2 sm:flex-row sm:justify-end [&>button]:w-full sm:[&>button]:w-auto">
             <Button variant="link" className="text-emerald-700" onClick={() => setLedgerOpen(true)}>View full credit ledger →</Button>
           </div>
         </CardContent>
       </Card>
 
       <Dialog open={ledgerOpen} onOpenChange={setLedgerOpen}>
-        <DialogContent className="!max-w-[95vw] w-[95vw] max-h-[90vh] overflow-y-auto">
+        <DialogContent className="!max-w-[calc(100vw-1rem)] w-[calc(100vw-1rem)] max-h-[90dvh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-emerald-700">
               <CreditCard className="h-5 w-5" />Full Credit Ledger
@@ -2590,7 +2590,7 @@ function CreditTransactions({ credits, setCredits, user }: { credits: CreditRow[
       </Dialog>
 
       <Dialog open={!!view} onOpenChange={(o) => !o && setView(null)}>
-        <DialogContent className="!max-w-[95vw] w-[95vw] sm:!max-w-[640px]">
+        <DialogContent className="!max-w-[calc(100vw-1rem)] w-[calc(100vw-1rem)] sm:!max-w-[640px]">
           {view && (
             <>
               <DialogHeader>
@@ -2674,7 +2674,7 @@ function CreditTransactions({ credits, setCredits, user }: { credits: CreditRow[
                   </div>
                 </div>
               </div>
-              <div className="flex justify-end gap-2 pt-2 border-t">
+              <div className="flex flex-col-reverse gap-2 pt-2 border-t sm:flex-row sm:justify-end [&>button]:w-full sm:[&>button]:w-auto">
                 <Button variant="outline" onClick={() => setView(null)}>Close</Button>
                 <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={printReceipt}>Print Receipt</Button>
               </div>
@@ -2684,7 +2684,7 @@ function CreditTransactions({ credits, setCredits, user }: { credits: CreditRow[
       </Dialog>
 
       <Dialog open={!!deducting} onOpenChange={(open) => !open && setDeducting(null)}>
-        <DialogContent className="!max-w-[95vw] w-[95vw] sm:!max-w-[460px]">
+        <DialogContent className="!max-w-[calc(100vw-1rem)] w-[calc(100vw-1rem)] sm:!max-w-[460px]">
           {deducting && (
             <>
               <DialogHeader>
@@ -2862,7 +2862,7 @@ function StockHistory({ history }: { history: StockHistoryRow[] }) {
             </TableBody>
           </Table>
 
-          <div className="flex items-center justify-between pt-2">
+          <div className="flex flex-col gap-2 pt-2 sm:flex-row sm:items-center sm:justify-between">
             <span className="text-sm text-muted-foreground">Showing 1 to {filtered.length} of {filtered.length} records</span>
             <div className="flex gap-1">
               <Button variant="outline" size="sm" className="h-8 w-8 p-0"><ChevronLeft className="h-4 w-4" /></Button>
@@ -2988,7 +2988,7 @@ function RestockRequests({ user, items, requests, setRequests }: {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="flex items-center gap-2"><FileBarChart2 className="h-6 w-6 text-emerald-700" />Restock Requests</h1>
           <p className="text-muted-foreground">Request materials that need restocking</p>
@@ -3081,7 +3081,7 @@ function RestockRequests({ user, items, requests, setRequests }: {
             </TableBody>
           </Table>
 
-          <div className="flex items-center justify-between pt-2">
+          <div className="flex flex-col gap-2 pt-2 sm:flex-row sm:items-center sm:justify-between">
             <span className="text-sm text-muted-foreground">Showing 1 to {filtered.length} of {filtered.length} requests</span>
             <div className="flex gap-1">
               <Button variant="outline" size="sm" className="h-8 w-8 p-0"><ChevronLeft className="h-4 w-4" /></Button>

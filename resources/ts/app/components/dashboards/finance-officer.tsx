@@ -376,7 +376,7 @@ function Dashboard({ slips, activities, goTo, onReview }: { slips: FoSlip[]; act
             </Select>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold text-emerald-700">PHP {validatedAmount.toLocaleString()}</div>
+            <div className="break-words text-2xl font-bold text-emerald-700 sm:text-3xl">PHP {validatedAmount.toLocaleString()}</div>
             <div className="mt-1 text-sm text-muted-foreground">
               {validatedForPeriod.length} validated payroll{validatedForPeriod.length === 1 ? "" : "s"} included
             </div>
@@ -508,7 +508,7 @@ function SlipList({ title, slips, filter, onReview }: { title: string; slips: Fo
 
           <SlipTable slips={filtered} onReview={onReview} />
 
-          <div className="flex items-center justify-between pt-2">
+          <div className="flex flex-col gap-2 pt-2 sm:flex-row sm:items-center sm:justify-between">
             <span className="text-sm text-muted-foreground">Showing {filtered.length} of {slips.filter(filter).length} slips</span>
             <div className="flex gap-1">
               <Button variant="outline" size="sm" className="h-8 w-8 p-0"><ChevronLeft className="h-4 w-4" /></Button>
@@ -638,7 +638,7 @@ function ValidationDetailsDialog({ slip, onClose, onValidate, onReturn }: {
 
   return (
     <Dialog open={!!slip} onOpenChange={(o) => !o && closeAndReset()}>
-      <DialogContent className="!max-w-[95vw] w-[95vw] sm:!max-w-[1200px] max-h-[92vh] overflow-y-auto">
+      <DialogContent className="!max-w-[calc(100vw-1rem)] w-[calc(100vw-1rem)] sm:!max-w-[1200px] max-h-[92dvh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Payroll Validation Details — {slip.slipNo}</DialogTitle>
         </DialogHeader>
@@ -878,7 +878,7 @@ function ValidationDetailsDialog({ slip, onClose, onValidate, onReturn }: {
 
         {/* Return for Correction Modal */}
         <Dialog open={showReturn} onOpenChange={(o) => !o && !returning && setShowReturn(false)}>
-          <DialogContent className="!max-w-[95vw] w-[95vw] sm:!max-w-[640px]">
+          <DialogContent className="!max-w-[calc(100vw-1rem)] w-[calc(100vw-1rem)] sm:!max-w-[640px]">
             <DialogHeader><DialogTitle>Return for Correction — {slip.slipNo}</DialogTitle></DialogHeader>
             <div className="space-y-3">
               <div className="space-y-1">
@@ -903,7 +903,7 @@ function ValidationDetailsDialog({ slip, onClose, onValidate, onReturn }: {
                 <Field label="Returned By" value="(current Finance Officer)" />
                 <Field label="Date Returned" value={currentSystemDateTime()} />
               </div>
-              <div className="flex justify-end gap-2 pt-2 border-t">
+              <div className="flex flex-col-reverse gap-2 pt-2 border-t sm:flex-row sm:justify-end [&>button]:w-full sm:[&>button]:w-auto">
                 <Button variant="outline" disabled={returning} onClick={() => setShowReturn(false)}>Cancel</Button>
                 <Button className="bg-red-600 hover:bg-red-700" disabled={returning} onClick={submitReturn}>
                   {returning ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Undo2 className="h-4 w-4 mr-1" />}Confirm Return
@@ -1047,15 +1047,15 @@ interface ReportDefinition {
 function GeneratedReportDialog({ report, onClose }: { report: ReportDefinition | null; onClose: () => void }) {
   return (
     <Dialog open={!!report} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-h-[88vh] w-[calc(100vw-2rem)] max-w-5xl overflow-hidden p-0">
+      <DialogContent className="max-h-[88dvh] w-[calc(100vw-1rem)] max-w-5xl overflow-hidden p-0">
         {report && (
           <>
-            <DialogHeader className="border-b px-6 py-4">
+            <DialogHeader className="border-b px-4 py-3 sm:px-6 sm:py-4">
               <DialogTitle className="flex items-center gap-2 text-emerald-700">
                 <FileBarChart2 className="h-5 w-5" />{report.name}
               </DialogTitle>
             </DialogHeader>
-            <div className="max-h-[calc(88vh-76px)] overflow-y-auto px-6 py-4">
+            <div className="max-h-[calc(88dvh-76px)] overflow-y-auto px-4 py-4 sm:px-6">
             <div className="space-y-4">
               <div className="grid gap-3 rounded-md border bg-slate-50 p-3 text-sm md:grid-cols-3">
                 <Field label="Generated At" value={currentSystemDateTime()} />
@@ -1089,11 +1089,11 @@ function GeneratedReportDialog({ report, onClose }: { report: ReportDefinition |
                   </TableBody>
                 </Table>
               </div>
-              <div className="sticky bottom-0 -mx-6 flex flex-wrap justify-end gap-2 border-t bg-white px-6 py-3">
-                <Button variant="outline" className="min-w-24" onClick={() => printReport(report)}>
+              <div className="sticky bottom-0 -mx-4 flex flex-col-reverse gap-2 border-t bg-white px-4 py-3 sm:-mx-6 sm:flex-row sm:justify-end sm:px-6 [&>button]:w-full sm:[&>button]:w-auto">
+                <Button variant="outline" className="sm:min-w-24" onClick={() => printReport(report)}>
                   <Printer className="mr-1.5 h-4 w-4" />Print
                 </Button>
-                <Button className="min-w-24 bg-emerald-600 hover:bg-emerald-700" onClick={onClose}>Close</Button>
+                <Button className="bg-emerald-600 hover:bg-emerald-700 sm:min-w-24" onClick={onClose}>Close</Button>
               </div>
             </div>
             </div>
