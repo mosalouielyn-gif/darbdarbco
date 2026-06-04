@@ -732,12 +732,12 @@ function PayrollApprovals({ payroll, onApprove, onReturn }: { payroll: PayrollRo
 
       <Card>
         <CardContent className="p-4 space-y-3">
-          <div className="flex flex-wrap gap-2">
-            <div className="relative flex-1 min-w-[220px]">
+          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+            <div className="relative min-w-0 flex-1 sm:min-w-[220px]">
               <Input placeholder="Search payroll slip, beneficiary, period..." className="h-9" value={search} onChange={(e) => setSearch(e.target.value)} />
             </div>
             <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="h-9 w-40"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="h-9 w-full sm:w-40"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Statuses</SelectItem>
                 <SelectItem value="Validated">Validated</SelectItem>
@@ -746,7 +746,7 @@ function PayrollApprovals({ payroll, onApprove, onReturn }: { payroll: PayrollRo
               </SelectContent>
             </Select>
             <Select value={sortBy} onValueChange={setSortBy}>
-              <SelectTrigger className="h-9 w-44"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="h-9 w-full sm:w-44"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="date-desc">Newest Date</SelectItem>
                 <SelectItem value="name">Beneficiary A-Z</SelectItem>
@@ -901,10 +901,10 @@ function PayrollHistory({ payroll }: { payroll: PayrollRow[] }) {
 
       <Card>
         <CardContent className="p-4 space-y-3">
-          <div className="flex flex-wrap gap-2">
-            <Input placeholder="Search payroll slip, beneficiary, period..." className="h-9 min-w-[220px] flex-1" value={search} onChange={(e) => setSearch(e.target.value)} />
+          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+            <Input placeholder="Search payroll slip, beneficiary, period..." className="h-9 min-w-0 flex-1 sm:min-w-[220px]" value={search} onChange={(e) => setSearch(e.target.value)} />
             <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="h-9 w-44"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="h-9 w-full sm:w-44"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Statuses</SelectItem>
                 <SelectItem value="Draft">Draft</SelectItem>
@@ -915,7 +915,7 @@ function PayrollHistory({ payroll }: { payroll: PayrollRow[] }) {
               </SelectContent>
             </Select>
             <Select value={sortBy} onValueChange={setSortBy}>
-              <SelectTrigger className="h-9 w-44"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="h-9 w-full sm:w-44"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="date-desc">Newest Date</SelectItem>
                 <SelectItem value="name">Beneficiary A-Z</SelectItem>
@@ -1754,10 +1754,10 @@ function AuditHistory({ audit }: { audit: AuditRow[] }) {
           <h1 className="flex items-center gap-2"><History className="h-6 w-6 text-emerald-700" />Audit History</h1>
           <p className="text-muted-foreground">Important user actions across the system.</p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Input placeholder="Search audit records..." className="h-9 w-56" value={search} onChange={(e) => setSearch(e.target.value)} />
+        <div className="grid w-full gap-2 sm:grid-cols-2 lg:w-auto lg:grid-cols-none lg:flex lg:flex-wrap">
+          <Input placeholder="Search audit records..." className="h-9 w-full lg:w-56" value={search} onChange={(e) => setSearch(e.target.value)} />
           <Select value={roleFilter} onValueChange={setRoleFilter}>
-            <SelectTrigger className="w-44 h-9"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="h-9 w-full lg:w-44"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Roles</SelectItem>
               {Object.entries(ROLE_LABELS).map(([role, label]) => (
@@ -1766,7 +1766,7 @@ function AuditHistory({ audit }: { audit: AuditRow[] }) {
             </SelectContent>
           </Select>
           <Select value={moduleFilter} onValueChange={setModuleFilter}>
-            <SelectTrigger className="w-40 h-9"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="h-9 w-full lg:w-40"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Modules</SelectItem>
               <SelectItem value="Payroll">Payroll</SelectItem>
@@ -1776,7 +1776,7 @@ function AuditHistory({ audit }: { audit: AuditRow[] }) {
             </SelectContent>
           </Select>
           <Select value={actionFilter} onValueChange={setActionFilter}>
-            <SelectTrigger className="w-40 h-9"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="h-9 w-full lg:w-40"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Actions</SelectItem>
               <SelectItem value="Submitted">Submitted</SelectItem>
@@ -1789,11 +1789,11 @@ function AuditHistory({ audit }: { audit: AuditRow[] }) {
               <SelectItem value="Deactivated">Deactivated</SelectItem>
             </SelectContent>
           </Select>
-          <div className="relative w-40">
+          <div className="relative w-full pt-5 lg:w-40">
             <Label className="absolute -top-5 left-0 text-xs text-muted-foreground">From Date</Label>
             <DateInput className="w-full" value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
           </div>
-          <div className="relative w-40">
+          <div className="relative w-full pt-5 lg:w-40">
             <Label className="absolute -top-5 left-0 text-xs text-muted-foreground">To Date</Label>
             <DateInput className="w-full" value={toDate} onChange={(e) => setToDate(e.target.value)} />
           </div>

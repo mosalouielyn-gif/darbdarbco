@@ -109,16 +109,43 @@ export function DarbcoLayout({ user, onLogout, navItems, active, onChange, child
               <LogOut className="h-4 w-4" />
             </button>
           </div>
-          {menuOpen && (
-            <nav className="max-h-[calc(100vh-65px)] overflow-y-auto border-t bg-white px-3 py-3 shadow-sm sm:px-4">
-              <div className="grid gap-2 sm:grid-cols-2">
+        </header>
+
+        {menuOpen && (
+          <div className="fixed inset-0 z-40 xl:hidden">
+            <button
+              type="button"
+              aria-label="Close navigation menu"
+              className="absolute inset-0 bg-slate-950/40"
+              onClick={() => setMenuOpen(false)}
+            />
+            <aside className="relative flex h-full w-[min(18rem,calc(100vw-1rem))] flex-col bg-white shadow-xl">
+              <div className="flex items-center gap-3 border-b px-4 py-3">
+                <button
+                  type="button"
+                  onClick={() => setMenuOpen(false)}
+                  className="shrink-0 rounded-md border p-2 text-slate-700 hover:bg-slate-50"
+                  aria-label="Close menu"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+                <div className="h-9 w-9 shrink-0 rounded-full bg-emerald-100 flex items-center justify-center">
+                  <Leaf className="h-5 w-5 text-emerald-700" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm font-medium">DARBCO</div>
+                  <div className="truncate text-xs text-muted-foreground">{ROLE_LABELS[user.role]}</div>
+                </div>
+              </div>
+
+              <nav className="flex-1 space-y-2 overflow-y-auto px-3 py-4">
                 {navItems.map((item) => (
                   <button
                     key={item.id}
                     onClick={() => handleMobileNav(item.id)}
                     className={`flex min-h-11 w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm transition ${
                       active === item.id
-                        ? "bg-emerald-600 text-white"
+                        ? "bg-emerald-600 text-white shadow-sm"
                         : "bg-slate-100 text-slate-700 hover:bg-slate-200"
                     }`}
                   >
@@ -126,10 +153,29 @@ export function DarbcoLayout({ user, onLogout, navItems, active, onChange, child
                     <span className="min-w-0 flex-1 truncate">{item.label}</span>
                   </button>
                 ))}
+              </nav>
+
+              <div className="border-t p-3">
+                <div className="flex items-center gap-3 rounded-md bg-emerald-50 p-2">
+                  <Avatar className="h-9 w-9">
+                    <AvatarFallback className="bg-emerald-500 text-white">{initials}</AvatarFallback>
+                  </Avatar>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-medium">{user.name}</div>
+                    <div className="truncate text-xs text-muted-foreground">{ROLE_LABELS[user.role]}</div>
+                  </div>
+                  <button
+                    onClick={onLogout}
+                    className="shrink-0 rounded-md border bg-white px-2.5 py-2 text-sm hover:bg-slate-50"
+                    title="Sign out"
+                  >
+                    <LogOut className="h-4 w-4" />
+                  </button>
+                </div>
               </div>
-            </nav>
-          )}
-        </header>
+            </aside>
+          </div>
+        )}
 
         {loading && (
           <div className="border-b border-sky-200 bg-sky-50 px-4 py-2 text-sm text-sky-800">

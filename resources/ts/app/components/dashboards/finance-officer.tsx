@@ -343,7 +343,7 @@ function Dashboard({ slips, activities, goTo, onReview }: { slips: FoSlip[]; act
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="flex items-center gap-2"><ShieldCheck className="h-6 w-6 text-emerald-700" />Finance Officer Dashboard</h1>
         <div className="text-muted-foreground">{formatSystemDate()} • Period: {currentPeriod}</div>
       </div>
@@ -358,7 +358,7 @@ function Dashboard({ slips, activities, goTo, onReview }: { slips: FoSlip[]; act
 
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_1.2fr] gap-4">
         <Card>
-          <CardHeader className="flex-row items-start justify-between gap-3 pb-2">
+          <CardHeader className="flex flex-col items-start justify-between gap-3 pb-2 sm:flex-row">
             <div>
               <CardTitle className="text-base flex items-center gap-2">
                 <ClipboardCheck className="h-4 w-4 text-emerald-700" />Validated Payroll Amount
@@ -366,7 +366,7 @@ function Dashboard({ slips, activities, goTo, onReview }: { slips: FoSlip[]; act
               <p className="text-xs text-muted-foreground mt-1">Net income total for payrolls already validated by Finance.</p>
             </div>
             <Select value={selectedPeriod} onValueChange={setSelectedPeriod}>
-              <SelectTrigger className="h-9 w-56"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="h-9 w-full sm:w-56"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Payroll Periods</SelectItem>
                 {periods.map((period) => (
@@ -477,15 +477,15 @@ function SlipList({ title, slips, filter, onReview }: { title: string; slips: Fo
 
       <Card>
         <CardContent className="p-4 space-y-3">
-          <div className="flex flex-wrap gap-2">
-            <div className="relative flex-1 min-w-[220px]">
+          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+            <div className="relative min-w-0 flex-1 sm:min-w-[220px]">
               <Search className="h-4 w-4 absolute left-2.5 top-2.5 text-muted-foreground" />
               <Input placeholder="Search beneficiary name..." className="pl-8 h-9" value={searchName} onChange={(e) => setSearchName(e.target.value)} />
             </div>
-            <Input placeholder="Payroll slip number" className="w-48 h-9" value={slipNo} onChange={(e) => setSlipNo(e.target.value)} />
-            <DateInput className="w-44" value={harvestDate} onChange={(e) => setHarvestDate(e.target.value)} />
+            <Input placeholder="Payroll slip number" className="h-9 w-full sm:w-48" value={slipNo} onChange={(e) => setSlipNo(e.target.value)} />
+            <DateInput className="w-full sm:w-44" value={harvestDate} onChange={(e) => setHarvestDate(e.target.value)} />
             <Select value={period} onValueChange={setPeriod}>
-              <SelectTrigger className="w-56 h-9"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="h-9 w-full sm:w-56"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Payroll Periods</SelectItem>
                 {periodOptions.map((option) => (
@@ -494,7 +494,7 @@ function SlipList({ title, slips, filter, onReview }: { title: string; slips: Fo
               </SelectContent>
             </Select>
             <Select value={status} onValueChange={setStatus}>
-              <SelectTrigger className="w-52 h-9"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="h-9 w-full sm:w-52"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Statuses</SelectItem>
                 <SelectItem value="Submitted to Finance">Submitted to Finance</SelectItem>

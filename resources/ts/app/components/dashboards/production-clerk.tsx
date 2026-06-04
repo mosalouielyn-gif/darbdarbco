@@ -99,7 +99,7 @@ function Dashboard({ goToTab, productionData, harvestData, beneficiariesCount }:
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="flex items-center gap-2"><LayoutDashboard className="h-6 w-6 text-emerald-700" />Production Clerk Dashboard</h1>
         </div>
@@ -343,9 +343,9 @@ function ProductionRecords({ tab, setTab, user }: { tab: string; setTab: (t: str
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="flex items-center gap-2"><Package className="h-6 w-6 text-emerald-700" />Production Records</h1>
-        <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={onNew}>
+        <Button className="w-full bg-emerald-600 hover:bg-emerald-700 sm:w-auto" onClick={onNew}>
           <Plus className="h-4 w-4 mr-1" />{buttonLabel}
         </Button>
       </div>
@@ -690,7 +690,7 @@ function ProductionBoxesPanel({ records, loading, onEdit, onDelete }: {
 
 function TableToolbar({ search, onSearch }: { search?: string; onSearch?: (value: string) => void }) {
   return (
-    <div className="flex items-center justify-between mb-3">
+    <div className="flex flex-col gap-2 mb-3 sm:flex-row sm:items-center sm:justify-between">
       <div className="flex items-center gap-2 text-sm">
         Show
         <Select defaultValue="10"><SelectTrigger className="w-20 h-8"><SelectValue /></SelectTrigger>
@@ -698,11 +698,11 @@ function TableToolbar({ search, onSearch }: { search?: string; onSearch?: (value
         </Select>
         entries
       </div>
-      <div className="relative">
+      <div className="relative w-full sm:w-auto">
         <Search className="h-4 w-4 absolute left-2.5 top-2.5 text-muted-foreground" />
         <Input
           placeholder="Search records..."
-          className="pl-8 w-64 h-9"
+          className="pl-8 w-full h-9 sm:w-64"
           {...(onSearch ? { value: search ?? "", onChange: (event: React.ChangeEvent<HTMLInputElement>) => onSearch(event.target.value) } : {})}
         />
       </div>
@@ -712,7 +712,7 @@ function TableToolbar({ search, onSearch }: { search?: string; onSearch?: (value
 
 function Pager({ count = 5, total = 5 }: { count?: number; total?: number }) {
   return (
-    <div className="flex items-center justify-between mt-3">
+    <div className="flex flex-col gap-2 mt-3 sm:flex-row sm:items-center sm:justify-between">
       <span className="text-muted-foreground text-sm">Showing {count ? 1 : 0} to {count} of {total} entries</span>
       <div className="flex gap-1">
         <Button variant="outline" size="sm" className="h-8 w-8 p-0"><ChevronLeft className="h-4 w-4" /></Button>
@@ -919,7 +919,7 @@ function HarvestDialog({ open, onOpenChange, record, onSave }: {
 
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => !isSaving && onOpenChange(nextOpen)}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="w-[calc(100vw-1rem)] sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-emerald-700">
             <Plus className="h-5 w-5" />{record ? "Edit Harvest Record" : "New Harvest Record"}
@@ -1042,7 +1042,7 @@ function ProductionBoxesDialog({ open, onOpenChange, record, beneficiaryOptions,
 
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => !isSaving && onOpenChange(nextOpen)}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="w-[calc(100vw-1rem)] max-h-[90dvh] overflow-y-auto sm:max-w-4xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-emerald-700">
             <Plus className="h-5 w-5" />{record ? "Edit Production Boxes Record" : "New Production Boxes Record"}

@@ -155,7 +155,7 @@ function Dashboard({ goTo, items, credits, history, restockRequests }: {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="flex items-center gap-2"><LayoutDashboard className="h-6 w-6 text-emerald-700" />Dashboard</h1>
         <div className="text-muted-foreground">{formatSystemDate()}</div>
       </div>
@@ -622,8 +622,8 @@ function InventoryItems({ items, setItems, setCredits, borrowedRows, setBorrowed
 
       <Card>
         <CardContent className="p-4 space-y-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="relative flex-1 min-w-[220px]">
+          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+            <div className="relative min-w-0 flex-1 sm:min-w-[220px]">
               <Search className="h-4 w-4 absolute left-2.5 top-2.5 text-muted-foreground" />
               <Input
                 placeholder="Search items..."
@@ -633,7 +633,7 @@ function InventoryItems({ items, setItems, setCredits, borrowedRows, setBorrowed
               />
             </div>
             <Select value={category} onValueChange={setCategory}>
-              <SelectTrigger className="w-56 h-9"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="h-9 w-full sm:w-56"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Categories</SelectItem>
                 {CATEGORIES.map((c) => (
@@ -642,7 +642,7 @@ function InventoryItems({ items, setItems, setCredits, borrowedRows, setBorrowed
               </SelectContent>
             </Select>
             <Select value={status} onValueChange={setStatus}>
-              <SelectTrigger className="w-36 h-9"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="h-9 w-full sm:w-36"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Status</SelectItem>
                 <SelectItem value="OK">OK</SelectItem>
@@ -651,7 +651,7 @@ function InventoryItems({ items, setItems, setCredits, borrowedRows, setBorrowed
               </SelectContent>
             </Select>
             <Select value={sortBy} onValueChange={setSortBy}>
-              <SelectTrigger className="w-44 h-9"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="h-9 w-full sm:w-44"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="name">Name A-Z</SelectItem>
                 <SelectItem value="category">Category</SelectItem>
@@ -804,7 +804,7 @@ function ItemDetailDialog({ item, onClose }: { item: InventoryItem | null; onClo
 
   return (
     <Dialog open={!!item} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:!max-w-[720px]">
+      <DialogContent className="w-[calc(100vw-1rem)] sm:!max-w-[720px]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-emerald-700">
             <Eye className="h-5 w-5" />Inventory Item Details
@@ -845,7 +845,7 @@ function EditItemDialog({ item, onClose, onSave }: { item: InventoryItem | null;
 
   return (
     <Dialog open={!!item} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:!max-w-[640px]">
+      <DialogContent className="w-[calc(100vw-1rem)] sm:!max-w-[640px]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-emerald-700">
             <Edit className="h-5 w-5" />Edit Inventory Item
@@ -2513,8 +2513,8 @@ function CreditTransactions({ credits, setCredits, user }: { credits: CreditRow[
               </div>
             </div>
 
-            <div className="flex flex-wrap gap-2">
-              <div className="relative min-w-[240px] flex-1">
+            <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+              <div className="relative min-w-0 flex-1 sm:min-w-[240px]">
                 <Search className="h-4 w-4 absolute left-2.5 top-2.5 text-muted-foreground" />
                 <Input
                   value={ledgerSearch}
@@ -2524,7 +2524,7 @@ function CreditTransactions({ credits, setCredits, user }: { credits: CreditRow[
                 />
               </div>
               <Select value={ledgerStatus} onValueChange={setLedgerStatus}>
-                <SelectTrigger className="h-9 w-48"><SelectValue /></SelectTrigger>
+                <SelectTrigger className="h-9 w-full sm:w-48"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Status</SelectItem>
                   <SelectItem value="Pending">Pending</SelectItem>
@@ -2794,19 +2794,19 @@ function StockHistory({ history }: { history: StockHistoryRow[] }) {
 
       <Card>
         <CardContent className="p-4 space-y-3">
-          <div className="flex flex-wrap gap-2">
-            <DateInput value={from} onChange={(e) => setFrom(e.target.value)} className="w-44" />
+          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+            <DateInput value={from} onChange={(e) => setFrom(e.target.value)} className="w-full sm:w-44" />
             <span className="self-center text-muted-foreground">—</span>
-            <DateInput value={to} onChange={(e) => setTo(e.target.value)} className="w-44" />
+            <DateInput value={to} onChange={(e) => setTo(e.target.value)} className="w-full sm:w-44" />
             <Select value={type} onValueChange={setType}>
-              <SelectTrigger className="w-52 h-9"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="h-9 w-full sm:w-52"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Transaction Types</SelectItem>
                 {TXN_TYPES.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
               </SelectContent>
             </Select>
             <Select value={material} onValueChange={setMaterial}>
-              <SelectTrigger className="w-56 h-9"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="h-9 w-full sm:w-56"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Materials</SelectItem>
                 {materialOptions.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}
@@ -2993,20 +2993,20 @@ function RestockRequests({ user, items, requests, setRequests }: {
           <h1 className="flex items-center gap-2"><FileBarChart2 className="h-6 w-6 text-emerald-700" />Restock Requests</h1>
           <p className="text-muted-foreground">Request materials that need restocking</p>
         </div>
-        <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={() => setOpenCreate(true)}>
+        <Button className="w-full bg-emerald-600 hover:bg-emerald-700 sm:w-auto" onClick={() => setOpenCreate(true)}>
           <Plus className="h-4 w-4 mr-1" />Create Restock Request
         </Button>
       </div>
 
       <Card>
         <CardContent className="p-4 space-y-3">
-          <div className="flex flex-wrap gap-2">
-            <div className="relative flex-1 min-w-[220px]">
+          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+            <div className="relative min-w-0 flex-1 sm:min-w-[220px]">
               <Search className="h-4 w-4 absolute left-2.5 top-2.5 text-muted-foreground" />
               <Input placeholder="Search restock requests..." className="pl-8 h-9" value={search} onChange={(e) => setSearch(e.target.value)} />
             </div>
             <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="w-44 h-9"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="h-9 w-full sm:w-44"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Status</SelectItem>
                 <SelectItem value="pending">Pending</SelectItem>
@@ -3244,7 +3244,7 @@ function CreateRestockRequestDialog({ open, onOpenChange, items, onCreate }: { o
 
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => !saving && onOpenChange(nextOpen)}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="w-[calc(100vw-1rem)] sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-emerald-700">
             <Plus className="h-5 w-5" />Create Restock Request
@@ -3386,7 +3386,7 @@ function EditRestockRequestDialog({ request, onOpenChange, onUpdate }: {
 
   return (
     <Dialog open={!!request} onOpenChange={(nextOpen) => !saving && onOpenChange(nextOpen)}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="w-[calc(100vw-1rem)] sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-emerald-700">
             <Edit className="h-5 w-5" />Edit Restock Request

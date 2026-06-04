@@ -52,7 +52,7 @@ export function PayrollPersonnelDashboard({ user, onLogout }: Props) {
 function Dashboard({ onNavigate }: { onNavigate: (id: string) => void }) {
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="flex items-center gap-2">
           <LayoutDashboard className="h-6 w-6 text-emerald-700" />Payroll Dashboard
         </h1>
@@ -502,20 +502,20 @@ function BeneficiaryPayroll({ user, beneficiaries, productionRecords, payrollRec
           </h1>
           <p className="text-muted-foreground text-sm">Prepare payroll records for beneficiaries</p>
         </div>
-        <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={() => setOpenPrepare(true)}>
+        <Button className="w-full bg-emerald-600 hover:bg-emerald-700 sm:w-auto" onClick={() => setOpenPrepare(true)}>
           <Plus className="h-4 w-4 mr-1" />Prepare Beneficiary Payroll
         </Button>
       </div>
 
       <Card>
         <CardContent className="p-4 space-y-3">
-          <div className="flex flex-wrap gap-2">
-            <div className="relative flex-1 min-w-[220px]">
+          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+            <div className="relative min-w-0 flex-1 sm:min-w-[220px]">
               <Search className="h-4 w-4 absolute left-2.5 top-2.5 text-muted-foreground" />
               <Input placeholder="Search beneficiary payroll..." className="pl-8 h-9" value={search} onChange={(event) => setSearch(event.target.value)} />
             </div>
             <Select value={periodFilter} onValueChange={setPeriodFilter}>
-              <SelectTrigger className="w-44 h-9"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="h-9 w-full sm:w-44"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all-period">All Periods</SelectItem>
                 {periodOptions.map((period) => (
@@ -524,7 +524,7 @@ function BeneficiaryPayroll({ user, beneficiaries, productionRecords, payrollRec
               </SelectContent>
             </Select>
             <Select value={validationFilter} onValueChange={setValidationFilter}>
-              <SelectTrigger className="w-44 h-9"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="h-9 w-full sm:w-44"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all-validation">All Validation Status</SelectItem>
                 <SelectItem value="draft">Draft</SelectItem>
@@ -534,7 +534,7 @@ function BeneficiaryPayroll({ user, beneficiaries, productionRecords, payrollRec
               </SelectContent>
             </Select>
             <Select value={approvalFilter} onValueChange={setApprovalFilter}>
-              <SelectTrigger className="w-44 h-9"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="h-9 w-full sm:w-44"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all-approval">All Approval Status</SelectItem>
                 <SelectItem value="pending">Pending</SelectItem>
@@ -2065,13 +2065,13 @@ function PayrollRecords({ records }: { records: PayrollRecord[] }) {
       </div>
       <Card>
         <CardContent className="p-4 space-y-3">
-          <div className="flex gap-2">
+          <div className="flex flex-col gap-2 sm:flex-row">
             <div className="relative flex-1">
               <Search className="h-4 w-4 absolute left-2.5 top-2.5 text-muted-foreground" />
               <Input placeholder="Search beneficiary payroll records..." className="pl-8 h-9" value={search} onChange={(event) => setSearch(event.target.value)} />
             </div>
             <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="w-44 h-9"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="h-9 w-full sm:w-44"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all-status">All Status</SelectItem>
                 <SelectItem value="approved">Approved</SelectItem>
