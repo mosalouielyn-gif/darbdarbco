@@ -35,6 +35,7 @@ export function PayrollPersonnelDashboard({ user, onLogout }: Props) {
   const [payrollRecords, setPayrollRecords] = useState<PayrollRecord[]>([]);
   const beneficiaries = (data?.beneficiaries ?? []).map(mapBeneficiary);
   const productionRecords = (data?.productionRecords ?? []).map(mapProductionRecord);
+  const creditTransactions = (data?.creditTransactions ?? []).map(mapCreditTransaction);
 
   useEffect(() => {
     setPayrollRecords((data?.payrollSlips ?? []).map(mapPayrollSlip));
@@ -43,7 +44,7 @@ export function PayrollPersonnelDashboard({ user, onLogout }: Props) {
   return (
     <DarbcoLayout user={user} onLogout={onLogout} navItems={NAV} active={active} onChange={setActive}>
       {active === "dashboard" && <Dashboard onNavigate={setActive} />}
-      {active === "beneficiary" && <BeneficiaryPayroll user={user} beneficiaries={beneficiaries} productionRecords={productionRecords} payrollRecords={payrollRecords} setPayrollRecords={setPayrollRecords} />}
+      {active === "beneficiary" && <BeneficiaryPayroll user={user} beneficiaries={beneficiaries} productionRecords={productionRecords} creditTransactions={creditTransactions} payrollRecords={payrollRecords} setPayrollRecords={setPayrollRecords} />}
       {active === "records" && <PayrollRecords records={payrollRecords} />}
     </DarbcoLayout>
   );
@@ -202,6 +203,19 @@ type PayrollProductionRecord = {
   classB_small: number;
   classB_cp: number;
 };
+type PayrollCreditMaterial = {
+  refNo: string;
+  dateIssued: string;
+  beneficiaryName: string;
+  beneficiaryAccountId: string;
+  materialName: string;
+  quantity: number;
+  unit: string;
+  amountCharged: number;
+  status: string;
+  remaining: number;
+  deductionAmount: number;
+};
 
 function mapBeneficiary(row: any): BeneficiaryOption {
   return {
@@ -275,6 +289,30 @@ function mapProductionRecord(row: any): PayrollProductionRecord {
   };
 }
 
+function mapCreditTransaction(row: any): PayrollCreditMaterial {
+  const deductions = Array.isArray(row.deductions) ? row.deductions : [];
+  const deductionAmount = deductions.reduce((sum: number, deduction: any) => sum + Number(deduction.amount ?? 0), 0);
+
+  return {
+    refNo: String(row.credit_no ?? row.release_reference_no ?? row.id),
+    dateIssued: String(row.credit_date ?? row.created_at ?? "").slice(0, 10),
+    beneficiaryName: row.beneficiary_name ?? row.beneficiary ?? "",
+    beneficiaryAccountId: String(row.beneficiary_account_id ?? ""),
+    materialName: row.material_name ?? row.material ?? "",
+    quantity: Number(row.quantity ?? 0),
+    unit: row.unit ?? "",
+    amountCharged: Number(row.amount ?? row.amount_charged ?? 0),
+    status: row.status ?? "Pending",
+    remaining: Number(row.remaining_balance ?? row.remaining ?? 0),
+    deductionAmount,
+  };
+}
+
+function beneficiaryAccountId(name: string) {
+  const normalized = name.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "-").replace(/^-|-$/g, "");
+  return normalized ? `BEN-${normalized}` : "";
+}
+
 function payrollPeriodRange(period: string): { start: Date; end: Date } | null {
   const match = period.match(/([A-Za-z]+)\s+(\d{1,2})-(\d{1,2}),\s*(\d{4})/);
   if (!match) return null;
@@ -326,10 +364,11 @@ type PayrollAuditRecord = {
   remarks: string;
 };
 
-function BeneficiaryPayroll({ user, beneficiaries, productionRecords, payrollRecords, setPayrollRecords }: {
+function BeneficiaryPayroll({ user, beneficiaries, productionRecords, creditTransactions, payrollRecords, setPayrollRecords }: {
   user: User;
   beneficiaries: BeneficiaryOption[];
   productionRecords: PayrollProductionRecord[];
+  creditTransactions: PayrollCreditMaterial[];
   payrollRecords: PayrollRecord[];
   setPayrollRecords: Dispatch<SetStateAction<PayrollRecord[]>>;
 }) {
@@ -659,6 +698,7 @@ function BeneficiaryPayroll({ user, beneficiaries, productionRecords, payrollRec
         editRecord={editRecord}
         beneficiaries={beneficiaries}
         productionRecords={productionRecords}
+        creditTransactions={creditTransactions}
         nextSlipNo={`BP-2026-${String(payrollRecords.length + 1).padStart(3, "0")}`}
         onSave={handleSavePayroll}
       />
@@ -699,13 +739,14 @@ function BeneficiaryPayroll({ user, beneficiaries, productionRecords, payrollRec
   );
 }
 
-function PreparePayrollDialog({ open, onOpenChange, user, editRecord, beneficiaries, productionRecords, nextSlipNo, onSave }: {
+function PreparePayrollDialog({ open, onOpenChange, user, editRecord, beneficiaries, productionRecords, creditTransactions, nextSlipNo, onSave }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
   user: User;
   editRecord?: PayrollRecord | null;
   beneficiaries: BeneficiaryOption[];
   productionRecords: PayrollProductionRecord[];
+  creditTransactions: PayrollCreditMaterial[];
   nextSlipNo: string;
   onSave: (record: PayrollRecord) => Promise<void> | void;
 }) {
@@ -760,7 +801,22 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, beneficiar
     return harvestDate >= periodRange.start && harvestDate <= periodRange.end;
   });
 
-  const creditMaterials: { refNo: string; dateIssued: string; materialName: string; quantity: number; unit: string; amountCharged: number; status: string; remaining: number }[] = [];
+  const selectedBeneficiaryAccountId = selectedBeneficiaryOption ? beneficiaryAccountId(selectedBeneficiaryOption.name) : "";
+  const creditMaterials = creditTransactions.filter((credit) => {
+    if (!selectedBeneficiaryOption) return false;
+
+    const creditName = credit.beneficiaryName.trim().toLowerCase();
+    const selectedName = selectedBeneficiaryOption.name.trim().toLowerCase();
+    const creditAccount = credit.beneficiaryAccountId.trim().toUpperCase();
+    const selectedCode = selectedBeneficiaryOption.code.trim().toUpperCase();
+
+    const hasPayrollDeduction = credit.deductionAmount > 0;
+    return (credit.remaining > 0 || hasPayrollDeduction) && (
+      creditName === selectedName
+      || creditAccount === selectedCode
+      || creditAccount === selectedBeneficiaryAccountId
+    );
+  });
 
   const classABoxes = matchedProductionRecords.reduce((sum, r) => sum + r.classA, 0);
   const classBBoxes = matchedProductionRecords.reduce((sum, r) => sum + r.classB, 0);
@@ -802,7 +858,7 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, beneficiar
     setPriceSpecial("300");
   };
 
-  const totalCreditDeductions = creditMaterials.reduce((sum, c) => sum + c.remaining, 0);
+  const totalCreditDeductions = creditMaterials.reduce((sum, c) => sum + (c.deductionAmount > 0 ? c.deductionAmount : c.remaining), 0);
   const previousBalance = 0;
   const laborCostAmount = Math.max(0, parseFloat(laborCost) || 0);
   const otherDeductionsTotal = otherDeductions.reduce((sum, d) => sum + (parseFloat(d.amount) || 0), 0);
