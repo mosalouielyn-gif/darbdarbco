@@ -20,6 +20,7 @@ import { User } from "../types";
 import { toast } from "sonner";
 import { useAppData } from "../../lib/app-data-context";
 import { adjustInventoryItem, cancelRestockRequest, createInventoryItem, createRestockRequest, deductCreditTransaction, releaseInventoryItem, returnBorrowedMaterial, stockInInventoryItem, updateInventoryItem, updateInventoryItemStatus, updateRestockRequest } from "../../lib/api";
+import { addDaysSystemDate, currentSystemTime, databaseDateKey, formatDatabaseDateTime, formatSystemDate, formatSystemDateTime, todaySystemDate } from "../../lib/date-time";
 import { usePersistentState } from "../../lib/use-persistent-state";
 
 interface Props { user: User; onLogout: () => void }
@@ -156,7 +157,7 @@ function Dashboard({ goTo, items, credits, history, restockRequests }: {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="flex items-center gap-2"><LayoutDashboard className="h-6 w-6 text-emerald-700" />Dashboard</h1>
-        <div className="text-muted-foreground">{new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}</div>
+        <div className="text-muted-foreground">{formatSystemDate()}</div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -337,13 +338,13 @@ function mapInventoryItem(row: any): InventoryItem {
     category: row.category ?? "",
     unit: row.unit ?? "",
     onHand: Number(row.on_hand ?? row.onHand ?? 0),
-    stockDate: String(row.stock_date ?? row.created_at ?? todayInputDate()).slice(0, 10),
+    stockDate: databaseDateKey(row.stock_date ?? row.created_at ?? todayInputDate()),
     cost: Number(row.unit_cost ?? row.cost ?? 0),
     expiry: row.expiry_date ? String(row.expiry_date).slice(0, 10) : "-",
     minimumStock: Number(row.minimum_stock ?? row.minimumStock ?? 20),
     supplier: row.supplier ?? "",
-    createdAt: row.created_at ? String(row.created_at).slice(0, 10) : undefined,
-    updatedAt: row.updated_at ? String(row.updated_at).slice(0, 10) : undefined,
+    createdAt: row.created_at ? databaseDateKey(row.created_at) : undefined,
+    updatedAt: row.updated_at ? databaseDateKey(row.updated_at) : undefined,
     hasTransactions: true,
     active: row.active === true || row.active === 1 || row.active === "1",
   };
@@ -364,7 +365,7 @@ function mapStockTransaction(row: any): StockHistoryRow {
   ].includes(type) ? -Math.abs(quantity) : quantity;
 
   return {
-    date: formatDateTime(String(row.txn_at ?? row.transaction_at ?? row.created_at ?? todayInputDate()).slice(0, 10)),
+    date: formatDateTime(row.txn_at ?? row.transaction_at ?? row.created_at ?? todayInputDate()),
     material: row.material ?? row.material_name ?? row.name ?? `Item #${row.inventory_item_id ?? row.item_id ?? ""}`,
     type,
     qty: signedQuantity,
@@ -400,7 +401,7 @@ function mapCreditTransaction(row: any): CreditRow {
   return {
     dbId: Number(row.id) || undefined,
     receipt: String(row.credit_no ?? row.id),
-    date: formatDateLabel(String(row.credit_date ?? row.created_at ?? todayInputDate()).slice(0, 10)),
+    date: formatDateLabel(databaseDateKey(row.credit_date ?? row.created_at ?? todayInputDate())),
     beneficiary: row.beneficiary_name ?? "",
     beneficiaryId: row.beneficiary_account_id ?? beneficiaryAccountId(row.beneficiary_name ?? ""),
     material: row.material_name ?? "",
@@ -426,7 +427,7 @@ function mapRestockRequest(row: any): RestockRequest {
     dbId: Number(row.id) || undefined,
     itemDbId: Number(row.item_id ?? row.inventory_item_id) || undefined,
     id: String(row.request_no ?? row.id),
-    dateRequested: formatDateLabel(String(row.requested_at ?? row.created_at ?? todayInputDate()).slice(0, 10)),
+    dateRequested: formatDateLabel(databaseDateKey(row.requested_at ?? row.created_at ?? todayInputDate())),
     material: row.material_name ?? "",
     category: row.category ?? "Not specified",
     current: Number(row.current_quantity ?? 0),
@@ -451,36 +452,21 @@ function currentUserId(user: User) {
 
 function generateStockInReference(dateValue = todayInputDate()) {
   const datePart = dateValue.replaceAll("-", "");
-  const now = new Date();
-  const timePart = [
-    now.getHours(),
-    now.getMinutes(),
-    now.getSeconds(),
-  ].map((part) => String(part).padStart(2, "0")).join("");
+  const timePart = currentSystemTime().replaceAll(":", "");
 
   return `STIN-${datePart}-${timePart}`;
 }
 
 function generateReleaseSlip(dateValue = todayInputDate()) {
   const datePart = dateValue.replaceAll("-", "");
-  const now = new Date();
-  const timePart = [
-    now.getHours(),
-    now.getMinutes(),
-    now.getSeconds(),
-  ].map((part) => String(part).padStart(2, "0")).join("");
+  const timePart = currentSystemTime().replaceAll(":", "");
 
   return `RS-${datePart}-${timePart}`;
 }
 
 function generateAdjustmentReference(dateValue = todayInputDate()) {
   const datePart = dateValue.replaceAll("-", "");
-  const now = new Date();
-  const timePart = [
-    now.getHours(),
-    now.getMinutes(),
-    now.getSeconds(),
-  ].map((part) => String(part).padStart(2, "0")).join("");
+  const timePart = currentSystemTime().replaceAll(":", "");
 
   return `ADJ-${datePart}-${timePart}`;
 }
@@ -520,18 +506,11 @@ function quantityDeducted(row: Pick<StockHistoryRow, "qty">) {
 }
 
 function todayInputDate() {
-  const date = new Date();
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+  return todaySystemDate();
 }
 
 function addDaysInputDate(value: string, days: number) {
-  const date = new Date(`${value}T00:00:00`);
-  if (Number.isNaN(date.getTime())) return todayInputDate();
-  date.setDate(date.getDate() + days);
-  return date.toISOString().slice(0, 10);
+  return addDaysSystemDate(value, days);
 }
 
 function InventoryDateInput({ value, onChange, className = "" }: { value: string; onChange: (value: string) => void; className?: string }) {
@@ -945,7 +924,7 @@ function EditItemDialog({ item, onClose, onSave }: { item: InventoryItem | null;
             onClick={async () => {
               if (!form) return;
               setSaving(true);
-              await onSave({ ...form, updatedAt: new Date().toISOString().slice(0, 10) });
+              await onSave({ ...form, updatedAt: todayInputDate() });
               setSaving(false);
             }}
           >
@@ -984,7 +963,7 @@ function AddInventoryItem({ open, onOpenChange, items, setItems, setHistory, use
   setHistory: React.Dispatch<React.SetStateAction<StockHistoryRow[]>>;
   user: User;
 }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayInputDate();
   const [date, setDate] = useState(today);
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
@@ -1488,7 +1467,7 @@ function ReleaseMaterials({ open, onOpenChange, items, setItems, setCredits, set
   setHistory: React.Dispatch<React.SetStateAction<StockHistoryRow[]>>;
   user: User;
 }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayInputDate();
   const [type, setType] = useState("direct");
   const [slipNo, setSlipNo] = useState(generateReleaseSlip(today));
   const [date, setDate] = useState(today);
@@ -1928,7 +1907,7 @@ function borrowedRemaining(row: BorrowedMaterialRow) {
 function borrowedStatus(row: BorrowedMaterialRow): BorrowedMaterialRow["status"] {
   const remaining = borrowedRemaining(row);
   if (remaining <= 0) return "Returned";
-  if (new Date(`${row.expectedReturnDate}T23:59:59`) < new Date()) return "Overdue";
+  if (row.expectedReturnDate < todayInputDate()) return "Overdue";
   if (row.qtyReturned > 0) return "Partially Returned";
   return "Borrowed";
 }
@@ -2776,15 +2755,15 @@ function parseHistoryDate(s: string): Date {
 }
 
 function formatDateLabel(value: string) {
-  const date = new Date(`${value}T00:00:00`);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+  return formatSystemDate(value);
 }
 
 function formatDateTime(value: string) {
-  const date = new Date(`${value}T${new Date().toTimeString().slice(0, 8)}`);
-  return Number.isNaN(date.getTime())
-    ? new Date().toLocaleString("en-US", { month: "long", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })
-    : date.toLocaleString("en-US", { month: "long", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
+  if (/\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}/.test(value)) {
+    return formatDatabaseDateTime(value);
+  }
+  const date = new Date(`${value}T${currentSystemTime()}`);
+  return Number.isNaN(date.getTime()) ? formatSystemDateTime() : formatSystemDateTime(date);
 }
 
 const TXN_TYPES = ["Stock In", "Direct Release", "Credit Issued", "Borrowed Material", "Internal Use", "Adjustment", "Stock Out — Expired", "Returned Material"];

@@ -101,8 +101,9 @@ export async function login(email: string, password: string): Promise<User> {
   return payload.user;
 }
 
-export async function fetchAppData(): Promise<AppData> {
-  const response = await fetch("/api/app-data", {
+export async function fetchAppData(role?: string): Promise<AppData> {
+  const url = role ? `/api/app-data?role=${encodeURIComponent(role)}` : "/api/app-data";
+  const response = await fetch(url, {
     headers: { "Accept": "application/json" },
   });
 

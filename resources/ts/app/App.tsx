@@ -26,7 +26,7 @@ export default function App() {
 
     let active = true;
     setLoadingData(true);
-    fetchAppData()
+    fetchAppData(user.role)
       .then((nextData) => {
         if (active) {
           setData(nextData);

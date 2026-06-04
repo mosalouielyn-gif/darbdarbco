@@ -16,9 +16,10 @@ import {
 } from "lucide-react";
 import { User } from "../types";
 import { toast } from "sonner";
-import { usePersistentState } from "../../lib/use-persistent-state";
 import { useAppData } from "../../lib/app-data-context";
 import { createPayrollSlip, deletePayrollSlip, submitPayrollSlip, updatePayrollSlip } from "../../lib/api";
+import { currentPayrollPeriodLabel, databaseDateKey, formatSystemDateTime, todaySystemDate } from "../../lib/date-time";
+import { usePersistentState } from "../../lib/use-persistent-state";
 
 interface Props { user: User; onLogout: () => void }
 
@@ -223,7 +224,7 @@ function mapPayrollSlip(row: any): PayrollRecord {
     beneficiary: row.beneficiary_name ?? row.beneficiary ?? "",
     beneficiaryId: Number(row.beneficiary_id) || undefined,
     productionRecordId: Number(row.production_record_id ?? row.production_box_record_id) || undefined,
-    harvestDate: String(row.harvest_date ?? row.created_at ?? new Date().toISOString()).slice(0, 10),
+    harvestDate: row.harvest_date ? String(row.harvest_date).slice(0, 10) : databaseDateKey(row.created_at ?? todaySystemDate()),
     totalBoxes: Number(row.total_boxes ?? classABoxes + classBBoxes + specialBoxes),
     grossIncome: Number(row.gross_amount ?? row.gross_income ?? 0),
     totalDeductions: Number(row.total_deductions ?? 0),
@@ -343,6 +344,8 @@ function BeneficiaryPayroll({ user, beneficiaries, productionRecords, payrollRec
   const [submittingRecordId, setSubmittingRecordId] = useState<number | null>(null);
   const [isDeletingPayroll, setIsDeletingPayroll] = useState(false);
   const [auditRecords, setAuditRecords] = useState<PayrollAuditRecord[]>([]);
+  const currentPeriod = currentPayrollPeriodLabel();
+  const periodOptions = Array.from(new Set([currentPeriod, ...payrollRecords.map((record) => record.period).filter(Boolean)]));
 
   const getValidationBadge = (status: string) => {
     if (status === "Draft") return <Badge className="bg-slate-100 text-slate-700">Draft</Badge>;
@@ -362,9 +365,7 @@ function BeneficiaryPayroll({ user, beneficiaries, productionRecords, payrollRec
     const q = search.trim().toLowerCase();
     if (q && !record.slipNo.toLowerCase().includes(q) && !record.beneficiary.toLowerCase().includes(q)) return false;
 
-    // Period filter
-    if (periodFilter === "may-2026" && record.period !== "May 16-31, 2026") return false;
-    if (periodFilter === "june-2026" && record.period !== "June 1-15, 2026") return false;
+    if (periodFilter !== "all-period" && record.period !== periodFilter) return false;
 
     // Validation status filter
     if (validationFilter === "draft" && record.validationStatus !== "Draft") return false;
@@ -388,13 +389,7 @@ function BeneficiaryPayroll({ user, beneficiaries, productionRecords, payrollRec
         action,
         account: user.name,
         role: "Payroll Personnel",
-        timestamp: new Date().toLocaleString("en-US", {
-          month: "long",
-          day: "numeric",
-          year: "numeric",
-          hour: "numeric",
-          minute: "2-digit",
-        }),
+        timestamp: formatSystemDateTime(),
         remarks,
       },
       ...current,
@@ -523,8 +518,9 @@ function BeneficiaryPayroll({ user, beneficiaries, productionRecords, payrollRec
               <SelectTrigger className="w-44 h-9"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all-period">All Periods</SelectItem>
-                <SelectItem value="may-2026">May 16-31, 2026</SelectItem>
-                <SelectItem value="june-2026">June 1-15, 2026</SelectItem>
+                {periodOptions.map((period) => (
+                  <SelectItem key={period} value={period}>{period}</SelectItem>
+                ))}
               </SelectContent>
             </Select>
             <Select value={validationFilter} onValueChange={setValidationFilter}>
@@ -713,12 +709,13 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, beneficiar
   nextSlipNo: string;
   onSave: (record: PayrollRecord) => Promise<void> | void;
 }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todaySystemDate();
   const [showProductionDetails, setShowProductionDetails] = useState(false);
   const [otherDeductions, setOtherDeductions] = useState<any[]>([]);
   const [laborCost, setLaborCost] = useState("0");
   const [selectedBeneficiary, setSelectedBeneficiary] = useState("");
-  const [payrollPeriod, setPayrollPeriod] = useState("June 1-15, 2026");
+  const currentPeriod = currentPayrollPeriodLabel();
+  const [payrollPeriod, setPayrollPeriod] = useState(currentPeriod);
   const [priceClassABig, setPriceClassABig] = useState("400");
   const [priceClassASmall, setPriceClassASmall] = useState("400");
   const [priceClassACp, setPriceClassACp] = useState("400");
@@ -742,7 +739,7 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, beneficiar
     } else if (!open) {
       // Reset form when closing
       setSelectedBeneficiary("");
-      setPayrollPeriod("June 1-15, 2026");
+      setPayrollPeriod(currentPeriod);
       setLaborCost("0");
       setOtherDeductions([]);
       setShowProductionDetails(false);
@@ -815,7 +812,7 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, beneficiar
   const handleClose = () => {
     if (savingAction) return;
     setSelectedBeneficiary("");
-    setPayrollPeriod("June 1-15, 2026");
+    setPayrollPeriod(currentPeriod);
     setLaborCost("0");
     setOtherDeductions([]);
     setShowProductionDetails(false);
@@ -867,7 +864,7 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, beneficiar
       });
 
       setSelectedBeneficiary("");
-      setPayrollPeriod("June 1-15, 2026");
+      setPayrollPeriod(currentPeriod);
       setLaborCost("0");
       setOtherDeductions([]);
       setShowProductionDetails(false);

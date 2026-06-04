@@ -16,9 +16,10 @@ import {
 } from "lucide-react";
 import { User } from "../types";
 import { toast } from "sonner";
-import { usePersistentState } from "../../lib/use-persistent-state";
 import { useAppData } from "../../lib/app-data-context";
 import { returnPayrollSlipForCorrection, validatePayrollSlip } from "../../lib/api";
+import { currentPayrollPeriodLabel, currentSystemDateTime, databaseDateKey, formatDatabaseDateTime, formatSystemDate, formatSystemDateTime } from "../../lib/date-time";
+import { usePersistentState } from "../../lib/use-persistent-state";
 
 interface Props { user: User; onLogout: () => void }
 
@@ -111,7 +112,7 @@ function mapPayrollSlip(row: any): FoSlip {
     payrollPeriod: row.payroll_period ?? "",
     harvestDate: String(row.harvest_date ?? "").slice(0, 10),
     preparedBy: row.prepared_by_name ?? String(row.prepared_by ?? ""),
-    dateSubmitted: String(row.submitted_at ?? row.created_at ?? "").slice(0, 16).replace("T", " "),
+    dateSubmitted: formatDatabaseDateTime(row.submitted_at ?? row.created_at),
     status: financeStatus(row),
     classA,
     classB,
@@ -131,7 +132,7 @@ function mapPayrollSlip(row: any): FoSlip {
     laborAmount,
     laborRemarks: "",
     laborEncodedBy: row.prepared_by_name ?? String(row.prepared_by ?? ""),
-    laborDateEncoded: String(row.submitted_at ?? row.created_at ?? "").slice(0, 10),
+    laborDateEncoded: databaseDateKey(row.submitted_at ?? row.created_at),
     prevBalance: previousBalance,
     otherDeductions: otherDeductionAmount > 0 ? [{
       type: "Other Deduction",
@@ -153,7 +154,7 @@ function mapValidationActivity(row: any): ValidationActivity | null {
     payrollPeriod: "",
     action: row.action,
     account: row.user_name ?? "Finance Officer",
-    timestamp: String(row.created_at ?? ""),
+    timestamp: formatDatabaseDateTime(row.created_at),
     remarks: row.details ?? "",
   };
 }
@@ -262,13 +263,7 @@ export function FinanceOfficerDashboard({ user, onLogout }: Props) {
           payrollPeriod: slip.payrollPeriod,
           action: "Validated",
           account: user.name,
-          timestamp: new Date().toLocaleString("en-US", {
-            month: "long",
-            day: "numeric",
-            year: "numeric",
-            hour: "numeric",
-            minute: "2-digit",
-          }),
+          timestamp: formatSystemDateTime(),
           remarks: "Payroll validated and forwarded to Manager approval.",
         },
         ...current,
@@ -291,7 +286,7 @@ export function FinanceOfficerDashboard({ user, onLogout }: Props) {
       });
       const mapped = {
         ...mapPayrollSlip(saved),
-        returnReason: { ...payload, returnedBy: user.name, dateReturned: new Date().toISOString().slice(0, 16).replace("T", " ") },
+        returnReason: { ...payload, returnedBy: user.name, dateReturned: currentSystemDateTime() },
       };
       setSlips((cur) => cur.map((s) => s.slipNo === slipNo ? mapped : s));
       setValidationActivities((current) => [
@@ -302,13 +297,7 @@ export function FinanceOfficerDashboard({ user, onLogout }: Props) {
           payrollPeriod: slip.payrollPeriod,
           action: "Returned",
           account: user.name,
-          timestamp: new Date().toLocaleString("en-US", {
-            month: "long",
-            day: "numeric",
-            year: "numeric",
-            hour: "numeric",
-            minute: "2-digit",
-          }),
+          timestamp: formatSystemDateTime(),
           remarks: `${payload.category}: ${payload.reason}`,
         },
         ...current,
@@ -350,12 +339,13 @@ function Dashboard({ slips, activities, goTo, onReview }: { slips: FoSlip[]; act
   const validatedForPeriod = slips.filter((s) => isFinanceValidated(s.status) && (selectedPeriod === "all" || s.payrollPeriod === selectedPeriod));
   const validatedAmount = validatedForPeriod.reduce((sum, slip) => sum + compute(slip).net, 0);
   const recentActivities = activities.slice(0, 5);
+  const currentPeriod = currentPayrollPeriodLabel();
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="flex items-center gap-2"><ShieldCheck className="h-6 w-6 text-emerald-700" />Finance Officer Dashboard</h1>
-        <div className="text-muted-foreground">May 31, 2026 • Period: May 16 – May 31, 2026</div>
+        <div className="text-muted-foreground">{formatSystemDate()} • Period: {currentPeriod}</div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
@@ -467,6 +457,7 @@ function SlipList({ title, slips, filter, onReview }: { title: string; slips: Fo
   const [harvestDate, setHarvestDate] = useState("");
   const [period, setPeriod] = useState("all");
   const [status, setStatus] = useState("all");
+  const periodOptions = Array.from(new Set([currentPayrollPeriodLabel(), ...slips.map((slip) => slip.payrollPeriod).filter(Boolean)]));
 
   const filtered = slips.filter(filter).filter((s) => {
     if (searchName && !s.beneficiaryName.toLowerCase().includes(searchName.toLowerCase())) return false;
@@ -497,8 +488,9 @@ function SlipList({ title, slips, filter, onReview }: { title: string; slips: Fo
               <SelectTrigger className="w-56 h-9"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Payroll Periods</SelectItem>
-                <SelectItem value="May 16 – May 31, 2026">May 16 – May 31, 2026</SelectItem>
-                <SelectItem value="May 1 – May 15, 2026">May 1 – May 15, 2026</SelectItem>
+                {periodOptions.map((option) => (
+                  <SelectItem key={option} value={option}>{option}</SelectItem>
+                ))}
               </SelectContent>
             </Select>
             <Select value={status} onValueChange={setStatus}>
@@ -909,7 +901,7 @@ function ValidationDetailsDialog({ slip, onClose, onValidate, onReturn }: {
               <div className="grid grid-cols-2 gap-3 p-3 bg-slate-50 rounded-md">
                 <Field label="Returned To" value="Payroll Personnel" />
                 <Field label="Returned By" value="(current Finance Officer)" />
-                <Field label="Date Returned" value={new Date().toISOString().slice(0, 16).replace("T", " ")} />
+                <Field label="Date Returned" value={currentSystemDateTime()} />
               </div>
               <div className="flex justify-end gap-2 pt-2 border-t">
                 <Button variant="outline" disabled={returning} onClick={() => setShowReturn(false)}>Cancel</Button>
@@ -951,6 +943,7 @@ function Field({ label, value }: { label: string; value: string }) {
 }
 
 function Reports({ slips, activities }: { slips: FoSlip[]; activities: ValidationActivity[] }) {
+  const [generatedReport, setGeneratedReport] = useState<ReportDefinition | null>(null);
   const validatedCount = slips.filter((slip) => isFinanceValidated(slip.status)).length;
   const returnedCount = slips.filter((slip) => slip.status === "Returned for Correction").length;
   const pendingManagerCount = slips.filter((slip) => slip.status === "Pending Manager Approval").length;
@@ -959,13 +952,55 @@ function Reports({ slips, activities }: { slips: FoSlip[]; activities: Validatio
   const validatedAmount = slips.filter((slip) => isFinanceValidated(slip.status)).reduce((sum, slip) => sum + compute(slip).net, 0);
   const returnedActivities = activities.filter((activity) => activity.action === "Returned").length;
 
-  const reports = [
-    { name: "Validated Payroll Register", desc: `${validatedCount} payroll slips validated by Finance.`, metric: `PHP ${validatedAmount.toLocaleString()}` },
-    { name: "Returned Payroll Register", desc: `${returnedCount} slips currently returned for correction.`, metric: `${returnedActivities} return actions` },
-    { name: "Validation Turnaround", desc: "Average time from submission to validation.", metric: `${activities.length} activities` },
-    { name: "Material Credit Audit", desc: "Material credits charged in validated payrolls.", metric: `PHP ${materialCreditTotal.toLocaleString()}` },
-    { name: "Labor Cost Audit", desc: "Labor cost amounts across validated payrolls.", metric: `PHP ${laborCostTotal.toLocaleString()}` },
-    { name: "Approval Pipeline Status", desc: "Slips awaiting Manager approval.", metric: `${pendingManagerCount} pending` },
+  const reports: ReportDefinition[] = [
+    {
+      name: "Validated Payroll Register",
+      desc: `${validatedCount} payroll slips validated by Finance.`,
+      metric: `PHP ${validatedAmount.toLocaleString()}`,
+      columns: ["Slip No.", "Beneficiary", "Period", "Net Income", "Status"],
+      rows: slips.filter((slip) => isFinanceValidated(slip.status)).map((slip) => [slip.slipNo, slip.beneficiaryName, slip.payrollPeriod, money(compute(slip).net), slip.status]),
+    },
+    {
+      name: "Returned Payroll Register",
+      desc: `${returnedCount} slips currently returned for correction.`,
+      metric: `${returnedActivities} return actions`,
+      columns: ["Slip No.", "Beneficiary", "Category", "Reason", "Date Returned"],
+      rows: slips.filter((slip) => slip.status === "Returned for Correction").map((slip) => [slip.slipNo, slip.beneficiaryName, slip.returnReason?.category ?? "Correction", slip.returnReason?.reason ?? "Returned for correction", slip.returnReason?.dateReturned ?? "-"]),
+    },
+    {
+      name: "Validation Turnaround",
+      desc: "Average time from submission to validation.",
+      metric: `${activities.length} activities`,
+      columns: ["Slip No.", "Action", "Account", "Timestamp", "Remarks"],
+      rows: activities.map((activity) => [activity.slipNo, activity.action, activity.account, activity.timestamp, activity.remarks]),
+    },
+    {
+      name: "Material Credit Audit",
+      desc: "Material credits charged in validated payrolls.",
+      metric: `PHP ${materialCreditTotal.toLocaleString()}`,
+      columns: ["Slip No.", "Beneficiary", "Material", "Amount", "Status"],
+      rows: slips.flatMap((slip) => {
+        const c = compute(slip);
+        if (slip.materialCredits.length === 0 && c.matTotal <= 0) return [];
+        return slip.materialCredits.length
+          ? slip.materialCredits.map((credit) => [slip.slipNo, slip.beneficiaryName, credit.material, money(credit.qty * credit.unitPrice), credit.status])
+          : [[slip.slipNo, slip.beneficiaryName, "Material credit deduction", money(c.matTotal), "Recorded"]];
+      }),
+    },
+    {
+      name: "Labor Cost Audit",
+      desc: "Labor cost amounts across validated payrolls.",
+      metric: `PHP ${laborCostTotal.toLocaleString()}`,
+      columns: ["Slip No.", "Beneficiary", "Description", "Amount", "Encoded By"],
+      rows: slips.filter((slip) => slip.laborAmount > 0).map((slip) => [slip.slipNo, slip.beneficiaryName, slip.laborDescription, money(slip.laborAmount), slip.laborEncodedBy || "-"]),
+    },
+    {
+      name: "Approval Pipeline Status",
+      desc: "Slips awaiting Manager approval.",
+      metric: `${pendingManagerCount} pending`,
+      columns: ["Slip No.", "Beneficiary", "Period", "Net Income", "Status"],
+      rows: slips.filter((slip) => slip.status === "Pending Manager Approval").map((slip) => [slip.slipNo, slip.beneficiaryName, slip.payrollPeriod, money(compute(slip).net), slip.status]),
+    },
   ];
 
   return (
@@ -984,12 +1019,153 @@ function Reports({ slips, activities }: { slips: FoSlip[]; activities: Validatio
               </div>
               <p className="text-xs text-muted-foreground mb-3">{r.desc}</p>
               <div className="mb-3 text-lg font-semibold text-emerald-700">{r.metric}</div>
-              <Button variant="outline" size="sm">Generate</Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-9 border-emerald-200 px-3 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800"
+                onClick={() => setGeneratedReport(r)}
+              >
+                <FileBarChart2 className="mr-1.5 h-4 w-4" />Generate Report
+              </Button>
             </CardContent>
           </Card>
         ))}
       </div>
+      <GeneratedReportDialog report={generatedReport} onClose={() => setGeneratedReport(null)} />
     </div>
   );
 }
 
+interface ReportDefinition {
+  name: string;
+  desc: string;
+  metric: string;
+  columns: string[];
+  rows: string[][];
+}
+
+function GeneratedReportDialog({ report, onClose }: { report: ReportDefinition | null; onClose: () => void }) {
+  return (
+    <Dialog open={!!report} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-h-[88vh] w-[calc(100vw-2rem)] max-w-5xl overflow-hidden p-0">
+        {report && (
+          <>
+            <DialogHeader className="border-b px-6 py-4">
+              <DialogTitle className="flex items-center gap-2 text-emerald-700">
+                <FileBarChart2 className="h-5 w-5" />{report.name}
+              </DialogTitle>
+            </DialogHeader>
+            <div className="max-h-[calc(88vh-76px)] overflow-y-auto px-6 py-4">
+            <div className="space-y-4">
+              <div className="grid gap-3 rounded-md border bg-slate-50 p-3 text-sm md:grid-cols-3">
+                <Field label="Generated At" value={currentSystemDateTime()} />
+                <Field label="Summary" value={report.metric} />
+                <Field label="Record Count" value={String(report.rows.length)} />
+              </div>
+              <p className="text-sm text-muted-foreground">{report.desc}</p>
+              <div className="rounded-md border overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      {report.columns.map((column) => (
+                        <TableHead key={column}>{column}</TableHead>
+                      ))}
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {report.rows.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={report.columns.length} className="py-8 text-center text-muted-foreground">
+                          No records available for this report.
+                        </TableCell>
+                      </TableRow>
+                    ) : report.rows.map((row, index) => (
+                      <TableRow key={`${report.name}-${index}`}>
+                        {row.map((cell, cellIndex) => (
+                          <TableCell key={`${report.name}-${index}-${cellIndex}`}>{cell}</TableCell>
+                        ))}
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+              <div className="sticky bottom-0 -mx-6 flex flex-wrap justify-end gap-2 border-t bg-white px-6 py-3">
+                <Button variant="outline" className="min-w-24" onClick={() => printReport(report)}>
+                  <Printer className="mr-1.5 h-4 w-4" />Print
+                </Button>
+                <Button className="min-w-24 bg-emerald-600 hover:bg-emerald-700" onClick={onClose}>Close</Button>
+              </div>
+            </div>
+            </div>
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function money(value: number) {
+  return `PHP ${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function printReport(report: ReportDefinition) {
+  const printWindow = window.open("", "_blank", "width=900,height=700");
+  if (!printWindow) return;
+
+  const tableHeaders = report.columns.map((column) => `<th>${escapeHtml(column)}</th>`).join("");
+  const tableRows = report.rows.length
+    ? report.rows.map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join("")}</tr>`).join("")
+    : `<tr><td colspan="${report.columns.length}" class="empty">No records available for this report.</td></tr>`;
+
+  printWindow.document.write(`
+    <!doctype html>
+    <html>
+      <head>
+        <title>${escapeHtml(report.name)}</title>
+        <style>
+          * { box-sizing: border-box; }
+          body { font-family: Arial, sans-serif; color: #0f172a; margin: 28px; }
+          .header { border-bottom: 2px solid #059669; padding-bottom: 12px; margin-bottom: 18px; }
+          h1 { color: #047857; font-size: 22px; margin: 0 0 6px; }
+          .desc { color: #475569; margin: 0; }
+          .meta { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 18px 0; }
+          .box { border: 1px solid #dbe4ee; border-radius: 6px; padding: 10px; }
+          .label { color: #64748b; font-size: 11px; margin-bottom: 4px; text-transform: uppercase; }
+          table { width: 100%; border-collapse: collapse; font-size: 12px; }
+          th, td { border-bottom: 1px solid #e2e8f0; padding: 8px; text-align: left; vertical-align: top; }
+          th { background: #f8fafc; font-weight: 700; }
+          .empty { text-align: center; color: #64748b; padding: 24px; }
+          @page { margin: 18mm; }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <h1>${escapeHtml(report.name)}</h1>
+          <p class="desc">${escapeHtml(report.desc)}</p>
+        </div>
+        <div class="meta">
+          <div class="box"><div class="label">Generated At</div><div>${escapeHtml(currentSystemDateTime())}</div></div>
+          <div class="box"><div class="label">Summary</div><div>${escapeHtml(report.metric)}</div></div>
+          <div class="box"><div class="label">Record Count</div><div>${report.rows.length}</div></div>
+        </div>
+        <table>
+          <thead><tr>${tableHeaders}</tr></thead>
+          <tbody>${tableRows}</tbody>
+        </table>
+      </body>
+    </html>
+  `);
+  printWindow.document.close();
+  printWindow.focus();
+  printWindow.print();
+  printWindow.close();
+}
+
+function escapeHtml(value: string) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}

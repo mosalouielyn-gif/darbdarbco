@@ -4,28 +4,93 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 class AppDataController extends Controller
 {
-    public function __invoke(): JsonResponse
+    public function __invoke(Request $request): JsonResponse
     {
-        return response()->json([
-            'beneficiaries' => $this->beneficiaries(),
-            'harvestRecords' => $this->harvestRecords(),
-            'productionRecords' => $this->productionRecords(),
-            'dailyBoxes' => $this->dailyBoxes(),
-            'inventoryItems' => $this->inventoryItems(),
-            'stockTransactions' => $this->stockTransactions(),
-            'borrowedMaterials' => $this->borrowedMaterials(),
-            'creditTransactions' => $this->creditTransactions(),
-            'restockRequests' => $this->restockRequests(),
-            'payrollSlips' => $this->payrollSlips(),
-            'auditLogs' => $this->auditLogs(),
-            'users' => $this->users(),
-            'rolePermissions' => $this->rolePermissions(),
-        ]);
+        $role = (string) $request->query('role', '');
+        $payload = $this->emptyPayload();
+
+        switch ($role) {
+            case 'production_clerk':
+                $payload['beneficiaries'] = $this->beneficiaries();
+                $payload['harvestRecords'] = $this->harvestRecords();
+                $payload['productionRecords'] = $this->productionRecords();
+                break;
+
+            case 'inventory_bookkeeper':
+                $payload['inventoryItems'] = $this->inventoryItems();
+                $payload['stockTransactions'] = $this->stockTransactions();
+                $payload['borrowedMaterials'] = $this->borrowedMaterials();
+                $payload['creditTransactions'] = $this->creditTransactions();
+                $payload['restockRequests'] = $this->restockRequests();
+                break;
+
+            case 'payroll_personnel':
+                $payload['beneficiaries'] = $this->beneficiaries();
+                $payload['productionRecords'] = $this->productionRecords();
+                $payload['creditTransactions'] = $this->creditTransactions();
+                $payload['payrollSlips'] = $this->payrollSlips();
+                break;
+
+            case 'finance_officer':
+                $payload['payrollSlips'] = $this->payrollSlips();
+                $payload['auditLogs'] = $this->auditLogs();
+                break;
+
+            case 'manager_admin':
+                $payload['inventoryItems'] = $this->inventoryItems();
+                $payload['productionRecords'] = $this->productionRecords();
+                $payload['restockRequests'] = $this->restockRequests();
+                $payload['payrollSlips'] = $this->payrollSlips();
+                $payload['auditLogs'] = $this->auditLogs();
+                $payload['users'] = $this->users();
+                $payload['rolePermissions'] = $this->rolePermissions();
+                break;
+
+            default:
+                $payload = [
+                    'beneficiaries' => $this->beneficiaries(),
+                    'harvestRecords' => $this->harvestRecords(),
+                    'productionRecords' => $this->productionRecords(),
+                    'dailyBoxes' => $this->dailyBoxes(),
+                    'inventoryItems' => $this->inventoryItems(),
+                    'stockTransactions' => $this->stockTransactions(),
+                    'borrowedMaterials' => $this->borrowedMaterials(),
+                    'creditTransactions' => $this->creditTransactions(),
+                    'restockRequests' => $this->restockRequests(),
+                    'payrollSlips' => $this->payrollSlips(),
+                    'auditLogs' => $this->auditLogs(),
+                    'users' => $this->users(),
+                    'rolePermissions' => $this->rolePermissions(),
+                ];
+                break;
+        }
+
+        return response()->json($payload);
+    }
+
+    private function emptyPayload(): array
+    {
+        return [
+            'beneficiaries' => [],
+            'harvestRecords' => [],
+            'productionRecords' => [],
+            'dailyBoxes' => [],
+            'inventoryItems' => [],
+            'stockTransactions' => [],
+            'borrowedMaterials' => [],
+            'creditTransactions' => [],
+            'restockRequests' => [],
+            'payrollSlips' => [],
+            'auditLogs' => [],
+            'users' => [],
+            'rolePermissions' => [],
+        ];
     }
 
     private function harvestRecords(): array

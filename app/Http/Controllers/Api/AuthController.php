@@ -7,7 +7,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Facades\Schema;
+use Illuminate\Database\QueryException;
 use Illuminate\Validation\ValidationException;
 
 class AuthController extends Controller
@@ -50,31 +50,35 @@ class AuthController extends Controller
 
     private function findUserByEmail(string $email): ?object
     {
-        if ($this->usesExistingDarbcoSchema()) {
+        try {
             return DB::table('users')
                 ->leftJoin('roles', 'roles.id', '=', 'users.role_id')
                 ->whereRaw('lower(users.email) = ?', [$email])
                 ->selectRaw('users.id, users.full_name as name, users.email, users.password_hash, roles.code as role, users.is_active as active')
                 ->first();
+        } catch (QueryException) {
+            // Fall back to the earlier demo schema if the current DARBCO schema is not present.
         }
 
-        if (! Schema::hasColumn('users', 'password')) {
+        try {
+            return DB::table('users')
+                ->whereRaw('lower(email) = ?', [$email])
+                ->selectRaw('id, name, email, password as password_hash, role, active')
+                ->first();
+        } catch (QueryException) {
             return null;
         }
-
-        return DB::table('users')
-            ->whereRaw('lower(email) = ?', [$email])
-            ->selectRaw('id, name, email, password as password_hash, role, active')
-            ->first();
     }
 
     private function markLastLogin(int $userId): void
     {
-        if (! Schema::hasColumn('users', 'last_login_at')) {
-            return;
-        }
-
-        DB::table('users')->where('id', $userId)->update(['last_login_at' => now()]);
+        app()->terminating(function () use ($userId) {
+            try {
+                DB::table('users')->where('id', $userId)->update(['last_login_at' => now()]);
+            } catch (QueryException) {
+                // Older schemas may not have last_login_at; login should still succeed.
+            }
+        });
     }
 
     private function passwordMatches(string $password, string $hash): bool
@@ -90,11 +94,4 @@ class AuthController extends Controller
         return password_verify($password, $hash);
     }
 
-    private function usesExistingDarbcoSchema(): bool
-    {
-        return Schema::hasTable('roles')
-            && Schema::hasColumn('users', 'full_name')
-            && Schema::hasColumn('users', 'password_hash')
-            && Schema::hasColumn('users', 'role_id');
-    }
 }

@@ -18,6 +18,8 @@ import {
   LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip, BarChart, Bar, CartesianGrid,
   PieChart, Pie, Cell,
 } from "recharts";
+import { jsPDF } from "jspdf";
+import autoTable from "jspdf-autotable";
 import { Role, ROLE_LABELS, User } from "../types";
 import { toast } from "sonner";
 import { useAppData } from "../../lib/app-data-context";
@@ -31,6 +33,7 @@ import {
   updateUserAccount,
   updateUserAccountStatus,
 } from "../../lib/api";
+import { currentSystemDateTime, databaseDateKey, formatDatabaseDateTime, formatSystemDate, SYSTEM_TIME_ZONE, todaySystemDate } from "../../lib/date-time";
 import { usePersistentState } from "../../lib/use-persistent-state";
 
 interface Props { user: User; onLogout: () => void }
@@ -94,7 +97,7 @@ const HARVEST_7: { day: string; boxes: number }[] = [];
 
 const TOP_WORKERS: { rank: number; name: string; output: number }[] = [];
 
-const MANILA_TIME_ZONE = "Asia/Manila";
+const MANILA_TIME_ZONE = SYSTEM_TIME_ZONE;
 
 export function ManagerAdminDashboard({ user, onLogout }: Props) {
   const { data } = useAppData();
@@ -212,7 +215,7 @@ export function ManagerAdminDashboard({ user, onLogout }: Props) {
       {active === "payroll" && <PayrollApprovals payroll={payroll} onApprove={approvePayroll} onReturn={returnPayroll} />}
       {active === "payroll-history" && <PayrollHistory payroll={payroll} />}
       {active === "restock" && <RestockRequests restock={restock} onApprove={approveRestock} onReturn={returnRestock} />}
-      {active === "reports" && <Reports payroll={payroll} restock={restock} users={users} audit={audit} inventoryItems={data?.inventoryItems || []} />}
+      {active === "reports" && <Reports payroll={payroll} restock={restock} users={users} audit={audit} inventoryItems={data?.inventoryItems || []} productionRecords={data?.productionRecords || []} />}
       {active === "audit" && <AuditHistory audit={audit} />}
       {active === "users" && <UserManagement users={users} setUsers={setUsers} setAudit={setAudit} adminId={user.id} adminName={user.name} />}
       {active === "settings" && <SettingsRoleAccess permissions={rolePermissions} setPermissions={setRolePermissions} adminId={user.id} adminName={user.name} />}
@@ -223,8 +226,7 @@ export function ManagerAdminDashboard({ user, onLogout }: Props) {
 function now() { return new Date().toISOString(); }
 
 function formatDateLabel(value: string) {
-  const date = new Date(`${value}T00:00:00`);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+  return formatSystemDate(value);
 }
 
 function parseAuditTimestamp(value: string) {
@@ -283,8 +285,8 @@ function mapAccount(row: any): Account {
     username: row.username || "",
     role: normalizeRole(row.role),
     active: row.active === true || row.active === 1 || row.active === "1",
-    lastLogin: row.last_login_at || "-",
-    createdAt: row.created_at || "-",
+    lastLogin: row.last_login_at ? formatDatabaseDateTime(row.last_login_at) : "-",
+    createdAt: row.created_at ? formatDatabaseDateTime(row.created_at) : "-",
     contact: row.contact_information || row.contact || "",
     remarks: row.remarks || "",
   };
@@ -350,7 +352,7 @@ function mapPayrollRow(row: any): PayrollRow {
     dbId: Number(row.id) || undefined,
     id: String(row.slip_no ?? row.id),
     name: row.beneficiary_name ?? "",
-    date: formatDateLabel(String(row.approved_at ?? row.validated_at ?? row.submitted_at ?? row.created_at ?? "").slice(0, 10)),
+    date: formatDateLabel(databaseDateKey(row.approved_at ?? row.validated_at ?? row.submitted_at ?? row.created_at)),
     period: row.payroll_period ?? "",
     gross: Number(row.gross_amount ?? row.gross_income ?? 0),
     deductions: Number(row.total_deductions ?? 0),
@@ -371,7 +373,7 @@ function mapRestockRow(row: any): RestockRow {
     reorder: Number(row.minimum_stock ?? 0),
     qty: Number(row.requested_quantity ?? row.quantity ?? 0),
     requestedBy: row.requested_by_name ?? "Inventory Bookkeeper",
-    date: formatDateLabel(String(row.requested_at ?? row.created_at ?? new Date().toISOString()).slice(0, 10)),
+    date: formatDateLabel(databaseDateKey(row.requested_at ?? row.created_at ?? todaySystemDate())),
     status: row.status === "Pending" ? "Pending Review" : row.status === "Rejected" ? "Returned" : row.status === "Returned" ? "Returned" : row.status === "Cancelled" ? "Returned" : "Approved",
     returnReason: row.review_notes ?? "",
   };
@@ -552,7 +554,7 @@ function ProductionSummary({ records }: { records: ProductionSummaryRow[] }) {
   const today = records[0] ?? { date: "", first: "", last: "", classA: 0, classB: 0, special: 0, total: 0 };
   const totalToday = today.total;
   const pct = (n: number) => totalToday ? `${Math.round((n / totalToday) * 100)}%` : "0%";
-  const dateLabel = today.date ? new Date(today.date).toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" }) : "No production records";
+  const dateLabel = today.date ? formatSystemDate(today.date, { month: "short", day: "2-digit", year: "numeric" }) : "No production records";
 
   return (
     <div className="space-y-4">
@@ -1225,7 +1227,7 @@ function OperationsMonitor() {
   );
 }
 
-function Reports({ payroll, restock, users, audit, inventoryItems }: { payroll: PayrollRow[]; restock: RestockRow[]; users: Account[]; audit: AuditRow[]; inventoryItems: any[] }) {
+function Reports({ payroll, restock, users, audit, inventoryItems, productionRecords }: { payroll: PayrollRow[]; restock: RestockRow[]; users: Account[]; audit: AuditRow[]; inventoryItems: any[]; productionRecords: any[] }) {
   const [selected, setSelected] = useState<{ title: string; desc: string } | null>(null);
   const [dateFrom, setDateFrom] = useState("2026-05-01");
   const [dateTo, setDateTo] = useState("2026-06-30");
@@ -1243,6 +1245,7 @@ function Reports({ payroll, restock, users, audit, inventoryItems }: { payroll: 
   const validationRecords = audit.filter((row) => row.module === "Payroll" && row.action === "Validated");
   const approvalRecords = audit.filter((row) => row.action === "Approved");
   const materialCreditRecords: { id: string; type: string; beneficiary: string; date: string; amount: number; status: string }[] = [];
+  const selectedReport = selected ? buildManagerReport(selected.title, selected.desc, { payroll, restock, users, audit, inventoryItems, productionRecords, materialCreditRecords }) : null;
   const generatedDocuments: { title: string; type: string; records: number; date: string; status: string; coverage: string }[] = [];
   const filteredDocuments = generatedDocuments.filter((doc) => {
     if (dateFrom && doc.date < dateFrom) return false;
@@ -1382,7 +1385,7 @@ function Reports({ payroll, restock, users, audit, inventoryItems }: { payroll: 
               <Button
                 variant="ghost"
                 size="sm"
-                className="mt-auto h-8 justify-start self-start px-0 text-emerald-700 hover:bg-transparent hover:text-emerald-800"
+                className="mt-auto h-8 justify-end self-end px-0 text-emerald-700 hover:bg-transparent hover:text-emerald-800"
                 onClick={(event) => { event.stopPropagation(); setSelected(r); }}
               >
                 View Report <ArrowRight className="ml-1 h-3.5 w-3.5 transition group-hover:translate-x-0.5" />
@@ -1424,7 +1427,7 @@ function Reports({ payroll, restock, users, audit, inventoryItems }: { payroll: 
                       <Badge className={doc.status === "Needs Attention" ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-800"}>{doc.status}</Badge>
                     </TableCell>
                     <TableCell>
-                      <Button size="sm" variant="outline" onClick={() => toast.success(`${doc.title} generated`)}>
+                      <Button size="sm" variant="outline" onClick={() => setSelected(cards.find((card) => card.title === doc.title) ?? { title: doc.title, desc: doc.coverage })}>
                         Generate
                       </Button>
                     </TableCell>
@@ -1437,116 +1440,50 @@ function Reports({ payroll, restock, users, audit, inventoryItems }: { payroll: 
       </Card>
 
       <Dialog open={!!selected} onOpenChange={(open) => !open && setSelected(null)}>
-        <DialogContent className="!max-w-[95vw] w-[95vw] sm:!max-w-[680px]">
-          {selected && (
+        <DialogContent className="max-h-[88vh] w-[calc(100vw-2rem)] max-w-5xl overflow-hidden p-0">
+          {selected && selectedReport && (
             <>
-              <DialogHeader>
+              <DialogHeader className="border-b px-6 py-4">
                 <DialogTitle className="flex items-center gap-2">
-                  <FileBarChart2 className="h-5 w-5 text-emerald-700" />{selected.title}
+                  <FileBarChart2 className="h-5 w-5 text-emerald-700" />{selectedReport.title}
                 </DialogTitle>
               </DialogHeader>
-              <div className="space-y-4">
-                <p className="text-sm text-muted-foreground">{selected.desc}</p>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <ReportMetric label="Records" value={selected.title === "Payroll Report" ? String(approvedPayroll.length) : selected.title === "Administrative Report" ? String(users.length) : "24"} />
-                  <ReportMetric label="Current Month" value="June 2026" />
-                  <ReportMetric
-                    label={selected.title === "Payroll Report" ? "Approved Net Pay" : selected.title === "Administrative Report" ? "Active / Inactive" : "Status"}
-                    value={selected.title === "Payroll Report" ? `PHP ${approvedPayrollTotal.toLocaleString()}` : selected.title === "Administrative Report" ? `${activeUsers} / ${inactiveUsers}` : "Ready"}
-                  />
-                </div>
-                {selected.title === "Administrative Report" ? (
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Report Section</TableHead>
-                        <TableHead>Coverage</TableHead>
-                        <TableHead className="text-right">Records</TableHead>
-                        <TableHead>Status</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      <TableRow>
-                        <TableCell>User Accounts</TableCell>
-                        <TableCell>Names, roles, contacts, account status, and remarks</TableCell>
-                        <TableCell className="text-right">{users.length}</TableCell>
-                        <TableCell><Badge className="bg-emerald-100 text-emerald-800">Available</Badge></TableCell>
-                      </TableRow>
-                      <TableRow>
-                        <TableCell>Role Distribution</TableCell>
-                        <TableCell>{Object.values(ROLE_LABELS).join(", ")}</TableCell>
-                        <TableCell className="text-right">{Object.keys(ROLE_LABELS).length}</TableCell>
-                        <TableCell><Badge className="bg-sky-100 text-sky-800">Synced</Badge></TableCell>
-                      </TableRow>
-                      <TableRow>
-                        <TableCell>Login History</TableCell>
-                        <TableCell>Most recent login timestamp per account</TableCell>
-                        <TableCell className="text-right">{users.filter((user) => user.lastLogin && user.lastLogin !== "—" && user.lastLogin !== "-").length}</TableCell>
-                        <TableCell><Badge className="bg-emerald-100 text-emerald-800">Available</Badge></TableCell>
-                      </TableRow>
-                      <TableRow>
-                        <TableCell>Audit Records</TableCell>
-                        <TableCell>Admin account changes and operational activities</TableCell>
-                        <TableCell className="text-right">{audit.length}</TableCell>
-                        <TableCell><Badge className="bg-emerald-100 text-emerald-800">Available</Badge></TableCell>
-                      </TableRow>
-                    </TableBody>
-                  </Table>
-                ) : selected.title === "Payroll Report" ? (
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Payroll Slip</TableHead>
-                        <TableHead>Beneficiary</TableHead>
-                        <TableHead>Period</TableHead>
-                        <TableHead className="text-right">Approved Net Pay</TableHead>
-                        <TableHead>Status</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {approvedPayroll.length === 0 ? (
+              <div className="max-h-[calc(88vh-76px)] overflow-y-auto px-6 py-4">
+                <div className="space-y-4">
+                  <p className="text-sm text-muted-foreground">{selectedReport.desc}</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <ReportMetric label="Generated At" value={currentSystemDateTime()} />
+                    <ReportMetric label="Records" value={String(selectedReport.rows.length)} />
+                    <ReportMetric label={selectedReport.metricLabel} value={selectedReport.metricValue} />
+                  </div>
+                  <div className="rounded-md border overflow-x-auto">
+                    <Table>
+                      <TableHeader>
                         <TableRow>
-                          <TableCell colSpan={5} className="text-center text-muted-foreground">No approved payrolls are available for this report.</TableCell>
+                          {selectedReport.columns.map((column) => <TableHead key={column}>{column}</TableHead>)}
                         </TableRow>
-                      ) : (
-                        approvedPayroll.map((row) => (
-                          <TableRow key={row.id}>
-                            <TableCell>{row.id}</TableCell>
-                            <TableCell>{row.name}</TableCell>
-                            <TableCell className="text-xs">{row.period}</TableCell>
-                            <TableCell className="text-right font-semibold text-emerald-700">PHP {row.net.toLocaleString()}</TableCell>
-                            <TableCell><Badge className="bg-emerald-100 text-emerald-800">Approved</Badge></TableCell>
+                      </TableHeader>
+                      <TableBody>
+                        {selectedReport.rows.length === 0 ? (
+                          <TableRow>
+                            <TableCell colSpan={selectedReport.columns.length} className="py-8 text-center text-muted-foreground">No records are available for this report.</TableCell>
                           </TableRow>
-                        ))
-                      )}
-                    </TableBody>
-                  </Table>
-                ) : (
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Report Section</TableHead>
-                        <TableHead>Coverage</TableHead>
-                        <TableHead>Status</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      <TableRow>
-                        <TableCell>{selected.title}</TableCell>
-                        <TableCell>Current cooperative records</TableCell>
-                        <TableCell><Badge className="bg-emerald-100 text-emerald-800">Available</Badge></TableCell>
-                      </TableRow>
-                      <TableRow>
-                        <TableCell>Audit Trail</TableCell>
-                        <TableCell>Recent manager actions</TableCell>
-                        <TableCell><Badge className="bg-sky-100 text-sky-800">Synced</Badge></TableCell>
-                      </TableRow>
-                    </TableBody>
-                  </Table>
-                )}
-                <div className="flex justify-end gap-2">
-                  <Button variant="outline" onClick={() => setSelected(null)}>Close</Button>
-                  <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={() => toast.success(`${selected.title} opened`)}>Open Report</Button>
+                        ) : (
+                          selectedReport.rows.map((row, rowIndex) => (
+                            <TableRow key={`${selectedReport.title}-${rowIndex}`}>
+                              {row.map((cell, cellIndex) => <TableCell key={`${rowIndex}-${cellIndex}`}>{cell}</TableCell>)}
+                            </TableRow>
+                          ))
+                        )}
+                      </TableBody>
+                    </Table>
+                  </div>
+                  <div className="sticky bottom-0 -mx-6 flex flex-wrap justify-end gap-2 border-t bg-white px-6 py-3">
+                    <Button variant="outline" onClick={() => setSelected(null)}>Close</Button>
+                    <Button variant="outline" onClick={() => printManagerReport(selectedReport)}>Print</Button>
+                    <Button variant="outline" onClick={() => exportReportCsv(selectedReport)}>Export CSV</Button>
+                    <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={() => exportReportPdf(selectedReport)}>Export PDF</Button>
+                  </div>
                 </div>
               </div>
             </>
@@ -1564,6 +1501,230 @@ function ReportMetric({ label, value }: { label: string; value: string }) {
       <div className="font-semibold text-slate-900">{value}</div>
     </div>
   );
+}
+
+interface ManagerReport {
+  title: string;
+  desc: string;
+  metricLabel: string;
+  metricValue: string;
+  columns: string[];
+  rows: string[][];
+}
+
+function buildManagerReport(
+  title: string,
+  desc: string,
+  data: { payroll: PayrollRow[]; restock: RestockRow[]; users: Account[]; audit: AuditRow[]; inventoryItems: any[]; productionRecords: any[]; materialCreditRecords: { id: string; type: string; beneficiary: string; date: string; amount: number; status: string }[] },
+): ManagerReport {
+  if (title === "Production Report") {
+    const rows = data.productionRecords.map((record: any) => [
+      String(record.record_no ?? record.id ?? "-"),
+      String(record.beneficiary_name ?? record.beneficiary ?? "-"),
+      String(record.packing_date ?? record.production_date ?? record.harvest_date ?? "-").slice(0, 10),
+      String(Number(record.class_a_big_hands ?? 0) + Number(record.class_a_small_hands ?? 0) + Number(record.class_a_cps ?? 0)),
+      String(Number(record.class_b_big_hands ?? 0) + Number(record.class_b_small_hands ?? 0) + Number(record.class_b_cps ?? 0)),
+      String(Number(record.special_total ?? record.special_product ?? 0)),
+    ]);
+    return { title, desc, metricLabel: "Production Records", metricValue: String(rows.length), columns: ["Record No.", "Beneficiary", "Date", "Class A", "Class B", "Special"], rows };
+  }
+
+  if (title === "Inventory Report") {
+    const rows = data.inventoryItems.map((item: any) => [
+      String(item.code ?? item.material_id ?? item.item_code ?? item.id ?? "-"),
+      String(item.name ?? item.item_name ?? "-"),
+      String(item.category ?? "Not specified"),
+      `${Number(item.on_hand ?? 0).toLocaleString()} ${item.unit ?? ""}`.trim(),
+      String(item.active === false || item.active === 0 ? "Inactive" : Number(item.on_hand ?? 0) <= 0 ? "Out of Stock" : "Available"),
+    ]);
+    return { title, desc, metricLabel: "Inventory Items", metricValue: String(rows.length), columns: ["Item Code", "Item", "Category", "On Hand", "Status"], rows };
+  }
+
+  if (title === "Payroll Report") {
+    const rows = data.payroll.map((row) => [row.id, row.name, row.period, managerMoney(row.gross), managerMoney(row.deductions), managerMoney(row.net), row.status]);
+    return { title, desc, metricLabel: "Net Pay Total", metricValue: managerMoney(data.payroll.reduce((sum, row) => sum + row.net, 0)), columns: ["Slip No.", "Beneficiary", "Period", "Gross", "Deductions", "Net", "Status"], rows };
+  }
+
+  if (title === "Credits / Restock Report") {
+    const rows = data.restock.map((row) => [row.id, row.item, row.category, String(row.currentStock), String(row.reorder), String(row.qty), row.status]);
+    return { title, desc, metricLabel: "Restock Requests", metricValue: String(rows.length), columns: ["Request ID", "Item", "Category", "Current Stock", "Reorder Point", "Requested Qty", "Status"], rows };
+  }
+
+  if (title === "Validation / Approval Report") {
+    const rows = data.audit
+      .filter((row) => row.module === "Payroll" || row.action === "Approved" || row.action === "Returned")
+      .map((row) => [formatAuditTimestamp(row.ts), row.user, roleLabel(row.role), row.action, row.module, row.description]);
+    return { title, desc, metricLabel: "Activities", metricValue: String(rows.length), columns: ["Timestamp", "User", "Role", "Action", "Module", "Details"], rows };
+  }
+
+  if (title === "Financial Summary") {
+    const gross = data.payroll.reduce((sum, row) => sum + row.gross, 0);
+    const deductions = data.payroll.reduce((sum, row) => sum + row.deductions, 0);
+    const net = data.payroll.reduce((sum, row) => sum + row.net, 0);
+    return {
+      title,
+      desc,
+      metricLabel: "Net Total",
+      metricValue: managerMoney(net),
+      columns: ["Section", "Amount", "Notes"],
+      rows: [["Gross Payroll", managerMoney(gross), "Total gross income"], ["Deductions", managerMoney(deductions), "Credits and authorized deductions"], ["Net Payroll", managerMoney(net), "Amount after deductions"]],
+    };
+  }
+
+  const rows = [
+    ["User Accounts", "Names, roles, contacts, account status, and remarks", String(data.users.length), "Available"],
+    ["Role Distribution", Object.values(ROLE_LABELS).join(", "), String(Object.keys(ROLE_LABELS).length), "Synced"],
+    ["Login History", "Most recent login timestamp per account", String(data.users.filter((user) => user.lastLogin && user.lastLogin !== "-" && user.lastLogin !== "—").length), "Available"],
+    ["Audit Records", "Admin account changes and operational activities", String(data.audit.length), "Available"],
+  ];
+  return { title, desc, metricLabel: "Active / Inactive", metricValue: `${data.users.filter((user) => user.active).length} / ${data.users.filter((user) => !user.active).length}`, columns: ["Report Section", "Coverage", "Records", "Status"], rows };
+}
+
+function exportReportCsv(report: ManagerReport) {
+  const csvRows = [
+    [report.title],
+    [report.desc],
+    ["Generated At", currentSystemDateTime()],
+    [report.metricLabel, report.metricValue],
+    [],
+    report.columns,
+    ...report.rows,
+  ];
+  const csv = csvRows.map((row) => row.map(csvCell).join(",")).join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${report.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}.csv`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function exportReportPdf(report: ManagerReport) {
+  const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const margin = 36;
+  const generatedAt = currentSystemDateTime();
+
+  doc.setTextColor(4, 120, 87);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(18);
+  doc.text(report.title, margin, 42);
+
+  doc.setDrawColor(5, 150, 105);
+  doc.setLineWidth(1.5);
+  doc.line(margin, 56, pageWidth - margin, 56);
+
+  doc.setTextColor(71, 85, 105);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10);
+  const descLines = doc.splitTextToSize(report.desc, pageWidth - (margin * 2));
+  doc.text(descLines, margin, 76);
+
+  const metaTop = 98;
+  const boxGap = 10;
+  const boxWidth = (pageWidth - (margin * 2) - (boxGap * 2)) / 3;
+  drawPdfMetaBox(doc, margin, metaTop, boxWidth, "Generated At", generatedAt);
+  drawPdfMetaBox(doc, margin + boxWidth + boxGap, metaTop, boxWidth, report.metricLabel, report.metricValue);
+  drawPdfMetaBox(doc, margin + (boxWidth + boxGap) * 2, metaTop, boxWidth, "Records", String(report.rows.length));
+
+  autoTable(doc, {
+    startY: metaTop + 58,
+    head: [report.columns],
+    body: report.rows.length ? report.rows : [["No records are available for this report.", ...Array(Math.max(0, report.columns.length - 1)).fill("")]],
+    styles: {
+      font: "helvetica",
+      fontSize: 8,
+      cellPadding: 6,
+      textColor: [15, 23, 42],
+      lineColor: [226, 232, 240],
+      lineWidth: 0.4,
+      valign: "top",
+    },
+    headStyles: {
+      fillColor: [248, 250, 252],
+      textColor: [15, 23, 42],
+      fontStyle: "bold",
+      lineColor: [226, 232, 240],
+    },
+    alternateRowStyles: {
+      fillColor: [252, 253, 255],
+    },
+    margin: { left: margin, right: margin },
+    didDrawPage: () => {
+      const pageNumber = doc.getNumberOfPages();
+      doc.setFontSize(8);
+      doc.setTextColor(100, 116, 139);
+      doc.text(`DARBCO Agri Workflow - ${report.title}`, margin, doc.internal.pageSize.getHeight() - 18);
+      doc.text(`Page ${pageNumber}`, pageWidth - margin - 32, doc.internal.pageSize.getHeight() - 18);
+    },
+  });
+
+  doc.save(`${reportFileName(report)}.pdf`);
+}
+
+function printManagerReport(report: ManagerReport) {
+  const printWindow = window.open("", "_blank", "width=900,height=700");
+  if (!printWindow) return;
+  const headers = report.columns.map((column) => `<th>${htmlCell(column)}</th>`).join("");
+  const rows = report.rows.length
+    ? report.rows.map((row) => `<tr>${row.map((cell) => `<td>${htmlCell(cell)}</td>`).join("")}</tr>`).join("")
+    : `<tr><td colspan="${report.columns.length}" class="empty">No records are available for this report.</td></tr>`;
+
+  printWindow.document.write(`<!doctype html><html><head><title>${htmlCell(report.title)}</title><style>
+    body{font-family:Arial,sans-serif;color:#0f172a;margin:28px}
+    h1{color:#047857;font-size:22px;margin:0 0 6px}
+    .header{border-bottom:2px solid #059669;margin-bottom:18px;padding-bottom:12px}
+    .desc{color:#475569;margin:0}.meta{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:18px 0}
+    .box{border:1px solid #dbe4ee;border-radius:6px;padding:10px}.label{color:#64748b;font-size:11px;text-transform:uppercase}
+    table{width:100%;border-collapse:collapse;font-size:12px}th,td{border-bottom:1px solid #e2e8f0;padding:8px;text-align:left;vertical-align:top}
+    th{background:#f8fafc}.empty{text-align:center;color:#64748b;padding:24px}@page{margin:18mm}
+  </style></head><body><div class="header"><h1>${htmlCell(report.title)}</h1><p class="desc">${htmlCell(report.desc)}</p></div>
+  <div class="meta"><div class="box"><div class="label">Generated At</div><div>${htmlCell(currentSystemDateTime())}</div></div><div class="box"><div class="label">${htmlCell(report.metricLabel)}</div><div>${htmlCell(report.metricValue)}</div></div><div class="box"><div class="label">Records</div><div>${report.rows.length}</div></div></div>
+  <table><thead><tr>${headers}</tr></thead><tbody>${rows}</tbody></table></body></html>`);
+  printWindow.document.close();
+  printWindow.focus();
+  printWindow.print();
+  printWindow.close();
+}
+
+function managerMoney(value: number) {
+  return `PHP ${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function drawPdfMetaBox(doc: jsPDF, x: number, y: number, width: number, label: string, value: string) {
+  doc.setDrawColor(219, 228, 238);
+  doc.setFillColor(248, 250, 252);
+  doc.roundedRect(x, y, width, 42, 5, 5, "FD");
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8);
+  doc.setTextColor(100, 116, 139);
+  doc.text(label.toUpperCase(), x + 10, y + 15);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  doc.setTextColor(15, 23, 42);
+  doc.text(doc.splitTextToSize(value, width - 20), x + 10, y + 30);
+}
+
+function csvCell(value: string) {
+  return `"${String(value).replaceAll('"', '""')}"`;
+}
+
+function htmlCell(value: string) {
+  return String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
+}
+
+function reportFileName(report: ManagerReport) {
+  return report.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
+function downloadBlob(blob: Blob, fileName: string) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  link.click();
+  URL.revokeObjectURL(url);
 }
 
 function AuditHistory({ audit }: { audit: AuditRow[] }) {

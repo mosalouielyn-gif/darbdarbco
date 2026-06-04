@@ -33,6 +33,8 @@ import {
   updateProductionBoxRecord,
   updateHarvestRecord,
 } from "../../lib/api";
+import { useAppData } from "../../lib/app-data-context";
+import { addDaysSystemDate, formatSystemDate, todaySystemDate } from "../../lib/date-time";
 import { usePersistentState } from "../../lib/use-persistent-state";
 
 interface Props { user: User; onLogout: () => void }
@@ -67,8 +69,12 @@ interface HarvestRecord {
 type ProductionRecord = typeof productionRecords[number];
 
 export function ProductionClerkDashboard({ user, onLogout }: Props) {
+  const { data } = useAppData();
   const [active, setActive] = usePersistentState("darbco.productionClerk.active", "dashboard");
   const [prodTab, setProdTab] = usePersistentState("darbco.productionClerk.productionTab", "harvest");
+  const harvestData = (data?.harvestRecords ?? []).map(mapHarvestRecord);
+  const productionData = (data?.productionRecords ?? []).map(mapProductionRecord);
+  const beneficiariesCount = data?.beneficiaries?.length ?? 0;
 
   const goToTab = (tab: string) => {
     setProdTab(tab);
@@ -77,26 +83,33 @@ export function ProductionClerkDashboard({ user, onLogout }: Props) {
 
   return (
     <DarbcoLayout user={user} onLogout={onLogout} navItems={NAV} active={active} onChange={setActive}>
-      {active === "dashboard" && <Dashboard goToTab={goToTab} />}
+      {active === "dashboard" && <Dashboard goToTab={goToTab} productionData={productionData} harvestData={harvestData} beneficiariesCount={beneficiariesCount} />}
       {active === "production" && <ProductionRecords tab={prodTab} setTab={setProdTab} user={user} />}
     </DarbcoLayout>
   );
 }
 
-function Dashboard({ goToTab }: { goToTab: (tab: string) => void }) {
+function Dashboard({ goToTab, productionData, harvestData, beneficiariesCount }: {
+  goToTab: (tab: string) => void;
+  productionData: ProductionRecord[];
+  harvestData: HarvestRecord[];
+  beneficiariesCount: number;
+}) {
+  const metrics = getDashboardMetrics(productionData, harvestData, beneficiariesCount);
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="flex items-center gap-2"><LayoutDashboard className="h-6 w-6 text-emerald-700" />Production Clerk Dashboard</h1>
         </div>
-        <div className="text-muted-foreground">May 30, 2026</div>
+        <div className="text-muted-foreground">{formatSystemDate()}</div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <KpiCard icon={<Package />} color="emerald" label="Boxes Today" value="1,248" delta="+8.2% vs yesterday" onClick={() => goToTab("production")} />
-        <KpiCard icon={<Users />} color="sky" label="Total Beneficiaries" value="42" delta="active today" onClick={() => goToTab("harvest")} />
-        <KpiCard icon={<Boxes />} color="amber" label="Total Boxes This Month" value="25,624" delta="+12.4% vs last month" />
+        <KpiCard icon={<Package />} color="emerald" label="Boxes Today" value={metrics.boxesToday.toLocaleString()} delta={metrics.boxesTodayDelta} onClick={() => goToTab("production")} />
+        <KpiCard icon={<Users />} color="sky" label="Total Beneficiaries" value={metrics.totalBeneficiaries.toLocaleString()} delta={`${metrics.activeToday.toLocaleString()} active today`} onClick={() => goToTab("harvest")} />
+        <KpiCard icon={<Boxes />} color="amber" label="Total Boxes This Month" value={metrics.boxesThisMonth.toLocaleString()} delta={metrics.monthDelta} />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -180,9 +193,11 @@ function Dashboard({ goToTab }: { goToTab: (tab: string) => void }) {
       </div>
 
       <Card>
-        <CardHeader className="flex-row items-center justify-between pb-2">
-          <CardTitle className="text-base flex items-center gap-2"><FileText className="h-4 w-4 text-emerald-700" />Top Beneficiaries Today</CardTitle>
-          <Button variant="link" className="text-emerald-700" onClick={() => goToTab("harvest")}>View All →</Button>
+        <CardHeader className="pb-2">
+          <div className="flex w-full items-center justify-between gap-3">
+            <CardTitle className="text-base flex items-center gap-2"><FileText className="h-4 w-4 text-emerald-700" />Top Beneficiaries Today</CardTitle>
+            <Button variant="link" className="shrink-0 px-0 text-emerald-700" onClick={() => goToTab("harvest")}>View All →</Button>
+          </div>
         </CardHeader>
         <CardContent>
           <Table>
@@ -224,6 +239,52 @@ function KpiCard({ icon, color, label, value, delta, onClick }: any) {
       </CardContent>
     </Card>
   );
+}
+
+function getDashboardMetrics(productionData: ProductionRecord[], harvestData: HarvestRecord[], beneficiariesCount: number) {
+  const today = todaySystemDate();
+  const yesterday = addDaysSystemDate(today, -1);
+  const currentMonth = today.slice(0, 7);
+  const lastMonth = previousMonthKey(currentMonth);
+
+  const boxesToday = sumProductionBoxes(productionData.filter((record) => record.date === today));
+  const boxesYesterday = sumProductionBoxes(productionData.filter((record) => record.date === yesterday));
+  const boxesThisMonth = sumProductionBoxes(productionData.filter((record) => record.date.slice(0, 7) === currentMonth));
+  const boxesLastMonth = sumProductionBoxes(productionData.filter((record) => record.date.slice(0, 7) === lastMonth));
+  const activeToday = new Set([
+    ...productionData.filter((record) => record.date === today).map((record) => record.beneficiary).filter(Boolean),
+    ...harvestData.filter((record) => record.date === today).map((record) => record.beneficiary).filter(Boolean),
+  ]).size;
+
+  return {
+    boxesToday,
+    boxesTodayDelta: comparisonLabel(boxesToday, boxesYesterday, "vs yesterday"),
+    totalBeneficiaries: beneficiariesCount || new Set(harvestData.map((record) => record.beneficiary).filter(Boolean)).size,
+    activeToday,
+    boxesThisMonth,
+    monthDelta: comparisonLabel(boxesThisMonth, boxesLastMonth, "vs last month"),
+  };
+}
+
+function sumProductionBoxes(records: ProductionRecord[]) {
+  return records.reduce((sum, record) => sum + totalProductionBoxes(record), 0);
+}
+
+function totalProductionBoxes(record: ProductionRecord) {
+  return record.classA_big + record.classA_small + record.classA_cp + record.classB_big + record.classB_small + record.classB_cp + record.special;
+}
+
+function comparisonLabel(current: number, previous: number, label: string) {
+  if (previous <= 0) return current > 0 ? `New ${label}` : `0 ${label}`;
+  const percent = ((current - previous) / previous) * 100;
+  const sign = percent > 0 ? "+" : "";
+  return `${sign}${percent.toFixed(1)}% ${label}`;
+}
+
+function previousMonthKey(monthKey: string) {
+  const [year, month] = monthKey.split("-").map(Number);
+  const previous = new Date(year, month - 2, 1);
+  return `${previous.getFullYear()}-${String(previous.getMonth() + 1).padStart(2, "0")}`;
 }
 
 function ProductionRecords({ tab, setTab, user }: { tab: string; setTab: (t: string) => void; user: User }) {
@@ -678,7 +739,7 @@ function mapHarvestRecord(record: any): HarvestRecord {
 }
 
 function mapProductionRecord(record: any): ProductionRecord {
-  const date = record.production_date || record.date || todayLocalDate();
+  const date = record.production_date || record.packing_date || record.harvest_date || record.date || todayLocalDate();
   return {
     id: Number(record.id),
     date,
@@ -689,7 +750,7 @@ function mapProductionRecord(record: any): ProductionRecord {
     classB_big: Number(record.class_b_big_hands ?? record.classB_big ?? 0),
     classB_small: Number(record.class_b_small_hands ?? record.classB_small ?? 0),
     classB_cp: Number(record.class_b_cps ?? record.classB_cp ?? 0),
-    special: Number(record.special_product ?? record.special ?? 0),
+    special: Number(record.special_product ?? record.special_total ?? record.special ?? 0),
     defects_11: Number(record.defects_11_weeks ?? record.defects_11 ?? 0),
     defects_12: Number(record.defects_12_weeks ?? record.defects_12 ?? 0),
     defects_13: Number(record.defects_13_weeks ?? record.defects_13 ?? 0),
@@ -775,8 +836,7 @@ function nextId<T extends { id: number }>(records: T[]) {
 }
 
 function formatDateLabel(value: string) {
-  const date = new Date(`${value}T00:00:00`);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+  return formatSystemDate(value);
 }
 
 function parseDateInput(value: string) {
@@ -795,7 +855,7 @@ function formatLocalDate(date: Date) {
 }
 
 function todayLocalDate() {
-  return formatLocalDate(new Date());
+  return todaySystemDate();
 }
 
 function HarvestDialog({ open, onOpenChange, record, onSave }: {

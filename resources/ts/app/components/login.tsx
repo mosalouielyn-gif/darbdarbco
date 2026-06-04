@@ -5,7 +5,7 @@ import { Label } from "./ui/label";
 import { Button } from "./ui/button";
 import { Alert, AlertDescription } from "./ui/alert";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
-import { Leaf, ShieldCheck } from "lucide-react";
+import { Leaf, Loader2, ShieldCheck } from "lucide-react";
 import { User } from "./types";
 import { login } from "../lib/api";
 
@@ -34,6 +34,7 @@ export function Login({ onLogin }: LoginProps) {
 
     try {
       const user = await login(email, password);
+      clearDashboardNavigationState();
       onLogin(user);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Invalid credentials.");
@@ -121,8 +122,14 @@ export function Login({ onLogin }: LoginProps) {
                 </Alert>
               )}
               <Button type="submit" className="w-full bg-emerald-700 hover:bg-emerald-800" disabled={loading}>
+                {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 {loading ? "Signing in..." : "Sign in"}
               </Button>
+              {loading && (
+                <p className="text-center text-xs text-muted-foreground">
+                  Preparing your dashboard...
+                </p>
+              )}
             </form>
 
           </CardContent>
@@ -130,4 +137,17 @@ export function Login({ onLogin }: LoginProps) {
       </div>
     </div>
   );
+}
+
+function clearDashboardNavigationState() {
+  if (typeof window === "undefined") return;
+
+  [
+    "darbco.productionClerk.active",
+    "darbco.productionClerk.productionTab",
+    "darbco.inventoryBookkeeper.active",
+    "darbco.payrollPersonnel.active",
+    "darbco.financeOfficer.active",
+    "darbco.managerAdmin.active",
+  ].forEach((key) => window.localStorage.removeItem(key));
 }
