@@ -18,7 +18,7 @@ import { Label } from "../ui/label";
 import { User } from "../types";
 import { toast } from "sonner";
 import {
-  LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip, AreaChart, Area,
+  XAxis, YAxis, ResponsiveContainer, Tooltip, AreaChart, Area,
   PieChart, Pie, Cell, CartesianGrid,
 } from "recharts";
 import {
@@ -44,13 +44,6 @@ const NAV = [
   { id: "production", label: "Production", icon: <Package className="h-4 w-4" /> },
 ];
 
-const dailyProduction: { d: string; v: number }[] = [];
-const monthlyOverview: { m: string; v: number }[] = [];
-const breakdown: { name: string; value: number; color: string }[] = [];
-const harvestBuligs: { age: string; v: number; pct: number }[] = [];
-const beneficiariesToday: { name: string; boxes: number }[] = [];
-const quality: { age: string; defects: number; rejects: number }[] = [];
-
 const harvestRecords: HarvestRecord[] = [];
 
 const productionRecords: ProductionRecord[] = [];
@@ -66,7 +59,27 @@ interface HarvestRecord {
   w14: number;
   total: number;
 }
-type ProductionRecord = typeof productionRecords[number];
+
+interface ProductionRecord {
+  id: number;
+  date: string;
+  beneficiary: string;
+  classA_big: number;
+  classA_small: number;
+  classA_cp: number;
+  classB_big: number;
+  classB_small: number;
+  classB_cp: number;
+  special: number;
+  defects_11: number;
+  defects_12: number;
+  defects_13: number;
+  defects_14: number;
+  rejects_11: number;
+  rejects_12: number;
+  rejects_13: number;
+  rejects_14: number;
+}
 
 export function ProductionClerkDashboard({ user, onLogout }: Props) {
   const { data } = useAppData();
@@ -96,6 +109,14 @@ function Dashboard({ goToTab, productionData, harvestData, beneficiariesCount }:
   beneficiariesCount: number;
 }) {
   const metrics = getDashboardMetrics(productionData, harvestData, beneficiariesCount);
+  const dailyProduction = getDailyProduction(productionData);
+  const classificationBreakdown = getClassificationBreakdown(productionData);
+  const harvestBuligs = getHarvestBuligs(harvestData);
+  const quality = getQualityAnalysis(productionData);
+  const hasDailyProduction = dailyProduction.some((row) => row.v > 0);
+  const hasClassificationData = classificationBreakdown.some((row) => row.value > 0);
+  const hasHarvestData = harvestBuligs.some((row) => row.v > 0);
+  const hasQualityData = quality.some((row) => row.defects > 0 || row.rejects > 0);
 
   return (
     <div className="space-y-6">
@@ -112,58 +133,53 @@ function Dashboard({ goToTab, productionData, harvestData, beneficiariesCount }:
         <KpiCard icon={<Boxes />} color="amber" label="Total Boxes This Month" value={metrics.boxesThisMonth.toLocaleString()} delta={metrics.monthDelta} />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <Card className="lg:col-span-1">
-          <CardHeader className="pb-2 flex-row items-center justify-between">
+      <div className="grid grid-cols-1 gap-4">
+        <Card>
+          <CardHeader className="pb-2">
             <CardTitle className="text-base">Daily Production (Boxes)</CardTitle>
-            <Select defaultValue="7d"><SelectTrigger className="w-28 h-8"><SelectValue /></SelectTrigger>
-              <SelectContent><SelectItem value="7d">Last 7 days</SelectItem><SelectItem value="30d">Last 30 days</SelectItem></SelectContent>
-            </Select>
           </CardHeader>
-          <CardContent className="h-64">
-            <ResponsiveContainer><AreaChart data={dailyProduction}>
-              <defs><linearGradient id="g1" x1="0" x2="0" y1="0" y2="1">
-                <stop offset="0%" stopColor="#10b981" stopOpacity={0.5} /><stop offset="100%" stopColor="#10b981" stopOpacity={0} />
-              </linearGradient></defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-              <XAxis dataKey="d" tick={{ fontSize: 11 }} /><YAxis tick={{ fontSize: 11 }} /><Tooltip />
-              <Area type="monotone" dataKey="v" stroke="#059669" fill="url(#g1)" strokeWidth={2} />
-            </AreaChart></ResponsiveContainer>
+          <CardContent className={hasDailyProduction ? "h-56" : "h-32"}>
+            {hasDailyProduction ? (
+              <ResponsiveContainer><AreaChart data={dailyProduction}>
+                <defs><linearGradient id="g1" x1="0" x2="0" y1="0" y2="1">
+                  <stop offset="0%" stopColor="#10b981" stopOpacity={0.5} /><stop offset="100%" stopColor="#10b981" stopOpacity={0} />
+                </linearGradient></defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                <XAxis dataKey="d" tick={{ fontSize: 11 }} /><YAxis tick={{ fontSize: 11 }} /><Tooltip />
+                <Area type="monotone" dataKey="v" stroke="#059669" fill="url(#g1)" strokeWidth={2} />
+              </AreaChart></ResponsiveContainer>
+            ) : (
+              <EmptyDashboardState message="No production boxes recorded in the last 7 days." />
+            )}
           </CardContent>
         </Card>
 
-        <Card className="lg:col-span-2">
-          <CardHeader className="pb-2"><CardTitle className="text-base">Monthly Overview (Sep 2026)</CardTitle></CardHeader>
-          <CardContent className="h-64">
-            <ResponsiveContainer><LineChart data={monthlyOverview}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-              <XAxis dataKey="m" tick={{ fontSize: 11 }} /><YAxis tick={{ fontSize: 11 }} /><Tooltip />
-              <Line type="monotone" dataKey="v" stroke="#10b981" strokeWidth={2} dot={{ r: 4 }} />
-            </LineChart></ResponsiveContainer>
-          </CardContent>
-        </Card>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-base">Boxes by Classification</CardTitle></CardHeader>
-          <CardContent className="h-56 flex items-center">
+          <CardContent className="h-48 flex items-center">
+            {hasClassificationData ? (
             <div className="w-full">
               <ResponsiveContainer width="100%" height={160}><PieChart>
-                <Pie data={breakdown} dataKey="value" cx="50%" cy="50%" outerRadius={60} label={(e) => `${e.name}: ${e.value}`}>
-                  {breakdown.map((e, i) => <Cell key={i} fill={e.color} />)}
+                <Pie data={classificationBreakdown} dataKey="value" cx="50%" cy="50%" outerRadius={60} label={(e) => `${e.name}: ${e.value}`}>
+                  {classificationBreakdown.map((e) => <Cell key={e.name} fill={e.color} />)}
                 </Pie>
                 <Tooltip />
               </PieChart></ResponsiveContainer>
             </div>
+            ) : (
+              <EmptyDashboardState message="No box classification data yet." />
+            )}
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-base">Harvest by Age (Buligs)</CardTitle></CardHeader>
           <CardContent className="space-y-2 pt-2">
-            {harvestBuligs.map((b, i) => (
-              <div key={i}>
+            {hasHarvestData ? harvestBuligs.map((b) => (
+              <div key={b.age}>
                 <div className="flex items-center justify-between text-sm mb-1">
                   <span className="text-muted-foreground">{b.age}</span>
                   <span className="font-medium">{b.v.toLocaleString()} <span className="text-emerald-600 text-xs">({b.pct}%)</span></span>
@@ -172,52 +188,26 @@ function Dashboard({ goToTab, productionData, harvestData, beneficiariesCount }:
                   <div className="h-full bg-emerald-600 rounded-full" style={{ width: `${b.pct}%` }} />
                 </div>
               </div>
-            ))}
+            )) : <EmptyDashboardState message="No harvest age data yet." compact />}
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-base">Quality Analysis (by Age)</CardTitle></CardHeader>
           <CardContent className="space-y-2 pt-2">
-            {quality.map((q, i) => (
-              <div key={i} className="flex items-center justify-between text-sm">
+            {hasQualityData ? quality.map((q) => (
+              <div key={q.age} className="flex items-center justify-between gap-3 text-sm">
                 <span className="text-muted-foreground">{q.age}</span>
-                <div className="flex gap-3">
+                <div className="flex flex-wrap justify-end gap-x-3 gap-y-1">
                   <span className="text-amber-600 font-medium">Defects: {q.defects}</span>
                   <span className="text-red-600 font-medium">Rejects: {q.rejects}</span>
                 </div>
               </div>
-            ))}
+            )) : <EmptyDashboardState message="No defects or rejects recorded yet." compact />}
           </CardContent>
         </Card>
       </div>
 
-      <Card>
-        <CardHeader className="pb-2">
-          <div className="flex w-full items-center justify-between gap-3">
-            <CardTitle className="text-base flex items-center gap-2"><FileText className="h-4 w-4 text-emerald-700" />Top Beneficiaries Today</CardTitle>
-            <Button variant="link" className="shrink-0 px-0 text-emerald-700" onClick={() => goToTab("harvest")}>View All →</Button>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Rank</TableHead><TableHead>Beneficiary</TableHead><TableHead className="text-right">Boxes Produced</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {beneficiariesToday.map((b, i) => (
-                <TableRow key={i}>
-                  <TableCell>{i + 1}</TableCell>
-                  <TableCell className="font-medium">{b.name}</TableCell>
-                  <TableCell className="text-right"><strong className="text-emerald-700">{b.boxes}</strong></TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
     </div>
   );
 }
@@ -239,6 +229,74 @@ function KpiCard({ icon, color, label, value, delta, onClick }: any) {
       </CardContent>
     </Card>
   );
+}
+
+function EmptyDashboardState({ message, compact = false }: { message: string; compact?: boolean }) {
+  return (
+    <div className={`flex w-full items-center justify-center rounded-md border border-dashed bg-slate-50 px-3 text-center text-sm text-muted-foreground ${compact ? "min-h-24" : "h-full min-h-24"}`}>
+      {message}
+    </div>
+  );
+}
+
+function getDailyProduction(records: ProductionRecord[]) {
+  return Array.from({ length: 7 }, (_, index) => {
+    const date = addDaysSystemDate(todaySystemDate(), index - 6);
+    const total = sumProductionBoxes(records.filter((record) => record.date === date));
+    return { d: date.slice(5).replace("-", "/"), v: total };
+  });
+}
+
+function getClassificationBreakdown(records: ProductionRecord[]) {
+  const classA = records.reduce((sum, record) => sum + record.classA_big + record.classA_small + record.classA_cp, 0);
+  const classB = records.reduce((sum, record) => sum + record.classB_big + record.classB_small + record.classB_cp, 0);
+  const special = records.reduce((sum, record) => sum + record.special, 0);
+
+  return [
+    { name: "Class A", value: classA, color: "#10b981" },
+    { name: "Class B", value: classB, color: "#f59e0b" },
+    { name: "Special", value: special, color: "#3b82f6" },
+  ];
+}
+
+function getHarvestBuligs(records: HarvestRecord[]) {
+  const totals = [
+    { age: "11 weeks", v: records.reduce((sum, record) => sum + record.w11, 0) },
+    { age: "12 weeks", v: records.reduce((sum, record) => sum + record.w12, 0) },
+    { age: "13 weeks", v: records.reduce((sum, record) => sum + record.w13, 0) },
+    { age: "14 weeks", v: records.reduce((sum, record) => sum + record.w14, 0) },
+  ];
+  const highest = Math.max(...totals.map((item) => item.v), 0);
+
+  return totals.map((item) => ({
+    ...item,
+    pct: highest > 0 ? Math.round((item.v / highest) * 100) : 0,
+  }));
+}
+
+function getQualityAnalysis(records: ProductionRecord[]) {
+  return [
+    {
+      age: "11 weeks",
+      defects: records.reduce((sum, record) => sum + record.defects_11, 0),
+      rejects: records.reduce((sum, record) => sum + record.rejects_11, 0),
+    },
+    {
+      age: "12 weeks",
+      defects: records.reduce((sum, record) => sum + record.defects_12, 0),
+      rejects: records.reduce((sum, record) => sum + record.rejects_12, 0),
+    },
+    {
+      age: "13 weeks",
+      defects: records.reduce((sum, record) => sum + record.defects_13, 0),
+      rejects: records.reduce((sum, record) => sum + record.rejects_13, 0),
+    },
+    {
+      age: "14 weeks",
+      defects: records.reduce((sum, record) => sum + record.defects_14, 0),
+      rejects: records.reduce((sum, record) => sum + record.rejects_14, 0),
+    },
+  ];
 }
 
 function getDashboardMetrics(productionData: ProductionRecord[], harvestData: HarvestRecord[], beneficiariesCount: number) {

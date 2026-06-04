@@ -25,6 +25,8 @@ import { usePersistentState } from "../../lib/use-persistent-state";
 
 interface Props { user: User; onLogout: () => void }
 
+type BeneficiaryOption = { id: string; dbId: number; code: string; name: string };
+
 const NAV = [
   { id: "dashboard", label: "Dashboard", icon: <LayoutDashboard className="h-4 w-4" /> },
   { id: "items", label: "Inventory Items", icon: <Boxes className="h-4 w-4" /> },
@@ -41,6 +43,7 @@ export function InventoryBookkeeperDashboard({ user, onLogout }: Props) {
   const [borrowedRows, setBorrowedRows] = useState<BorrowedMaterialRow[]>(borrowedMaterials);
   const [historyRows, setHistoryRows] = useState<StockHistoryRow[]>(stockHistory);
   const [restockRows, setRestockRows] = useState<RestockRequest[]>(initialRestockRequests(user.name));
+  const beneficiaries = buildProductionBeneficiaryOptions(data);
 
   useEffect(() => {
     if (data?.inventoryItems?.length) {
@@ -92,6 +95,7 @@ export function InventoryBookkeeperDashboard({ user, onLogout }: Props) {
           setBorrowedRows={setBorrowedRows}
           setHistory={setHistoryRows}
           user={user}
+          beneficiaries={beneficiaries}
         />
       )}
       {active === "credit" && <CreditTransactions credits={creditRows} setCredits={setCreditRows} user={user} />}
@@ -330,6 +334,51 @@ interface InventoryItem {
 
 const seedItems: InventoryItem[] = [];
 
+function buildProductionBeneficiaryOptions(data: any): BeneficiaryOption[] {
+  const beneficiaryById = new Map<string, BeneficiaryOption>();
+  (data?.beneficiaries ?? []).map(mapBeneficiary).forEach((item) => {
+    if (item.name.trim()) beneficiaryById.set(String(item.dbId), item);
+  });
+
+  const options = new Map<string, BeneficiaryOption>();
+  const addRecordBeneficiary = (record: any) => {
+    const dbId = Number(record.beneficiary_id);
+    const idKey = Number.isFinite(dbId) && dbId > 0 ? String(dbId) : "";
+    const tableMatch = idKey ? beneficiaryById.get(idKey) : undefined;
+    const name = String(tableMatch?.name ?? record.beneficiary_name ?? record.beneficiary ?? "").trim();
+
+    if (!name) return;
+
+    const key = idKey || `name:${name.toLowerCase()}`;
+    if (!options.has(key)) {
+      options.set(key, {
+        id: idKey || key,
+        dbId: dbId || 0,
+        code: tableMatch?.code ?? (idKey ? `BEN-${idKey}` : beneficiaryAccountId(name)),
+        name,
+      });
+    }
+  };
+
+  (data?.harvestRecords ?? []).forEach(addRecordBeneficiary);
+  (data?.productionRecords ?? []).forEach(addRecordBeneficiary);
+
+  if (options.size === 0) {
+    beneficiaryById.forEach((item) => options.set(item.id, item));
+  }
+
+  return Array.from(options.values()).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function mapBeneficiary(row: any): BeneficiaryOption {
+  return {
+    id: String(row.id),
+    dbId: Number(row.id),
+    code: String(row.code ?? row.beneficiary_code ?? row.id),
+    name: row.name ?? row.full_name ?? "",
+  };
+}
+
 function mapInventoryItem(row: any): InventoryItem {
   return {
     id: String(row.code ?? row.item_code ?? row.material_id ?? row.id),
@@ -526,7 +575,7 @@ const CATEGORIES = [
   "Other Supplies",
 ];
 
-function InventoryItems({ items, setItems, setCredits, borrowedRows, setBorrowedRows, setHistory, user }: {
+function InventoryItems({ items, setItems, setCredits, borrowedRows, setBorrowedRows, setHistory, user, beneficiaries }: {
   items: InventoryItem[];
   setItems: React.Dispatch<React.SetStateAction<InventoryItem[]>>;
   setCredits: React.Dispatch<React.SetStateAction<CreditRow[]>>;
@@ -534,6 +583,7 @@ function InventoryItems({ items, setItems, setCredits, borrowedRows, setBorrowed
   setBorrowedRows: React.Dispatch<React.SetStateAction<BorrowedMaterialRow[]>>;
   setHistory: React.Dispatch<React.SetStateAction<StockHistoryRow[]>>;
   user: User;
+  beneficiaries: BeneficiaryOption[];
 }) {
   const [showAdd, setShowAdd] = useState(false);
   const [showStockIn, setShowStockIn] = useState(false);
@@ -746,6 +796,7 @@ function InventoryItems({ items, setItems, setCredits, borrowedRows, setBorrowed
         setBorrowedRows={setBorrowedRows}
         setHistory={setHistory}
         user={user}
+        beneficiaries={beneficiaries}
       />
       <BorrowedMaterialsDialog
         open={showBorrowed}
@@ -1457,7 +1508,7 @@ function StockIn({ open, onOpenChange, items, setItems, setHistory, user }: {
   );
 }
 
-function ReleaseMaterials({ open, onOpenChange, items, setItems, setCredits, setBorrowedRows, setHistory, user }: {
+function ReleaseMaterials({ open, onOpenChange, items, setItems, setCredits, setBorrowedRows, setHistory, user, beneficiaries }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   items: InventoryItem[];
@@ -1466,6 +1517,7 @@ function ReleaseMaterials({ open, onOpenChange, items, setItems, setCredits, set
   setBorrowedRows: React.Dispatch<React.SetStateAction<BorrowedMaterialRow[]>>;
   setHistory: React.Dispatch<React.SetStateAction<StockHistoryRow[]>>;
   user: User;
+  beneficiaries: BeneficiaryOption[];
 }) {
   const today = todayInputDate();
   const [type, setType] = useState("direct");
@@ -1481,6 +1533,8 @@ function ReleaseMaterials({ open, onOpenChange, items, setItems, setCredits, set
   const [notes, setNotes] = useState("");
   const [savingRelease, setSavingRelease] = useState(false);
   const selectedItem = items.find((item) => item.id === materialId);
+  const selectedBeneficiaryOption = beneficiaries.find((item) => item.id === beneficiary);
+  const selectedBeneficiaryName = selectedBeneficiaryOption?.name.trim() ?? "";
   const qtyValue = Number(qty) || 0;
   const unitPriceValue = Number(unitPrice) || 0;
   const totalAmount = qtyValue * unitPriceValue;
@@ -1528,11 +1582,11 @@ function ReleaseMaterials({ open, onOpenChange, items, setItems, setCredits, set
       toast.error("Slip number, material, and quantity are required");
       return;
     }
-    if (type === "credit" && !beneficiary.trim()) {
+    if (type === "credit" && !selectedBeneficiaryName) {
       toast.error("Beneficiary is required for beneficiary credit releases");
       return;
     }
-    if (type === "borrowed" && !beneficiary.trim()) {
+    if (type === "borrowed" && !selectedBeneficiaryName) {
       toast.error("Borrower or beneficiary is required for borrowed materials");
       return;
     }
@@ -1560,8 +1614,8 @@ function ReleaseMaterials({ open, onOpenChange, items, setItems, setCredits, set
         {
           receipt: `CR-${date.slice(0, 4)}-${String(current.length + 1).padStart(4, "0")}`,
           date: formatDateLabel(date),
-          beneficiary: beneficiary.trim(),
-          beneficiaryId: beneficiaryAccountId(beneficiary),
+          beneficiary: selectedBeneficiaryName,
+          beneficiaryId: selectedBeneficiaryOption?.code || beneficiaryAccountId(selectedBeneficiaryName),
           material: selectedItem.name,
           qty: qtyValue,
           unit: selectedItem.unit,
@@ -1580,7 +1634,7 @@ function ReleaseMaterials({ open, onOpenChange, items, setItems, setCredits, set
         {
           id: `BOR-${date.slice(0, 4)}-${String(current.length + 1).padStart(4, "0")}`,
           slipNo: slipNo.trim(),
-          borrower: beneficiary.trim(),
+          borrower: selectedBeneficiaryName,
           materialId: selectedItem.id,
           material: selectedItem.name,
           qtyBorrowed: qtyValue,
@@ -1603,7 +1657,7 @@ function ReleaseMaterials({ open, onOpenChange, items, setItems, setCredits, set
         type: releaseHistoryType(),
         qty: -qtyValue,
         unit: selectedItem.unit,
-        reason: `${purpose.trim() || `Released${beneficiary.trim() ? ` to ${beneficiary.trim()}` : ""}`}. Total amount: ₱${totalAmount.toLocaleString()}. Audit: material release recorded by ${user.name}.${notes.trim() ? ` Notes: ${notes.trim()}` : ""}`,
+        reason: `${purpose.trim() || `Released${selectedBeneficiaryName ? ` to ${selectedBeneficiaryName}` : ""}`}. Total amount: ₱${totalAmount.toLocaleString()}. Audit: material release recorded by ${user.name}.${notes.trim() ? ` Notes: ${notes.trim()}` : ""}`,
         account: user.name,
         ref: slipNo.trim(),
         previousBalance: selectedItem.onHand,
@@ -1622,11 +1676,11 @@ function ReleaseMaterials({ open, onOpenChange, items, setItems, setCredits, set
       toast.error("Slip number, material, and quantity are required");
       return;
     }
-    if (type === "credit" && !beneficiary.trim()) {
+    if (type === "credit" && !selectedBeneficiaryName) {
       toast.error("Beneficiary is required for beneficiary credit releases");
       return;
     }
-    if (type === "borrowed" && !beneficiary.trim()) {
+    if (type === "borrowed" && !selectedBeneficiaryName) {
       toast.error("Borrower or beneficiary is required for borrowed materials");
       return;
     }
@@ -1651,7 +1705,8 @@ function ReleaseMaterials({ open, onOpenChange, items, setItems, setCredits, set
         reference_no: slipNo.trim(),
         stock_date: date,
         release_type: type,
-        beneficiary: beneficiary.trim() || undefined,
+        beneficiary_id: selectedBeneficiaryOption?.dbId || undefined,
+        beneficiary: selectedBeneficiaryName || undefined,
         purpose: purpose.trim() || undefined,
         notes: notes.trim() || undefined,
         expected_return_date: type === "borrowed" ? expectedReturnDate : undefined,
@@ -1667,8 +1722,8 @@ function ReleaseMaterials({ open, onOpenChange, items, setItems, setCredits, set
           {
             receipt: `CR-${date.slice(0, 4)}-${String(current.length + 1).padStart(4, "0")}`,
             date: formatDateLabel(date),
-            beneficiary: beneficiary.trim(),
-            beneficiaryId: beneficiaryAccountId(beneficiary),
+            beneficiary: selectedBeneficiaryName,
+            beneficiaryId: selectedBeneficiaryOption?.code || beneficiaryAccountId(selectedBeneficiaryName),
             material: selectedItem.name,
             qty: qtyValue,
             unit: selectedItem.unit,
@@ -1693,7 +1748,7 @@ function ReleaseMaterials({ open, onOpenChange, items, setItems, setCredits, set
           type: releaseHistoryType(),
           qty: -qtyValue,
           unit: selectedItem.unit,
-          reason: `${purpose.trim() || `Released${beneficiary.trim() ? ` to ${beneficiary.trim()}` : ""}`}. Total amount: PHP ${totalAmount.toLocaleString()}. Audit: material release recorded by ${user.name}.${notes.trim() ? ` Notes: ${notes.trim()}` : ""}`,
+          reason: `${purpose.trim() || `Released${selectedBeneficiaryName ? ` to ${selectedBeneficiaryName}` : ""}`}. Total amount: PHP ${totalAmount.toLocaleString()}. Audit: material release recorded by ${user.name}.${notes.trim() ? ` Notes: ${notes.trim()}` : ""}`,
           account: user.name,
           ref: slipNo.trim(),
           previousBalance: selectedItem.onHand,
@@ -1736,7 +1791,20 @@ function ReleaseMaterials({ open, onOpenChange, items, setItems, setCredits, set
             </div>
             <div className="space-y-1">
               <Label>Beneficiary / Recipient {(type === "credit" || type === "borrowed") && <span className="text-red-500">*</span>}</Label>
-              <Input value={beneficiary} onChange={(event) => setBeneficiary(event.target.value)} placeholder="e.g. Juan Dela Cruz" />
+              <Select value={beneficiary} onValueChange={setBeneficiary}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select beneficiary" />
+                </SelectTrigger>
+                <SelectContent>
+                  {beneficiaries.length === 0 ? (
+                    <SelectItem value="no-beneficiaries" disabled>No beneficiaries available</SelectItem>
+                  ) : beneficiaries.map((item) => (
+                    <SelectItem key={item.id} value={item.id}>
+                      {item.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div className="space-y-1">
               <Label>Material <span className="text-red-500">*</span></Label>

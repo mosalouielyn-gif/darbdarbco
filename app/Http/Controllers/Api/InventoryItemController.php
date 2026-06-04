@@ -139,6 +139,7 @@ class InventoryItemController extends Controller
             'reference_no' => ['required', 'string', 'max:255'],
             'stock_date' => ['required', 'date'],
             'release_type' => ['required', 'string', 'max:50'],
+            'beneficiary_id' => ['nullable', 'integer'],
             'beneficiary' => ['nullable', 'string', 'max:255'],
             'purpose' => ['nullable', 'string'],
             'notes' => ['nullable', 'string'],
@@ -405,7 +406,7 @@ class InventoryItemController extends Controller
         }
 
         if (Schema::hasTable('stock_transactions')) {
-            DB::table('stock_transactions')->insert([
+            $values = [
                 'reference_no' => $payload['reference_no'],
                 'item_id' => $itemId,
                 'txn_type' => $type,
@@ -415,7 +416,13 @@ class InventoryItemController extends Controller
                 'reason' => $reason,
                 'recorded_by' => $userId,
                 'txn_at' => $payload['stock_date'],
-            ]);
+            ];
+
+            if (Schema::hasColumn('stock_transactions', 'beneficiary_id')) {
+                $values['beneficiary_id'] = $payload['beneficiary_id'] ?? null;
+            }
+
+            DB::table('stock_transactions')->insert($values);
             return;
         }
 
@@ -438,6 +445,10 @@ class InventoryItemController extends Controller
 
         if (Schema::hasColumn('inventory_transactions', 'created_by')) {
             $values['created_by'] = $userId;
+        }
+
+        if (Schema::hasColumn('inventory_transactions', 'beneficiary_id')) {
+            $values['beneficiary_id'] = $payload['beneficiary_id'] ?? null;
         }
 
         if (Schema::hasColumn('inventory_transactions', 'previous_balance')) {

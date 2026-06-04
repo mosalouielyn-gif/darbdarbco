@@ -23,6 +23,9 @@ class AppDataController extends Controller
                 break;
 
             case 'inventory_bookkeeper':
+                $payload['beneficiaries'] = $this->beneficiaries();
+                $payload['harvestRecords'] = $this->harvestRecords();
+                $payload['productionRecords'] = $this->productionRecords();
                 $payload['inventoryItems'] = $this->inventoryItems();
                 $payload['stockTransactions'] = $this->stockTransactions();
                 $payload['borrowedMaterials'] = $this->borrowedMaterials();

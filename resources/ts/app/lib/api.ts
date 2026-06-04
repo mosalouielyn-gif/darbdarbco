@@ -368,6 +368,7 @@ export async function releaseInventoryItem(
     reference_no: string;
     stock_date: string;
     release_type: string;
+    beneficiary_id?: number;
     beneficiary?: string;
     purpose?: string;
     notes?: string;

@@ -30,7 +30,7 @@ export function DarbcoLayout({ user, onLogout, navItems, active, onChange, child
 
   return (
     <div className="min-h-screen overflow-x-hidden bg-slate-50 xl:flex">
-      <aside className="hidden xl:flex xl:w-64 2xl:w-72 bg-gradient-to-b from-emerald-900 to-emerald-950 text-emerald-50 flex-col xl:sticky xl:top-0 xl:h-screen">
+      <aside className="fixed inset-y-0 left-0 z-40 hidden w-64 flex-col bg-gradient-to-b from-emerald-900 to-emerald-950 text-emerald-50 xl:flex 2xl:w-72">
         <div className="p-5 border-b border-emerald-800">
           <div className="flex items-center gap-2">
             <div className="h-9 w-9 rounded-full bg-emerald-500/20 flex items-center justify-center">
@@ -45,7 +45,7 @@ export function DarbcoLayout({ user, onLogout, navItems, active, onChange, child
           </div>
         </div>
 
-        <nav className="flex-1 p-3 space-y-1">
+        <nav className="flex-1 space-y-1 overflow-y-auto p-3">
           {navItems.map((item) => (
             <button
               key={item.id}
@@ -82,7 +82,7 @@ export function DarbcoLayout({ user, onLogout, navItems, active, onChange, child
         </div>
       </aside>
 
-      <main className="min-w-0 flex-1 overflow-x-hidden">
+      <main className="min-w-0 flex-1 overflow-x-hidden xl:ml-64 2xl:ml-72">
         <header className="sticky top-0 z-30 border-b border-emerald-900/10 bg-white/95 backdrop-blur xl:hidden relative">
           <div className="flex items-center gap-3 px-3 py-3 sm:px-4">
             <button
