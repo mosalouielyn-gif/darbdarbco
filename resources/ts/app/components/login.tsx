@@ -4,8 +4,7 @@ import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Button } from "./ui/button";
 import { Alert, AlertDescription } from "./ui/alert";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
-import { Leaf, Loader2, ShieldCheck } from "lucide-react";
+import { Eye, EyeOff, Leaf, Loader2, ShieldCheck } from "lucide-react";
 import { User } from "./types";
 import { login } from "../lib/api";
 
@@ -13,17 +12,10 @@ interface LoginProps {
   onLogin: (user: User) => void;
 }
 
-const LOGIN_ACCOUNTS = [
-  { label: "Production Clerk", email: "clerk@darbco.coop", password: "clerk123" },
-  { label: "Inventory Bookkeeper", email: "inventory@darbco.coop", password: "inv123" },
-  { label: "Payroll Personnel", email: "payroll@darbco.coop", password: "pay123" },
-  { label: "Finance Officer", email: "finance@darbco.coop", password: "fin123" },
-  { label: "Manager / Admin", email: "admin@darbco.coop", password: "admin123" },
-];
-
 export function Login({ onLogin }: LoginProps) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -43,87 +35,90 @@ export function Login({ onLogin }: LoginProps) {
     }
   };
 
-  const selectedAccount = LOGIN_ACCOUNTS.find((account) => account.email === email)?.email ?? "";
-
-  const fillAccount = (accountEmail: string) => {
-    const account = LOGIN_ACCOUNTS.find((item) => item.email === accountEmail);
-    if (!account) return;
-
-    setEmail(account.email);
-    setPassword(account.password);
-    setError("");
-  };
-
   return (
-    <div className="min-h-screen w-full bg-gradient-to-br from-emerald-50 via-white to-amber-50 flex items-center justify-center p-3 sm:p-6">
-      <div className="w-full max-w-6xl grid gap-5 md:grid-cols-[minmax(0,1fr)_minmax(320px,440px)] md:gap-8 xl:gap-12 items-center">
-        <div className="hidden md:block space-y-4 lg:space-y-6">
-          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-100 text-emerald-800">
-            <Leaf className="h-4 w-4" />
-            <span>DARBCO Cooperative</span>
+    <div className="flex min-h-screen w-full items-center justify-center bg-[#f6f8f5] p-4 sm:p-6">
+      <div className="grid w-full max-w-5xl overflow-hidden rounded-lg border border-emerald-100 bg-white shadow-xl md:grid-cols-[minmax(0,1fr)_420px]">
+        <div className="hidden bg-emerald-800 px-10 py-12 text-white md:flex md:flex-col md:justify-between">
+          <div className="space-y-6">
+            <div className="inline-flex h-12 w-12 items-center justify-center rounded-md bg-white/10">
+              <Leaf className="h-6 w-6" />
+            </div>
+            <div className="space-y-3">
+              <p className="text-sm font-medium uppercase tracking-[0.18em] text-emerald-100">DARBCO Cooperative</p>
+              <h1 className="max-w-md text-3xl font-semibold leading-tight">Agri Workflow and Financial Processing System</h1>
+              <p className="max-w-md text-sm leading-6 text-emerald-50/90">
+                Secure access for daily production, inventory, payroll, finance, and management operations.
+              </p>
+            </div>
           </div>
-          <h1 className="tracking-tight text-2xl lg:text-3xl xl:text-4xl">DARBCO Agri Workflow & Financial Processing</h1>
-          <p className="text-muted-foreground">
-            A role-based platform for the Davao Abaca Banana Cooperative — Panabo City, Davao del Norte.
-            Streamlined harvest logging, inventory ledger, dual-track payroll, finance audits, and management oversight.
-          </p>
-          <div className="flex items-center gap-2 text-muted-foreground">
+          <div className="flex items-center gap-2 text-sm text-emerald-50/90">
             <ShieldCheck className="h-4 w-4" />
-            <span>Read/write rules strictly enforced across 5 roles</span>
+            <span>Authorized cooperative accounts only</span>
           </div>
         </div>
 
-        <Card className="w-full shadow-xl border-emerald-100">
-          <CardHeader>
-            <CardTitle>Sign in</CardTitle>
-            <CardDescription>Use your assigned cooperative account</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="quick-account">Quick account</Label>
-                <Select value={selectedAccount} onValueChange={fillAccount}>
-                  <SelectTrigger id="quick-account" className="bg-white">
-                    <SelectValue placeholder="Choose an account to fill credentials" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {LOGIN_ACCOUNTS.map((account) => (
-                      <SelectItem key={account.email} value={account.email}>
-                        {account.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+        <Card className="w-full rounded-none border-0 shadow-none">
+          <CardHeader className="space-y-2 px-6 pb-5 pt-8 sm:px-8 sm:pt-10">
+            <div className="flex items-center gap-3 md:hidden">
+              <div className="flex h-10 w-10 items-center justify-center rounded-md bg-emerald-700 text-white">
+                <Leaf className="h-5 w-5" />
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="email">Email</Label>
+              <div>
+                <p className="text-sm font-medium text-emerald-800">DARBCO Cooperative</p>
+                <p className="text-xs text-muted-foreground">Authorized access</p>
+              </div>
+            </div>
+            <CardTitle className="text-2xl font-semibold">Sign In</CardTitle>
+            <CardDescription>Enter your account credentials to continue.</CardDescription>
+          </CardHeader>
+          <CardContent className="px-6 pb-8 sm:px-8 sm:pb-10">
+            <form onSubmit={handleSubmit} className="space-y-5">
+              <div className="space-y-2.5">
+                <Label htmlFor="email">Email Address</Label>
                 <Input
                   id="email"
                   type="email"
-                  placeholder="you@darbco.coop"
+                  placeholder="name@darbco.coop"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
+                  autoComplete="email"
+                  className="h-11 bg-white"
                   required
                 />
               </div>
-              <div className="space-y-2">
+              <div className="space-y-2.5">
                 <Label htmlFor="password">Password</Label>
-                <Input
-                  id="password"
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                />
+                <div className="relative">
+                  <Input
+                    id="password"
+                    type={showPassword ? "text" : "password"}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    autoComplete="current-password"
+                    className="h-11 bg-white pr-11"
+                    required
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="absolute right-1 top-1/2 h-9 w-9 -translate-y-1/2 text-muted-foreground hover:bg-transparent hover:text-emerald-700"
+                    onClick={() => setShowPassword((current) => !current)}
+                    aria-label={showPassword ? "Hide password" : "Show password"}
+                    aria-pressed={showPassword}
+                  >
+                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </Button>
+                </div>
               </div>
               {error && (
                 <Alert variant="destructive">
                   <AlertDescription>{error}</AlertDescription>
                 </Alert>
               )}
-              <Button type="submit" className="w-full bg-emerald-700 hover:bg-emerald-800" disabled={loading}>
+              <Button type="submit" className="h-11 w-full bg-emerald-700 font-medium hover:bg-emerald-800" disabled={loading}>
                 {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                {loading ? "Signing in..." : "Sign in"}
+                {loading ? "Signing in..." : "Sign In"}
               </Button>
               {loading && (
                 <p className="text-center text-xs text-muted-foreground">
@@ -131,7 +126,6 @@ export function Login({ onLogin }: LoginProps) {
                 </p>
               )}
             </form>
-
           </CardContent>
         </Card>
       </div>

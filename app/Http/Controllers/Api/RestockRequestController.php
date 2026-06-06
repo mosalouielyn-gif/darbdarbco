@@ -46,7 +46,7 @@ class RestockRequestController extends Controller
         ]);
         $payload['review_notes'] = 'Cancelled by requester.';
 
-        return response()->json($this->setStatus($id, 'Rejected', $payload, 'Cancelled'));
+        return response()->json($this->setStatus($id, 'Cancelled', $payload, 'Cancelled'));
     }
 
     public function approve(Request $request, int $id): JsonResponse
@@ -124,21 +124,134 @@ class RestockRequestController extends Controller
 
     private function setStatus(int $id, string $status, array $payload, string $action): object
     {
-        $current = DB::table('restock_requests')->where('id', $id)->first();
-        abort_if(! $current, 404, 'Restock request not found.');
-        abort_if(($current->status ?? '') !== 'Pending', 422, 'Only pending restock requests can be updated.');
+        return DB::transaction(function () use ($id, $status, $payload, $action) {
+            $current = DB::table('restock_requests')->where('id', $id)->lockForUpdate()->first();
+            abort_if(! $current, 404, 'Restock request not found.');
+            abort_if(($current->status ?? '') !== 'Pending', 422, 'Only pending restock requests can be updated.');
 
-        $values = ['status' => $status];
-        if (Schema::hasColumn('restock_requests', 'updated_at')) $values['updated_at'] = now();
-        if (Schema::hasColumn('restock_requests', 'reviewed_by')) $values['reviewed_by'] = $this->resolveUserId($payload['user_id'] ?? null, $payload['user_name'] ?? null);
-        if (Schema::hasColumn('restock_requests', 'reviewed_at')) $values['reviewed_at'] = now();
-        if (Schema::hasColumn('restock_requests', 'review_notes')) $values['review_notes'] = $payload['review_notes'] ?? null;
+            $approvedStockBalance = $status === 'Approved'
+                ? $this->applyApprovedRestock($current, $payload)
+                : null;
 
-        DB::table('restock_requests')->where('id', $id)->update($values);
-        $record = $this->findRequest($id);
-        $this->recordAudit($payload['user_id'] ?? null, $payload['user_name'] ?? null, $action, "{$action} restock request {$record->request_no}");
+            $values = ['status' => $status];
+            if (Schema::hasColumn('restock_requests', 'updated_at')) $values['updated_at'] = now();
+            if (Schema::hasColumn('restock_requests', 'reviewed_by')) $values['reviewed_by'] = $this->resolveUserId($payload['user_id'] ?? null, $payload['user_name'] ?? null);
+            if (Schema::hasColumn('restock_requests', 'reviewed_at')) $values['reviewed_at'] = now();
+            if (Schema::hasColumn('restock_requests', 'review_notes')) $values['review_notes'] = $payload['review_notes'] ?? null;
+            if ($approvedStockBalance !== null && Schema::hasColumn('restock_requests', 'current_quantity')) {
+                $values['current_quantity'] = $approvedStockBalance;
+            }
 
-        return $record;
+            DB::table('restock_requests')->where('id', $id)->update($values);
+            $record = $this->findRequest($id);
+            $this->recordAudit($payload['user_id'] ?? null, $payload['user_name'] ?? null, $action, "{$action} restock request {$record->request_no}");
+
+            return $record;
+        });
+    }
+
+    private function applyApprovedRestock(object $request, array $payload): float
+    {
+        if (! Schema::hasTable('inventory_items')) {
+            return (float) ($request->current_quantity ?? 0);
+        }
+
+        $itemId = $this->restockItemId($request);
+        abort_if(! $itemId, 422, 'Approved restock request is not linked to an inventory item.');
+
+        $item = DB::table('inventory_items')->where('id', $itemId)->lockForUpdate()->first();
+        abort_if(! $item, 404, 'Linked inventory item was not found.');
+
+        $quantity = (float) ($request->requested_quantity ?? $request->quantity ?? 0);
+        abort_if($quantity <= 0, 422, 'Requested quantity must be greater than zero.');
+
+        $previousBalance = (float) ($item->on_hand ?? 0);
+        $updatedBalance = $previousBalance + $quantity;
+        $values = ['on_hand' => $updatedBalance];
+
+        if (Schema::hasColumn('inventory_items', 'stock_date')) {
+            $values['stock_date'] = now()->toDateString();
+        }
+        if (Schema::hasColumn('inventory_items', 'updated_at')) {
+            $values['updated_at'] = now();
+        }
+
+        DB::table('inventory_items')->where('id', $itemId)->update($values);
+        $this->recordRestockStockIn($itemId, $request, $item, $payload, $quantity, $previousBalance, $updatedBalance);
+
+        return $updatedBalance;
+    }
+
+    private function restockItemId(object $request): ?int
+    {
+        foreach (['item_id', 'inventory_item_id'] as $column) {
+            if (isset($request->{$column}) && $request->{$column}) {
+                return (int) $request->{$column};
+            }
+        }
+
+        $material = trim((string) ($request->material_name ?? ''));
+        if ($material === '') {
+            return null;
+        }
+
+        $nameColumn = Schema::hasColumn('inventory_items', 'item_name') ? 'item_name' : 'name';
+
+        return DB::table('inventory_items')
+            ->where($nameColumn, $material)
+            ->value('id');
+    }
+
+    private function recordRestockStockIn(int $itemId, object $request, object $item, array $payload, float $quantity, float $previousBalance, float $updatedBalance): void
+    {
+        $userId = $this->resolveUserId($payload['user_id'] ?? null, $payload['user_name'] ?? null);
+        $reference = 'RST-'.($request->request_no ?? $request->id);
+        $reason = "Approved restock request {$request->request_no}; stock increased from {$previousBalance} to {$updatedBalance}.";
+
+        if (Schema::hasTable('stock_transactions')) {
+            $values = [
+                'reference_no' => $reference,
+                'item_id' => $itemId,
+                'txn_type' => 'Stock In',
+                'quantity' => $quantity,
+                'unit_cost' => $item->unit_cost ?? 0,
+                'supplier_name' => $item->supplier ?? null,
+                'reason' => $reason,
+                'recorded_by' => $userId,
+                'txn_at' => now(),
+            ];
+
+            DB::table('stock_transactions')->insert($values);
+            return;
+        }
+
+        if (! Schema::hasTable('inventory_transactions')) {
+            return;
+        }
+
+        $values = [
+            'reference_no' => $reference,
+            'inventory_item_id' => $itemId,
+            'transaction_type' => 'Stock In',
+            'quantity' => $quantity,
+            'unit_cost' => $item->unit_cost ?? 0,
+            'reason' => $reason,
+            'transaction_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ];
+
+        if (Schema::hasColumn('inventory_transactions', 'created_by')) {
+            $values['created_by'] = $userId;
+        }
+        if (Schema::hasColumn('inventory_transactions', 'previous_balance')) {
+            $values['previous_balance'] = $previousBalance;
+        }
+        if (Schema::hasColumn('inventory_transactions', 'updated_balance')) {
+            $values['updated_balance'] = $updatedBalance;
+        }
+
+        DB::table('inventory_transactions')->insert($values);
     }
 
     private function findRequest(int $id): object
@@ -168,6 +281,12 @@ class RestockRequestController extends Controller
 
         $userId = $this->resolveUserId($userId, $userName);
         $values = ['module' => 'Inventory', 'action' => $action];
+
+        if (Schema::hasColumn('audit_logs', 'id')) {
+            $maxId = (int) DB::table('audit_logs')->max('id');
+            $values['id'] = $maxId + 1;
+        }
+
         if (Schema::hasColumn('audit_logs', 'user_id')) $values['user_id'] = $userId;
         if (Schema::hasColumn('audit_logs', 'user_name')) $values['user_name'] = $userName;
         if (Schema::hasColumn('audit_logs', 'details')) $values['details'] = $description;
@@ -177,17 +296,21 @@ class RestockRequestController extends Controller
         if (Schema::hasColumn('audit_logs', 'updated_at')) $values['updated_at'] = now();
         if (Schema::hasColumn('audit_logs', 'logged_at')) $values['logged_at'] = now();
 
-        DB::table('audit_logs')->insert($values);
+        try {
+            DB::table('audit_logs')->insert($values);
+        } catch (\Throwable) {
+            // Audit logging should never block restock request saves.
+        }
     }
 
     private function resolveUserId(?int $userId, ?string $userName): ?int
     {
-        if ($userId) {
-            return $userId;
-        }
-
         if (! Schema::hasTable('users')) {
             return null;
+        }
+
+        if ($userId && DB::table('users')->where('id', $userId)->exists()) {
+            return $userId;
         }
 
         if ($userName) {

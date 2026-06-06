@@ -16,6 +16,7 @@ class RolePermissionController extends Controller
         'payroll_personnel' => ['Dashboard (View)', 'Payroll (Prepare)', 'Payroll History (View)', 'Production (View)', 'Credit Transactions (View)'],
         'inventory_bookkeeper' => ['Dashboard (View)', 'Inventory (Manage)', 'Stock History (View)', 'Credit Transactions (Manage)', 'Restock (Request)'],
         'production_clerk' => ['Dashboard (View)', 'Production (Encode)', 'Production Records (View)'],
+        'harvester' => ['Production Records (View)'],
     ];
 
     public function index(): JsonResponse

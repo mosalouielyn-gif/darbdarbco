@@ -13,7 +13,18 @@ export interface AppData {
   payrollSlips: any[];
   auditLogs: any[];
   users: any[];
+  harvesters: any[];
   rolePermissions: any[];
+}
+
+export interface MaintenanceTable {
+  name: string;
+  label: string;
+  records: number;
+  deletable_records: number;
+  protected: boolean;
+  confirmation: string;
+  note: string;
 }
 
 export interface HarvestRecordInput {
@@ -26,6 +37,7 @@ export interface HarvestRecordInput {
   buligs_14_weeks: number;
   user_id?: number;
   user_name?: string;
+  edit_reason?: string;
 }
 
 export interface ProductionBoxRecordInput {
@@ -48,6 +60,7 @@ export interface ProductionBoxRecordInput {
   rejects_14_weeks: number;
   user_id?: number;
   user_name?: string;
+  edit_reason?: string;
 }
 
 export interface UserAccountInput {
@@ -61,6 +74,17 @@ export interface UserAccountInput {
   password?: string;
   admin_id?: number;
   admin_name?: string;
+}
+
+export interface BeneficiaryInput {
+  code?: string;
+  name: string;
+  contact_number?: string;
+  address?: string;
+  active: boolean;
+  admin_id?: number;
+  admin_name?: string;
+  remarks?: string;
 }
 
 export interface InventoryItemInput {
@@ -77,6 +101,7 @@ export interface InventoryItemInput {
   notes?: string;
   user_id?: number;
   user_name?: string;
+  edit_reason?: string;
 }
 
 const jsonHeaders = {
@@ -101,10 +126,29 @@ export async function login(email: string, password: string): Promise<User> {
   return payload.user;
 }
 
+export async function verifyAdminPassword(userId: string | number, email: string, password: string): Promise<void> {
+  const response = await fetch("/api/admin/verify-password", {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify({ user_id: Number(userId), email, password }),
+  });
+
+  const payload = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const message = payload?.message || payload?.errors?.password?.[0] || "Admin password verification failed.";
+    throw new Error(message);
+  }
+}
+
 export async function fetchAppData(role?: string): Promise<AppData> {
-  const url = role ? `/api/app-data?role=${encodeURIComponent(role)}` : "/api/app-data";
+  const query = new URLSearchParams();
+  if (role) query.set("role", role);
+  query.set("_", String(Date.now()));
+  const url = `/api/app-data?${query.toString()}`;
   const response = await fetch(url, {
     headers: { "Accept": "application/json" },
+    cache: "no-store",
   });
 
   if (!response.ok) {
@@ -112,6 +156,49 @@ export async function fetchAppData(role?: string): Promise<AppData> {
   }
 
   return response.json();
+}
+
+export async function fetchMaintenanceTables(): Promise<{ tables: MaintenanceTable[]; protected_users: number[] }> {
+  const response = await fetch(`/api/database-maintenance/tables?_=${Date.now()}`, {
+    headers: { "Accept": "application/json" },
+    cache: "no-store",
+  });
+  const payload = await response.json().catch(() => ({ tables: [], protected_users: [] }));
+  if (!response.ok) {
+    throw new Error(payload?.message || "Unable to load database tables.");
+  }
+  return payload;
+}
+
+export async function deleteMaintenanceTable(
+  table: string,
+  payload: { confirmation: string; user_id?: number; user_name?: string },
+): Promise<{ table: string; deleted: number; remaining: number }> {
+  const response = await fetch(`/api/database-maintenance/tables/${encodeURIComponent(table)}`, {
+    method: "DELETE",
+    headers: jsonHeaders,
+    body: JSON.stringify(payload),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data?.message || "Unable to delete table records.");
+  }
+  return data;
+}
+
+export async function deleteAllMaintenanceTables(
+  payload: { confirmation: string; user_id?: number; user_name?: string },
+): Promise<{ deleted: number; tables: MaintenanceTable[] }> {
+  const response = await fetch("/api/database-maintenance/tables", {
+    method: "DELETE",
+    headers: jsonHeaders,
+    body: JSON.stringify(payload),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data?.message || "Unable to delete all database records.");
+  }
+  return data;
 }
 
 export async function fetchHarvestRecords(): Promise<any[]> {
@@ -279,6 +366,57 @@ export async function updateUserAccountStatus(
   return data;
 }
 
+export async function createBeneficiary(beneficiary: BeneficiaryInput): Promise<any> {
+  const response = await fetch("/api/beneficiaries", {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify(beneficiary),
+  });
+
+  const payload = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(payload?.message || "Unable to create beneficiary.");
+  }
+
+  return payload;
+}
+
+export async function updateBeneficiary(id: string | number, beneficiary: BeneficiaryInput): Promise<any> {
+  const response = await fetch(`/api/beneficiaries/${id}`, {
+    method: "PUT",
+    headers: jsonHeaders,
+    body: JSON.stringify(beneficiary),
+  });
+
+  const payload = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(payload?.message || "Unable to update beneficiary.");
+  }
+
+  return payload;
+}
+
+export async function updateBeneficiaryStatus(
+  id: string | number,
+  payload: { active: boolean; admin_id?: number; admin_name?: string; remarks?: string },
+): Promise<any> {
+  const response = await fetch(`/api/beneficiaries/${id}/status`, {
+    method: "PUT",
+    headers: jsonHeaders,
+    body: JSON.stringify(payload),
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(data?.message || "Unable to update beneficiary status.");
+  }
+
+  return data;
+}
+
 export async function createInventoryItem(item: InventoryItemInput): Promise<any> {
   const response = await fetch("/api/inventory-items", {
     method: "POST",
@@ -369,8 +507,10 @@ export async function releaseInventoryItem(
     stock_date: string;
     release_type: string;
     beneficiary_id?: number;
+    beneficiary_account_id?: string;
     beneficiary?: string;
     purpose?: string;
+    payment_method?: string;
     notes?: string;
     expected_return_date?: string;
     user_id?: number;

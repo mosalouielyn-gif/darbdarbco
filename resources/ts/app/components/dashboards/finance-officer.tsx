@@ -12,7 +12,7 @@ import { Textarea } from "../ui/textarea";
 import { DateInput } from "../ui/date-input";
 import {
   LayoutDashboard, ClipboardCheck, ClipboardList, Undo2, History, FileBarChart2,
-  Search, CheckCircle2, AlertCircle, Eye, Printer, ChevronLeft, ChevronRight, ShieldCheck, Loader2,
+  Search, CheckCircle2, AlertCircle, Eye, Printer, ChevronLeft, ChevronRight, ShieldCheck, Loader2, Plus,
 } from "lucide-react";
 import { User } from "../types";
 import { toast } from "sonner";
@@ -211,23 +211,20 @@ const ERROR_CATEGORIES = [
   "Other issue",
 ];
 
-function returnCategoryForIssue(area: string, slip: FoSlip | null) {
-  if (area === "Beneficiary Information") return "Incorrect beneficiary information";
-  if (area === "Production Record") return "Missing production record";
-  if (area === "Product Classification") return "Incorrect number of boxes";
-  if (area === "Price Computation") return "Incorrect price per box";
-  if (area === "Material Credit Deductions") return "Incorrect material credit amount";
-  if (area === "Labor Cost") return slip && slip.laborAmount > 0 ? "Incorrect labor cost amount" : "Missing labor cost";
-  if (area === "Other Deductions") return "Incomplete deduction details";
-  if (area === "Gross Income" || area === "Total Deductions") return "Incorrect gross income";
-  if (area === "Net Income") return "Incorrect net income";
-  return "Other issue";
-}
+const MANUAL_ASSESSMENT_ITEMS = [
+  { id: "beneficiary", area: "Beneficiary Information", detail: "Beneficiary name and ID" },
+  { id: "production", area: "Production Record", detail: "Harvest date and production record" },
+  { id: "classification", area: "Product Classification", detail: "Class A, Class B, and Special Product quantities" },
+  { id: "prices", area: "Price Computation", detail: "Price applied per classification" },
+  { id: "gross", area: "Gross Income", detail: "Earnings computation" },
+  { id: "credits", area: "Material Credit Deductions", detail: "Inventory credit deductions" },
+  { id: "labor", area: "Labor Cost", detail: "Labor cost entry" },
+  { id: "other", area: "Other Deductions", detail: "Other authorized deductions" },
+  { id: "deductions", area: "Total Deductions", detail: "Deduction total" },
+  { id: "net", area: "Net Income", detail: "Final net income" },
+];
 
-function defaultReturnReason(area: string, detail: string) {
-  if (area === "Labor Cost") return "Labor cost is missing or incomplete. Please add the labor cost amount and description, then resubmit the payroll.";
-  return `${area} needs correction: ${detail}.`;
-}
+type ManualAssessmentValue = "Matched" | "Not Matched";
 
 export function FinanceOfficerDashboard({ user, onLogout }: Props) {
   const { data } = useAppData();
@@ -574,36 +571,24 @@ function ValidationDetailsDialog({ slip, onClose, onValidate, onReturn }: {
   const [retRemarks, setRetRemarks] = useState("");
   const [returning, setReturning] = useState(false);
   const [validating, setValidating] = useState(false);
+  const [assessments, setAssessments] = useState<Record<string, ManualAssessmentValue | "">>({});
+  const [errorCategories, setErrorCategories] = useState(ERROR_CATEGORIES);
+  const [showAddCategory, setShowAddCategory] = useState(false);
+  const [newCategory, setNewCategory] = useState("");
 
   const c = useMemo(() => slip ? compute(slip) : null, [slip]);
 
-  const checklist = useMemo(() => {
-    if (!slip || !c) return [];
-    const src = slip.productionSource;
-    const boxesMatch = src.classA === slip.classA && src.classB === slip.classB && src.special === slip.special;
-    return [
-      { area: "Beneficiary Information", detail: "Beneficiary name and ID are correct", ok: !!slip.beneficiaryName && !!slip.beneficiaryId },
-      { area: "Production Record", detail: "Harvest date and production record are correct", ok: !!slip.harvestDate && !!slip.productionRecordId },
-      { area: "Product Classification", detail: "Class A, Class B, and Special Product quantities match", ok: boxesMatch },
-      { area: "Price Computation", detail: "Correct price is applied per classification", ok: c.priceA > 0 && c.priceB > 0 && c.priceSpecial > 0 },
-      { area: "Gross Income", detail: "Earnings computation is accurate", ok: c.gross === slip.classA * c.priceA + slip.classB * c.priceB + slip.special * c.priceSpecial },
-      { area: "Material Credit Deductions", detail: "Credit transactions match the Inventory Bookkeeper's records", ok: slip.materialCredits.every((m) => m.status === "Unpaid" || m.status === "Partially Paid") },
-      { area: "Labor Cost", detail: "Labor cost is optional; ₱0 is allowed when no labor charge applies", ok: slip.laborAmount >= 0 },
-      { area: "Other Deductions", detail: "Additional deductions contain valid details", ok: slip.otherDeductions.every((d) => d.description.trim().length > 0 && d.amount > 0) },
-      { area: "Total Deductions", detail: "All applicable deductions are included", ok: c.totalDed === c.matTotal + slip.laborAmount + slip.prevBalance + c.otherTotal },
-      { area: "Net Income", detail: "Final amount is correct", ok: c.net === c.gross - c.totalDed },
-    ];
-  }, [slip, c]);
 
-  const allOk = checklist.length > 0 && checklist.every((x) => x.ok);
+  const allManuallyMatched = MANUAL_ASSESSMENT_ITEMS.every((item) => assessments[item.id] === "Matched");
+  const hasIncompleteAssessment = MANUAL_ASSESSMENT_ITEMS.some((item) => !assessments[item.id]);
 
   useEffect(() => {
-    if (!showReturn || !slip) return;
-    const failedItem = checklist.find((item) => !item.ok);
-    if (!failedItem) return;
-    if (!retCategory) setRetCategory(returnCategoryForIssue(failedItem.area, slip));
-    if (!retReason.trim()) setRetReason(defaultReturnReason(failedItem.area, failedItem.detail));
-  }, [showReturn, slip, checklist, retCategory, retReason]);
+    setAssessments({});
+    setShowReturn(false);
+    setRetCategory("");
+    setRetReason("");
+    setRetRemarks("");
+  }, [slip?.slipNo]);
 
   if (!slip || !c) return null;
   const financeCanAct = canFinanceAct(slip.status);
@@ -616,6 +601,14 @@ function ValidationDetailsDialog({ slip, onClose, onValidate, onReturn }: {
 
   const submitValidation = async () => {
     if (!slip || validating || returning) return;
+    if (hasIncompleteAssessment) {
+      toast.error("Complete the manual assessment before validating payroll.");
+      return;
+    }
+    if (!allManuallyMatched) {
+      toast.error("Only payrolls manually assessed as matched can be validated.");
+      return;
+    }
     setValidating(true);
     try {
       await onValidate(slip.slipNo);
@@ -634,6 +627,23 @@ function ValidationDetailsDialog({ slip, onClose, onValidate, onReturn }: {
     } finally {
       setReturning(false);
     }
+  };
+
+  const addErrorCategory = () => {
+    const cleaned = newCategory.trim();
+    if (!cleaned) {
+      toast.error("Category name is required");
+      return;
+    }
+    if (errorCategories.some((category) => category.toLowerCase() === cleaned.toLowerCase())) {
+      toast.error("Category already exists");
+      return;
+    }
+    setErrorCategories((current) => [...current, cleaned]);
+    setRetCategory(cleaned);
+    setNewCategory("");
+    setShowAddCategory(false);
+    toast.success("Category added");
   };
 
   return (
@@ -667,7 +677,7 @@ function ValidationDetailsDialog({ slip, onClose, onValidate, onReturn }: {
                   <TableHead>Product Classification</TableHead>
                   <TableHead className="text-right">Production Clerk Record</TableHead>
                   <TableHead className="text-right">Payroll Record</TableHead>
-                  <TableHead>Validation Result</TableHead>
+                  <TableHead>Assessment Source</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -675,17 +685,12 @@ function ValidationDetailsDialog({ slip, onClose, onValidate, onReturn }: {
                   const label = k === "classA" ? "Class A" : k === "classB" ? "Class B" : "Special Product";
                   const src = slip.productionSource[k];
                   const pay = slip[k];
-                  const result = src === pay ? "Matched" : "Mismatch";
                   return (
                     <TableRow key={k}>
                       <TableCell>{label}</TableCell>
                       <TableCell className="text-right">{src}</TableCell>
                       <TableCell className="text-right">{pay}</TableCell>
-                      <TableCell>
-                        {result === "Matched"
-                          ? <Badge className="bg-emerald-100 text-emerald-800"><CheckCircle2 className="h-3 w-3 mr-1" />Matched</Badge>
-                          : <Badge className="bg-red-100 text-red-800"><AlertCircle className="h-3 w-3 mr-1" />Mismatch</Badge>}
-                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground">Manual review</TableCell>
                     </TableRow>
                   );
                 })}
@@ -703,17 +708,16 @@ function ValidationDetailsDialog({ slip, onClose, onValidate, onReturn }: {
                   <TableHead className="text-right">Boxes</TableHead>
                   <TableHead className="text-right">Price/Box</TableHead>
                   <TableHead className="text-right">Subtotal</TableHead>
-                  <TableHead>Validation</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                <TableRow><TableCell>Class A</TableCell><TableCell className="text-right">{slip.classA}</TableCell><TableCell className="text-right">₱{c.priceA.toLocaleString()}</TableCell><TableCell className="text-right">₱{c.subA.toLocaleString()}</TableCell><TableCell><Badge className="bg-emerald-100 text-emerald-800">Correct</Badge></TableCell></TableRow>
-                <TableRow><TableCell>Class B</TableCell><TableCell className="text-right">{slip.classB}</TableCell><TableCell className="text-right">₱{c.priceB.toLocaleString()}</TableCell><TableCell className="text-right">₱{c.subB.toLocaleString()}</TableCell><TableCell><Badge className="bg-emerald-100 text-emerald-800">Correct</Badge></TableCell></TableRow>
-                <TableRow><TableCell>Special Product</TableCell><TableCell className="text-right">{slip.special}</TableCell><TableCell className="text-right">₱{c.priceSpecial.toLocaleString()}</TableCell><TableCell className="text-right">₱{c.subSpecial.toLocaleString()}</TableCell><TableCell><Badge className="bg-emerald-100 text-emerald-800">Correct</Badge></TableCell></TableRow>
+                <TableRow><TableCell>Class A</TableCell><TableCell className="text-right">{slip.classA}</TableCell><TableCell className="text-right">₱{c.priceA.toLocaleString()}</TableCell><TableCell className="text-right">₱{c.subA.toLocaleString()}</TableCell></TableRow>
+                <TableRow><TableCell>Class B</TableCell><TableCell className="text-right">{slip.classB}</TableCell><TableCell className="text-right">₱{c.priceB.toLocaleString()}</TableCell><TableCell className="text-right">₱{c.subB.toLocaleString()}</TableCell></TableRow>
+                <TableRow><TableCell>Special Product</TableCell><TableCell className="text-right">{slip.special}</TableCell><TableCell className="text-right">₱{c.priceSpecial.toLocaleString()}</TableCell><TableCell className="text-right">₱{c.subSpecial.toLocaleString()}</TableCell></TableRow>
                 <TableRow className="border-t-2">
                   <TableCell colSpan={3}><strong>Gross Income</strong></TableCell>
                   <TableCell className="text-right"><strong className="text-emerald-700">₱{c.gross.toLocaleString()}</strong></TableCell>
-                  <TableCell><Badge className="bg-emerald-100 text-emerald-800">Correct</Badge></TableCell>
+                  
                 </TableRow>
               </TableBody>
             </Table>
@@ -726,12 +730,12 @@ function ValidationDetailsDialog({ slip, onClose, onValidate, onReturn }: {
                 <TableRow>
                   <TableHead>Date Released</TableHead><TableHead>Material</TableHead>
                   <TableHead className="text-right">Quantity</TableHead><TableHead className="text-right">Unit Price</TableHead>
-                  <TableHead className="text-right">Total</TableHead><TableHead>Credit Status</TableHead><TableHead>Validation</TableHead>
+                  <TableHead className="text-right">Total</TableHead><TableHead>Credit Status</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {slip.materialCredits.length === 0 && (
-                  <TableRow><TableCell colSpan={7} className="text-muted-foreground text-center">No material credit deductions.</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={6} className="text-muted-foreground text-center">No material credit deductions.</TableCell></TableRow>
                 )}
                 {slip.materialCredits.map((m, i) => (
                   <TableRow key={i}>
@@ -741,13 +745,12 @@ function ValidationDetailsDialog({ slip, onClose, onValidate, onReturn }: {
                     <TableCell className="text-right">₱{m.unitPrice.toLocaleString()}</TableCell>
                     <TableCell className="text-right text-red-600">−₱{(m.qty * m.unitPrice).toLocaleString()}</TableCell>
                     <TableCell><Badge className="bg-amber-100 text-amber-800">{m.status}</Badge></TableCell>
-                    <TableCell><Badge className="bg-emerald-100 text-emerald-800">Matched</Badge></TableCell>
                   </TableRow>
                 ))}
                 <TableRow className="border-t-2">
                   <TableCell colSpan={4}><strong>Material Credit Subtotal</strong></TableCell>
                   <TableCell className="text-right"><strong className="text-red-600">−₱{c.matTotal.toLocaleString()}</strong></TableCell>
-                  <TableCell colSpan={2} />
+                  <TableCell />
                 </TableRow>
               </TableBody>
             </Table>
@@ -762,12 +765,6 @@ function ValidationDetailsDialog({ slip, onClose, onValidate, onReturn }: {
               <Field label="Remarks" value={slip.laborRemarks || "—"} />
               <Field label="Encoded By" value={slip.laborEncodedBy} />
               <Field label="Date Encoded" value={slip.laborDateEncoded} />
-              <div className="space-y-1">
-                <div className="text-xs text-muted-foreground">Validation Result</div>
-                {slip.laborAmount >= 0
-                  ? <Badge className="bg-emerald-100 text-emerald-800"><CheckCircle2 className="h-3 w-3 mr-1" />Correct</Badge>
-                  : <Badge className="bg-amber-100 text-amber-800"><AlertCircle className="h-3 w-3 mr-1" />Needs Review</Badge>}
-              </div>
             </div>
           </SectionCard>
 
@@ -777,7 +774,7 @@ function ValidationDetailsDialog({ slip, onClose, onValidate, onReturn }: {
               <TableHeader>
                 <TableRow>
                   <TableHead>Deduction Type</TableHead><TableHead>Description</TableHead>
-                  <TableHead className="text-right">Amount</TableHead><TableHead>Reference</TableHead><TableHead>Validation</TableHead>
+                  <TableHead className="text-right">Amount</TableHead><TableHead>Reference</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -787,11 +784,11 @@ function ValidationDetailsDialog({ slip, onClose, onValidate, onReturn }: {
                     <TableCell>Carried over from prior payroll period</TableCell>
                     <TableCell className="text-right text-red-600">−₱{slip.prevBalance.toLocaleString()}</TableCell>
                     <TableCell className="text-xs text-muted-foreground">—</TableCell>
-                    <TableCell><Badge className="bg-emerald-100 text-emerald-800">Correct</Badge></TableCell>
+                    
                   </TableRow>
                 )}
                 {slip.otherDeductions.length === 0 && slip.prevBalance === 0 && (
-                  <TableRow><TableCell colSpan={5} className="text-muted-foreground text-center">No other authorized deductions.</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={4} className="text-muted-foreground text-center">No other authorized deductions.</TableCell></TableRow>
                 )}
                 {slip.otherDeductions.map((d, i) => (
                   <TableRow key={i}>
@@ -799,11 +796,6 @@ function ValidationDetailsDialog({ slip, onClose, onValidate, onReturn }: {
                     <TableCell>{d.description}</TableCell>
                     <TableCell className="text-right text-red-600">−₱{d.amount.toLocaleString()}</TableCell>
                     <TableCell className="text-xs text-muted-foreground">{d.ref || "—"}</TableCell>
-                    <TableCell>
-                      {d.description.trim() && d.amount > 0
-                        ? <Badge className="bg-emerald-100 text-emerald-800">Correct</Badge>
-                        : <Badge className="bg-amber-100 text-amber-800">Needs Review</Badge>}
-                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -825,29 +817,39 @@ function ValidationDetailsDialog({ slip, onClose, onValidate, onReturn }: {
             </Table>
           </SectionCard>
 
-          {/* Validation Checklist */}
-          <SectionCard title="Validation Checklist" tone="violet">
+          <SectionCard title="Manual Assessment" tone="violet">
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Validation Area</TableHead><TableHead>Details to Check</TableHead><TableHead>Status</TableHead>
+                  <TableHead>Assessment Area</TableHead><TableHead>Details Reviewed</TableHead><TableHead>Finance Assessment</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {checklist.map((c, i) => (
-                  <TableRow key={i}>
-                    <TableCell>{c.area}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{c.detail}</TableCell>
+                {MANUAL_ASSESSMENT_ITEMS.map((item) => (
+                  <TableRow key={item.id}>
+                    <TableCell>{item.area}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">{item.detail}</TableCell>
                     <TableCell>
-                      {c.ok
-                        ? <Badge className="bg-emerald-100 text-emerald-800"><CheckCircle2 className="h-3 w-3 mr-1" />Complete</Badge>
-                        : <Badge className="bg-amber-100 text-amber-800"><AlertCircle className="h-3 w-3 mr-1" />Needs Review</Badge>}
+                      <Select
+                        value={assessments[item.id] ?? ""}
+                        onValueChange={(value: ManualAssessmentValue) => setAssessments((current) => ({ ...current, [item.id]: value }))}
+                        disabled={!financeCanAct || returning || validating}
+                      >
+                        <SelectTrigger className="w-full sm:w-[180px]">
+                          <SelectValue placeholder="Select result" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="Matched">Matched</SelectItem>
+                          <SelectItem value="Not Matched">Not Matched</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
-            {!allOk && <div className="text-xs text-amber-700">Validate Payroll is disabled until every item above is Complete.</div>}
+            {hasIncompleteAssessment && <div className="text-xs text-amber-700">Complete every manual assessment item before validating payroll.</div>}
+            {!hasIncompleteAssessment && !allManuallyMatched && <div className="text-xs text-red-700">Payrolls with Not Matched items should be returned for correction.</div>}
           </SectionCard>
 
           {slip.status === "Returned for Correction" && slip.returnReason && (
@@ -868,7 +870,7 @@ function ValidationDetailsDialog({ slip, onClose, onValidate, onReturn }: {
               {returning ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Undo2 className="h-4 w-4 mr-1" />}Return for Correction
             </Button>
             <Button className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50"
-              disabled={!allOk || !financeCanAct || validating || returning}
+              disabled={!allManuallyMatched || !financeCanAct || validating || returning}
               onClick={submitValidation}>
               {validating ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <CheckCircle2 className="h-4 w-4 mr-1" />}Validate Payroll
             </Button>
@@ -883,12 +885,17 @@ function ValidationDetailsDialog({ slip, onClose, onValidate, onReturn }: {
             <div className="space-y-3">
               <div className="space-y-1">
                 <Label>Error Category <span className="text-red-500">*</span></Label>
-                <Select value={retCategory} onValueChange={setRetCategory}>
-                  <SelectTrigger><SelectValue placeholder="Select an error category" /></SelectTrigger>
-                  <SelectContent>
-                    {ERROR_CATEGORIES.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-                  </SelectContent>
-                </Select>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <Select value={retCategory} onValueChange={setRetCategory}>
+                    <SelectTrigger className="flex-1"><SelectValue placeholder="Select an error category" /></SelectTrigger>
+                    <SelectContent>
+                      {errorCategories.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                  <Button type="button" variant="outline" onClick={() => setShowAddCategory(true)}>
+                    <Plus className="h-4 w-4 mr-1" />Add Category
+                  </Button>
+                </div>
               </div>
               <div className="space-y-1">
                 <Label>Reason for Return <span className="text-red-500">*</span></Label>
@@ -908,6 +915,22 @@ function ValidationDetailsDialog({ slip, onClose, onValidate, onReturn }: {
                 <Button className="bg-red-600 hover:bg-red-700" disabled={returning} onClick={submitReturn}>
                   {returning ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Undo2 className="h-4 w-4 mr-1" />}Confirm Return
                 </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={showAddCategory} onOpenChange={setShowAddCategory}>
+          <DialogContent className="!max-w-[calc(100vw-1rem)] w-[calc(100vw-1rem)] sm:!max-w-[420px]">
+            <DialogHeader><DialogTitle>Add Finance Category</DialogTitle></DialogHeader>
+            <div className="space-y-3">
+              <div className="space-y-1">
+                <Label>Category Name</Label>
+                <Input value={newCategory} onChange={(event) => setNewCategory(event.target.value)} placeholder="Enter category name" />
+              </div>
+              <div className="flex justify-end gap-2 pt-2 border-t">
+                <Button variant="outline" onClick={() => { setShowAddCategory(false); setNewCategory(""); }}>Cancel</Button>
+                <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={addErrorCategory}>Save Category</Button>
               </div>
             </div>
           </DialogContent>

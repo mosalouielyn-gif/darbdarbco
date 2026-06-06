@@ -18,9 +18,9 @@ class ProductionBoxRecordController extends Controller
     public function store(Request $request): JsonResponse
     {
         $payload = $this->validatedPayload($request);
-        $id = DB::table('production_box_records')->insertGetId($this->recordValues($payload));
+        $recordValues = $this->recordValues($payload);
+        $id = DB::table('production_box_records')->insertGetId($recordValues);
 
-        $record = $this->findRecord($id);
         $this->recordAudit(
             $payload['user_id'] ?? null,
             $payload['user_name'] ?? null,
@@ -28,24 +28,21 @@ class ProductionBoxRecordController extends Controller
             "Created production box record #{$id} for {$payload['beneficiary_name']}",
         );
 
-        return response()->json($record, 201);
+        return response()->json((object) array_merge(['id' => $id], $recordValues), 201);
     }
 
     public function update(Request $request, int $id): JsonResponse
     {
         $payload = $this->validatedPayload($request);
+        $current = $this->findRecord($id);
+        abort_if(! $current, 404, 'Production box record not found.');
+        $values = $this->recordValues($payload, false);
 
-        DB::table('production_box_records')->where('id', $id)->update($this->recordValues($payload, false));
+        DB::table('production_box_records')->where('id', $id)->update($values);
 
-        $record = $this->findRecord($id);
-        $this->recordAudit(
-            $payload['user_id'] ?? null,
-            $payload['user_name'] ?? null,
-            'Updated',
-            "Updated production box record #{$id} for {$payload['beneficiary_name']}",
-        );
+        $this->recordFieldChangeAudit($current, $values, $payload, $id);
 
-        return response()->json($record);
+        return response()->json((object) array_merge((array) $current, $values));
     }
 
     public function destroy(Request $request, int $id): JsonResponse
@@ -149,12 +146,14 @@ class ProductionBoxRecordController extends Controller
             'rejects_14_weeks' => ['required', 'integer', 'min:0'],
             'user_id' => ['nullable', 'integer'],
             'user_name' => ['nullable', 'string', 'max:255'],
+            'edit_reason' => ['nullable', 'string'],
         ]);
     }
 
     private function recordValues(array $payload, bool $creating = true): array
     {
         $beneficiaryId = $this->resolveBeneficiaryId($payload['beneficiary_name']);
+        $createdBy = $this->resolveUserId($payload['user_id'] ?? null, $payload['user_name'] ?? null);
         $values = [
             'production_date' => $payload['production_date'],
             'beneficiary_id' => $beneficiaryId,
@@ -182,7 +181,7 @@ class ProductionBoxRecordController extends Controller
 
         if ($creating) {
             $values['record_no'] = $this->nextRecordNo();
-            $values['created_by'] = $payload['user_id'] ?? null;
+            $values['created_by'] = $createdBy;
             $values['created_at'] = now();
         }
 
@@ -243,6 +242,11 @@ class ProductionBoxRecordController extends Controller
             'action' => $action,
         ];
 
+        if (Schema::hasColumn('audit_logs', 'id')) {
+            $maxId = (int) DB::table('audit_logs')->max('id');
+            $values['id'] = $maxId + 1;
+        }
+
         if (Schema::hasColumn('audit_logs', 'status')) {
             $values['status'] = 'Completed';
         }
@@ -275,13 +279,72 @@ class ProductionBoxRecordController extends Controller
             $values['updated_at'] = now();
         }
 
-        DB::table('audit_logs')->insert($values);
+        try {
+            DB::table('audit_logs')->insert($values);
+        } catch (\Throwable) {
+            // Audit logging should never block production box record saves.
+        }
+    }
+
+    private function recordFieldChangeAudit(object $current, array $values, array $payload, int $id): void
+    {
+        $reason = trim((string) ($payload['edit_reason'] ?? 'No reason provided.'));
+        $changes = [];
+
+        foreach ($this->auditFieldLabels() as $field => $label) {
+            if (! array_key_exists($field, $values)) {
+                continue;
+            }
+
+            $previous = $current->{$field} ?? null;
+            $updated = $values[$field] ?? null;
+            if ((string) $previous === (string) $updated) {
+                continue;
+            }
+
+            $changes[] = "Field changed: {$label}; Previous value: {$previous}; Updated value: {$updated}";
+        }
+
+        $details = count($changes) > 0
+            ? implode(' | ', $changes)
+            : 'No field value changed';
+
+        $this->recordAudit(
+            $payload['user_id'] ?? null,
+            $payload['user_name'] ?? null,
+            'Updated',
+            "Production record #{$id}; {$details}; Reason for editing: {$reason}",
+        );
+    }
+
+    private function auditFieldLabels(): array
+    {
+        return [
+            'production_date' => 'Production Date',
+            'beneficiary_id' => 'Beneficiary ID',
+            'beneficiary_name' => 'Beneficiary Name',
+            'class_a_big_hands' => 'Class A Big Hands',
+            'class_a_small_hands' => 'Class A Small Hands',
+            'class_a_cps' => 'Class A CPs',
+            'class_b_big_hands' => 'Class B Big Hands',
+            'class_b_small_hands' => 'Class B Small Hands',
+            'class_b_cps' => 'Class B CPs',
+            'special_product' => 'Special Product',
+            'defects_11_weeks' => 'Defects 11 Weeks',
+            'defects_12_weeks' => 'Defects 12 Weeks',
+            'defects_13_weeks' => 'Defects 13 Weeks',
+            'defects_14_weeks' => 'Defects 14 Weeks',
+            'rejects_11_weeks' => 'Rejects 11 Weeks',
+            'rejects_12_weeks' => 'Rejects 12 Weeks',
+            'rejects_13_weeks' => 'Rejects 13 Weeks',
+            'rejects_14_weeks' => 'Rejects 14 Weeks',
+        ];
     }
 
     private function resolveUserId(?int $userId, ?string $userName): ?int
     {
-        if ($userId) return $userId;
         if (! Schema::hasTable('users')) return null;
+        if ($userId && DB::table('users')->where('id', $userId)->exists()) return $userId;
 
         if ($userName) {
             $nameColumn = Schema::hasColumn('users', 'full_name') ? 'full_name' : (Schema::hasColumn('users', 'name') ? 'name' : null);

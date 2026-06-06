@@ -11,7 +11,8 @@ import { DateInput } from "../ui/date-input";
 import {
   LayoutDashboard, Package, Boxes, Users, TrendingUp, Plus, Search,
   CheckCircle2, Edit, Trash2, ChevronLeft, ChevronRight, FileText,
-  Save, FileBarChart2, ClipboardList, ArrowRight, Loader2,
+  Save, FileBarChart2, ClipboardList, ArrowRight, Loader2, ChevronsUpDown,
+  Check, Eye,
 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Label } from "../ui/label";
@@ -23,8 +24,8 @@ import {
 } from "recharts";
 import {
   createProductionBoxRecord,
+  fetchAppData,
   createHarvestRecord,
-  deleteHarvestRecord,
   deleteProductionBoxRecord,
   fetchProductionBoxRecords,
   fetchHarvestRecords,
@@ -36,6 +37,7 @@ import {
 import { useAppData } from "../../lib/app-data-context";
 import { addDaysSystemDate, formatSystemDate, todaySystemDate } from "../../lib/date-time";
 import { usePersistentState } from "../../lib/use-persistent-state";
+import { cn } from "../ui/utils";
 
 interface Props { user: User; onLogout: () => void }
 
@@ -79,6 +81,7 @@ interface ProductionRecord {
   rejects_12: number;
   rejects_13: number;
   rejects_14: number;
+  editReason?: string;
 }
 
 export function ProductionClerkDashboard({ user, onLogout }: Props) {
@@ -346,25 +349,56 @@ function previousMonthKey(monthKey: string) {
 }
 
 function ProductionRecords({ tab, setTab, user }: { tab: string; setTab: (t: string) => void; user: User }) {
+  const { data } = useAppData();
   const [openHarvest, setOpenHarvest] = useState(false);
   const [openProduction, setOpenProduction] = useState(false);
+  const [viewingHarvest, setViewingHarvest] = useState<HarvestRecord | null>(null);
+  const [viewingProduction, setViewingProduction] = useState<ProductionRecord | null>(null);
   const [harvestData, setHarvestData] = useState<HarvestRecord[]>(harvestRecords);
   const [productionData, setProductionData] = useState<ProductionRecord[]>(productionRecords);
+  const [masterBeneficiaries, setMasterBeneficiaries] = useState<any[]>([]);
+  const [masterHarvesters, setMasterHarvesters] = useState<any[]>([]);
   const [editingHarvest, setEditingHarvest] = useState<HarvestRecord | null>(null);
   const [editingProduction, setEditingProduction] = useState<ProductionRecord | null>(null);
-  const [deletingHarvest, setDeletingHarvest] = useState<HarvestRecord | null>(null);
   const [deletingProduction, setDeletingProduction] = useState<ProductionRecord | null>(null);
   const [loadingHarvest, setLoadingHarvest] = useState(false);
   const [loadingProduction, setLoadingProduction] = useState(false);
-  const [deletingHarvestBusy, setDeletingHarvestBusy] = useState(false);
+  const [refreshingMasters, setRefreshingMasters] = useState(false);
   const [deletingProductionBusy, setDeletingProductionBusy] = useState(false);
 
   const buttonLabel = tab === "harvest" ? "New Harvest Record" : "New Production Record";
+  const beneficiaryRows = masterBeneficiaries.length > 0 ? masterBeneficiaries : (data?.beneficiaries ?? []);
+  const harvesterRows = masterHarvesters.length > 0 ? masterHarvesters : (data?.harvesters ?? []);
+  const beneficiaryOptions = getBeneficiaryOptions(beneficiaryRows, harvestData, productionData);
+  const harvesterOptions = getHarvesterOptions(harvesterRows, harvestData);
+
+  React.useEffect(() => {
+    setMasterBeneficiaries(data?.beneficiaries ?? []);
+    setMasterHarvesters(data?.harvesters ?? []);
+  }, [data?.beneficiaries, data?.harvesters]);
+
+  const refreshMasterLists = async (showError = true) => {
+    setRefreshingMasters(true);
+    try {
+      const latest = await fetchAppData("manager_admin");
+      setMasterBeneficiaries(latest.beneficiaries ?? []);
+      const harvesterUsers = (latest.users ?? []).filter((account: any) => account.role === "harvester");
+      setMasterHarvesters(harvesterUsers.length > 0 ? harvesterUsers : (latest.harvesters ?? []));
+    } catch (error) {
+      if (showError) {
+        toast.error(error instanceof Error ? error.message : "Unable to refresh beneficiary and harvester lists.");
+      }
+    } finally {
+      setRefreshingMasters(false);
+    }
+  };
 
   React.useEffect(() => {
     let active = true;
     setLoadingHarvest(true);
     setLoadingProduction(true);
+
+    refreshMasterLists(false);
 
     Promise.allSettled([fetchHarvestRecords(), fetchProductionBoxRecords()])
       .then(([harvestResult, productionResult]) => {
@@ -397,6 +431,7 @@ function ProductionRecords({ tab, setTab, user }: { tab: string; setTab: (t: str
   const onNew = () => {
     if (tab === "harvest") setOpenHarvest(true);
     else if (tab === "production") setOpenProduction(true);
+    refreshMasterLists(false);
   };
 
   return (
@@ -422,16 +457,16 @@ function ProductionRecords({ tab, setTab, user }: { tab: string; setTab: (t: str
           <HarvestRecordsPanel
             records={harvestData}
             loading={loadingHarvest}
+            onView={setViewingHarvest}
             onEdit={setEditingHarvest}
-            onDelete={setDeletingHarvest}
           />
         </TabsContent>
         <TabsContent value="production">
           <ProductionBoxesPanel
             records={productionData}
             loading={loadingProduction}
+            onView={setViewingProduction}
             onEdit={setEditingProduction}
-            onDelete={setDeletingProduction}
           />
         </TabsContent>
       </Tabs>
@@ -439,6 +474,10 @@ function ProductionRecords({ tab, setTab, user }: { tab: string; setTab: (t: str
       <HarvestDialog
         open={openHarvest}
         onOpenChange={setOpenHarvest}
+        beneficiaryOptions={beneficiaryOptions}
+        harvesterOptions={harvesterOptions}
+        refreshingOptions={refreshingMasters}
+        onRefreshOptions={() => refreshMasterLists(false)}
         onSave={async (record) => {
           const saved = await createHarvestRecord(toHarvestPayload(record, user));
           setHarvestData((current) => [mapHarvestRecord(saved), ...current]);
@@ -449,6 +488,10 @@ function ProductionRecords({ tab, setTab, user }: { tab: string; setTab: (t: str
         open={!!editingHarvest}
         record={editingHarvest}
         onOpenChange={(open) => !open && setEditingHarvest(null)}
+        beneficiaryOptions={beneficiaryOptions}
+        harvesterOptions={harvesterOptions}
+        refreshingOptions={refreshingMasters}
+        onRefreshOptions={() => refreshMasterLists(false)}
         onSave={async (record) => {
           const saved = await updateHarvestRecord(record.id, toHarvestPayload(record, user));
           setHarvestData((current) => current.map((item) => item.id === record.id ? mapHarvestRecord(saved) : item));
@@ -459,7 +502,9 @@ function ProductionRecords({ tab, setTab, user }: { tab: string; setTab: (t: str
       <ProductionBoxesDialog
         open={openProduction}
         onOpenChange={setOpenProduction}
-        beneficiaryOptions={harvestData.map((record) => record.beneficiary)}
+        beneficiaryOptions={beneficiaryOptions}
+        refreshingOptions={refreshingMasters}
+        onRefreshOptions={() => refreshMasterLists(false)}
         onSave={async (record) => {
           const saved = await createProductionBoxRecord(toProductionPayload(record, user));
           setProductionData((current) => [mapProductionRecord(saved), ...current]);
@@ -469,7 +514,9 @@ function ProductionRecords({ tab, setTab, user }: { tab: string; setTab: (t: str
       <ProductionBoxesDialog
         open={!!editingProduction}
         record={editingProduction}
-        beneficiaryOptions={harvestData.map((record) => record.beneficiary)}
+        beneficiaryOptions={beneficiaryOptions}
+        refreshingOptions={refreshingMasters}
+        onRefreshOptions={() => refreshMasterLists(false)}
         onOpenChange={(open) => !open && setEditingProduction(null)}
         onSave={async (record) => {
           const saved = await updateProductionBoxRecord(record.id, toProductionPayload(record, user));
@@ -478,53 +525,8 @@ function ProductionRecords({ tab, setTab, user }: { tab: string; setTab: (t: str
           toast.success("Production record updated");
         }}
       />
-      <Dialog open={!!deletingHarvest} onOpenChange={(open) => !open && !deletingHarvestBusy && setDeletingHarvest(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-red-700">
-              <Trash2 className="h-5 w-5" />Delete Harvest Record
-            </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <p className="text-sm text-muted-foreground">
-              Are you sure you want to delete this harvest record? This action cannot be undone.
-            </p>
-            {deletingHarvest && (
-              <div className="rounded-md border bg-slate-50 p-3 text-sm">
-                <div className="font-medium">{deletingHarvest.beneficiary}</div>
-                <div className="text-muted-foreground">{deletingHarvest.date} • {deletingHarvest.harvester}</div>
-              </div>
-            )}
-            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end [&>button]:w-full sm:[&>button]:w-auto">
-              <Button variant="outline" onClick={() => setDeletingHarvest(null)} disabled={deletingHarvestBusy}>Cancel</Button>
-              <Button
-                className="bg-red-600 hover:bg-red-700"
-                disabled={deletingHarvestBusy}
-                onClick={async () => {
-                  if (!deletingHarvest) return;
-                  setDeletingHarvestBusy(true);
-                  try {
-                    await deleteHarvestRecord(deletingHarvest.id, userAuditPayload(user));
-                    setHarvestData((current) => current.filter((item) => item.id !== deletingHarvest.id));
-                    setDeletingHarvest(null);
-                    toast.success("Harvest record deleted");
-                  } catch (error) {
-                    toast.error(error instanceof Error ? error.message : "Unable to delete harvest record.");
-                  } finally {
-                    setDeletingHarvestBusy(false);
-                  }
-                }}
-              >
-                {deletingHarvestBusy ? (
-                  <><Loader2 className="h-4 w-4 mr-1 animate-spin" />Deleting...</>
-                ) : (
-                  "Delete Record"
-                )}
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <HarvestDetailsDialog record={viewingHarvest} onOpenChange={(open) => !open && setViewingHarvest(null)} />
+      <ProductionDetailsDialog record={viewingProduction} onOpenChange={(open) => !open && setViewingProduction(null)} />
       <Dialog open={!!deletingProduction} onOpenChange={(open) => !open && !deletingProductionBusy && setDeletingProduction(null)}>
         <DialogContent>
           <DialogHeader>
@@ -576,11 +578,11 @@ function ProductionRecords({ tab, setTab, user }: { tab: string; setTab: (t: str
   );
 }
 
-function HarvestRecordsPanel({ records, loading, onEdit, onDelete }: {
+function HarvestRecordsPanel({ records, loading, onView, onEdit }: {
   records: HarvestRecord[];
   loading: boolean;
+  onView: (record: HarvestRecord) => void;
   onEdit: (record: HarvestRecord) => void;
-  onDelete: (record: HarvestRecord) => void;
 }) {
   const [search, setSearch] = useState("");
   const filteredRecords = records.filter((record) => {
@@ -636,7 +638,7 @@ function HarvestRecordsPanel({ records, loading, onEdit, onDelete }: {
                 <TableCell className="text-center">{r.w14}</TableCell>
                 <TableCell className="text-center"><strong>{r.total}</strong></TableCell>
                 <TableCell className="w-[88px]">
-                  <ActionCell onEdit={() => onEdit(r)} onDelete={() => onDelete(r)} />
+                  <ActionCell onView={() => onView(r)} onEdit={() => onEdit(r)} />
                 </TableCell>
               </TableRow>
             ))}
@@ -648,11 +650,11 @@ function HarvestRecordsPanel({ records, loading, onEdit, onDelete }: {
   );
 }
 
-function ProductionBoxesPanel({ records, loading, onEdit, onDelete }: {
+function ProductionBoxesPanel({ records, loading, onView, onEdit }: {
   records: ProductionRecord[];
   loading: boolean;
+  onView: (record: ProductionRecord) => void;
   onEdit: (record: ProductionRecord) => void;
-  onDelete: (record: ProductionRecord) => void;
 }) {
   const [search, setSearch] = useState("");
   const filteredRecords = records.filter((record) => {
@@ -733,7 +735,7 @@ function ProductionBoxesPanel({ records, loading, onEdit, onDelete }: {
                   <TableCell className="text-center text-red-600">{r.rejects_13}</TableCell>
                   <TableCell className="text-center text-red-600 border-r">{r.rejects_14}</TableCell>
                   <TableCell className="w-[88px]">
-                    <ActionCell onEdit={() => onEdit(r)} onDelete={() => onDelete(r)} />
+                    <ProductionActionCell onView={() => onView(r)} onEdit={() => onEdit(r)} />
                   </TableCell>
                 </TableRow>
               ))}
@@ -779,6 +781,139 @@ function Pager({ count = 5, total = 5 }: { count?: number; total?: number }) {
       </div>
     </div>
   );
+}
+
+function SearchableSelect({ value, options, placeholder, searchPlaceholder, emptyMessage, loading, onChange, onOpen }: {
+  value: string;
+  options: string[];
+  placeholder: string;
+  searchPlaceholder: string;
+  emptyMessage: string;
+  loading?: boolean;
+  onChange: (value: string) => void;
+  onOpen?: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const containerRef = React.useRef<HTMLDivElement | null>(null);
+  const uniqueOptions = Array.from(new Set(options.map((option) => option.trim()).filter(Boolean)));
+  const filteredOptions = uniqueOptions.filter((option) => option.toLowerCase().includes(query.toLowerCase().trim()));
+
+  React.useEffect(() => {
+    if (!open) return;
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", closeOnOutsideClick);
+    return () => document.removeEventListener("mousedown", closeOnOutsideClick);
+  }, [open]);
+
+  const openList = () => {
+    const nextOpen = !open;
+    setOpen(nextOpen);
+    if (nextOpen) {
+      setQuery("");
+      onOpen?.();
+    }
+  };
+
+  return (
+    <div className="relative" ref={containerRef}>
+        <Button
+          type="button"
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          onClick={openList}
+          className="h-9 w-full justify-between bg-white px-3 font-normal"
+        >
+          <span className={cn("truncate", !value && "text-muted-foreground")}>{value || placeholder}</span>
+          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+        </Button>
+      {open && (
+        <div className="absolute left-0 right-0 top-[calc(100%+0.25rem)] z-[120] rounded-md border bg-white p-2 shadow-lg">
+          <Input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder={searchPlaceholder}
+            className="h-9"
+            autoFocus
+          />
+          <div className="mt-2 max-h-56 overflow-y-auto">
+            {loading && filteredOptions.length === 0 ? (
+              <div className="px-3 py-4 text-center text-sm text-muted-foreground">Refreshing list...</div>
+            ) : filteredOptions.length === 0 ? (
+              <div className="px-3 py-4 text-center text-sm text-muted-foreground">{emptyMessage}</div>
+            ) : (
+              filteredOptions.map((option) => (
+                <button
+                  type="button"
+                  key={option}
+                  className="flex w-full items-center gap-2 rounded-sm px-3 py-2 text-left text-sm hover:bg-emerald-50"
+                  onClick={() => {
+                    onChange(option);
+                    setOpen(false);
+                    setQuery("");
+                  }}
+                >
+                  <Check className={cn("h-4 w-4", option === value ? "opacity-100" : "opacity-0")} />
+                  <span>{option}</span>
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function getBeneficiaryOptions(sourceRows: any[], harvestData: HarvestRecord[], productionData: ProductionRecord[]) {
+  const activeRows = sourceRows.filter(isActiveMasterRow);
+  const names = [
+    ...activeRows.map((row) => formatBeneficiaryDisplayName(row.name ?? row.full_name ?? row.beneficiary_name ?? row.beneficiary ?? "")),
+    ...(activeRows.length === 0 ? harvestData.map((record) => formatBeneficiaryDisplayName(record.beneficiary)) : []),
+    ...(activeRows.length === 0 ? productionData.map((record) => formatBeneficiaryDisplayName(record.beneficiary)) : []),
+  ];
+
+  return Array.from(new Set(names.map((name) => name.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+}
+
+function getHarvesterOptions(sourceRows: any[], harvestData: HarvestRecord[]) {
+  const activeRows = sourceRows.filter(isActiveMasterRow);
+  const names = [
+    ...activeRows.map((row) => row.name ?? row.full_name ?? row.harvester_name ?? row.harvester ?? ""),
+    ...(activeRows.length === 0 ? harvestData.map((record) => record.harvester) : []),
+  ];
+
+  return Array.from(new Set(names.map((name) => String(name).trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+}
+
+function isActiveMasterRow(row: any) {
+  return row?.active === undefined || row.active === true || row.active === 1 || row.active === "1";
+}
+
+function formatBeneficiaryDisplayName(name: string) {
+  const cleanName = String(name ?? "").trim().replace(/\s+/g, " ");
+  if (!cleanName || cleanName.includes(",")) return cleanName;
+
+  const parts = cleanName.split(" ");
+  if (parts.length < 2) return cleanName;
+
+  const firstName = parts[0];
+  const middleParts = parts.slice(1, -1);
+  let lastNameParts = [parts[parts.length - 1]];
+  const surnamePrefixes = ["de", "del", "dela", "de la", "van", "von", "san", "santa"];
+  const possiblePrefix = middleParts[middleParts.length - 1]?.toLowerCase();
+
+  if (possiblePrefix && surnamePrefixes.includes(possiblePrefix)) {
+    lastNameParts = [middleParts.pop() as string, ...lastNameParts];
+  }
+
+  const middleInitial = middleParts.length > 0 ? `${middleParts[0].replace(".", "").charAt(0).toUpperCase()}.` : "";
+  return `${lastNameParts.join(" ")}, ${[firstName, middleInitial].filter(Boolean).join(" ")}`;
 }
 
 function mapHarvestRecord(record: any): HarvestRecord {
@@ -860,13 +995,23 @@ function toProductionPayload(record: ProductionRecord, user: User): ProductionBo
     rejects_12_weeks: record.rejects_12,
     rejects_13_weeks: record.rejects_13,
     rejects_14_weeks: record.rejects_14,
+    edit_reason: record.editReason?.trim(),
     ...userAuditPayload(user),
   };
 }
 
-function ActionCell({ onEdit, onDelete }: { onEdit: () => void; onDelete: () => void }) {
+function ActionCell({ onView, onEdit }: { onView: () => void; onEdit: () => void }) {
   return (
     <div className="flex items-center justify-center gap-1 whitespace-nowrap">
+      <button
+        type="button"
+        onClick={onView}
+        className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded bg-sky-100 text-sky-700 hover:bg-sky-200"
+        title="View"
+        aria-label="View harvest record"
+      >
+        <Eye className="h-3.5 w-3.5" />
+      </button>
       <button
         type="button"
         onClick={onEdit}
@@ -876,14 +1021,30 @@ function ActionCell({ onEdit, onDelete }: { onEdit: () => void; onDelete: () => 
       >
         <Edit className="h-3.5 w-3.5" />
       </button>
+    </div>
+  );
+}
+
+function ProductionActionCell({ onView, onEdit }: { onView: () => void; onEdit: () => void }) {
+  return (
+    <div className="flex items-center justify-center gap-1 whitespace-nowrap">
       <button
         type="button"
-        onClick={onDelete}
-        className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded bg-red-100 text-red-700 hover:bg-red-200"
-        title="Delete"
-        aria-label="Delete record"
+        onClick={onView}
+        className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded bg-sky-100 text-sky-700 hover:bg-sky-200"
+        title="View"
+        aria-label="View production record"
       >
-        <Trash2 className="h-3.5 w-3.5" />
+        <Eye className="h-3.5 w-3.5" />
+      </button>
+      <button
+        type="button"
+        onClick={onEdit}
+        className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded bg-amber-100 text-amber-700 hover:bg-amber-200"
+        title="Edit"
+        aria-label="Edit production record"
+      >
+        <Edit className="h-3.5 w-3.5" />
       </button>
     </div>
   );
@@ -916,10 +1077,105 @@ function todayLocalDate() {
   return todaySystemDate();
 }
 
-function HarvestDialog({ open, onOpenChange, record, onSave }: {
+function HarvestDetailsDialog({ record, onOpenChange }: {
+  record: HarvestRecord | null;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const rows = record ? [
+    ["Harvest Date", record.date],
+    ["Beneficiary", record.beneficiary],
+    ["Harvester", record.harvester],
+    ["11 weeks", record.w11],
+    ["12 weeks", record.w12],
+    ["13 weeks", record.w13],
+    ["14 weeks", record.w14],
+    ["Total Buligs", record.total],
+  ] : [];
+
+  return (
+    <Dialog open={!!record} onOpenChange={onOpenChange}>
+      <DialogContent className="w-[calc(100vw-1rem)] max-h-[90dvh] overflow-y-auto sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-emerald-700">
+            <FileText className="h-5 w-5" />Harvest Record Details
+          </DialogTitle>
+        </DialogHeader>
+        {record && (
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {rows.map(([label, value]) => (
+              <div key={String(label)} className="rounded-md border bg-slate-50 p-3">
+                <div className="text-xs text-muted-foreground">{label}</div>
+                <div className="font-medium">{value}</div>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="flex justify-end">
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Close</Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ProductionDetailsDialog({ record, onOpenChange }: {
+  record: ProductionRecord | null;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const rows = record ? [
+    ["Date", record.date],
+    ["Beneficiary", record.beneficiary],
+    ["Class A - Big Hands", record.classA_big],
+    ["Class A - Small Hands", record.classA_small],
+    ["Class A - CPs", record.classA_cp],
+    ["Class B - Big Hands", record.classB_big],
+    ["Class B - Small Hands", record.classB_small],
+    ["Class B - CPs", record.classB_cp],
+    ["Special Product", record.special],
+    ["Defects - 11 weeks", record.defects_11],
+    ["Defects - 12 weeks", record.defects_12],
+    ["Defects - 13 weeks", record.defects_13],
+    ["Defects - 14 weeks", record.defects_14],
+    ["Rejects - 11 weeks", record.rejects_11],
+    ["Rejects - 12 weeks", record.rejects_12],
+    ["Rejects - 13 weeks", record.rejects_13],
+    ["Rejects - 14 weeks", record.rejects_14],
+  ] : [];
+
+  return (
+    <Dialog open={!!record} onOpenChange={onOpenChange}>
+      <DialogContent className="w-[calc(100vw-1rem)] max-h-[90dvh] overflow-y-auto sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-emerald-700">
+            <FileText className="h-5 w-5" />Production Record Details
+          </DialogTitle>
+        </DialogHeader>
+        {record && (
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {rows.map(([label, value]) => (
+              <div key={String(label)} className="rounded-md border bg-slate-50 p-3">
+                <div className="text-xs text-muted-foreground">{label}</div>
+                <div className="font-medium">{value}</div>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="flex justify-end">
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Close</Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function HarvestDialog({ open, onOpenChange, record, beneficiaryOptions, harvesterOptions, refreshingOptions, onRefreshOptions, onSave }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   record?: HarvestRecord | null;
+  beneficiaryOptions: string[];
+  harvesterOptions: string[];
+  refreshingOptions?: boolean;
+  onRefreshOptions?: () => void;
   onSave: (record: HarvestRecord) => void | Promise<void>;
 }) {
   const today = todayLocalDate();
@@ -966,7 +1222,7 @@ function HarvestDialog({ open, onOpenChange, record, onSave }: {
     }
     try {
       setIsSaving(true);
-      await onSave(form);
+      await onSave({ ...form });
       onOpenChange(false);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Unable to save harvest record.");
@@ -991,11 +1247,29 @@ function HarvestDialog({ open, onOpenChange, record, onSave }: {
             </div>
             <div className="space-y-1">
               <Label>Beneficiary Name <span className="text-red-500">*</span></Label>
-              <Input value={form.beneficiary} onChange={(e) => setForm({ ...form, beneficiary: e.target.value })} placeholder="e.g. Juan Dela Cruz" />
+              <SearchableSelect
+                value={form.beneficiary}
+                options={beneficiaryOptions}
+                placeholder="Select beneficiary"
+                searchPlaceholder="Search beneficiaries..."
+                emptyMessage="No beneficiary found."
+                loading={refreshingOptions}
+                onOpen={onRefreshOptions}
+                onChange={(beneficiary) => setForm({ ...form, beneficiary })}
+              />
             </div>
             <div className="space-y-1 md:col-span-2">
               <Label>Harvester Name <span className="text-red-500">*</span></Label>
-              <Input value={form.harvester} onChange={(e) => setForm({ ...form, harvester: e.target.value })} placeholder="e.g. Daniel Cruz" />
+              <SearchableSelect
+                value={form.harvester}
+                options={harvesterOptions}
+                placeholder="Select harvester"
+                searchPlaceholder="Search harvesters..."
+                emptyMessage="No harvester found."
+                loading={refreshingOptions}
+                onOpen={onRefreshOptions}
+                onChange={(harvester) => setForm({ ...form, harvester })}
+              />
             </div>
           </div>
 
@@ -1025,7 +1299,7 @@ function HarvestDialog({ open, onOpenChange, record, onSave }: {
             <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isSaving}>Cancel</Button>
             <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={submit} disabled={isSaving}>
               {isSaving ? (
-                <><Loader2 className="h-4 w-4 mr-1 animate-spin" />Saving...</>
+                <><Loader2 className="h-4 w-4 mr-1 animate-spin" />Saving</>
               ) : (
                 <><Save className="h-4 w-4 mr-1" />Save Record</>
               )}
@@ -1037,11 +1311,13 @@ function HarvestDialog({ open, onOpenChange, record, onSave }: {
   );
 }
 
-function ProductionBoxesDialog({ open, onOpenChange, record, beneficiaryOptions, onSave }: {
+function ProductionBoxesDialog({ open, onOpenChange, record, beneficiaryOptions, refreshingOptions, onRefreshOptions, onSave }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   record?: ProductionRecord | null;
   beneficiaryOptions: string[];
+  refreshingOptions?: boolean;
+  onRefreshOptions?: () => void;
   onSave: (record: ProductionRecord) => void | Promise<void>;
 }) {
   const today = todayLocalDate();
@@ -1065,6 +1341,7 @@ function ProductionBoxesDialog({ open, onOpenChange, record, beneficiaryOptions,
     rejects_12: record?.rejects_12 ?? 0,
     rejects_13: record?.rejects_13 ?? 0,
     rejects_14: record?.rejects_14 ?? 0,
+    editReason: "",
   });
   const [form, setForm] = useState<ProductionRecord>(blank);
   const [isSaving, setIsSaving] = useState(false);
@@ -1086,10 +1363,14 @@ function ProductionBoxesDialog({ open, onOpenChange, record, beneficiaryOptions,
       toast.error("Beneficiary name is required");
       return;
     }
+    if (record && !form.editReason?.trim()) {
+      toast.error("Reason for editing is required");
+      return;
+    }
 
     try {
       setIsSaving(true);
-      await onSave(form);
+      await onSave({ ...form });
       onOpenChange(false);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Unable to save production record.");
@@ -1110,16 +1391,16 @@ function ProductionBoxesDialog({ open, onOpenChange, record, beneficiaryOptions,
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
             <div className="space-y-1">
               <Label>Harvest Beneficiary <span className="text-red-500">*</span></Label>
-              <Select value={form.beneficiary} onValueChange={(value) => setForm({ ...form, beneficiary: value })}>
-                <SelectTrigger className="h-9 w-full bg-muted/50 px-3">
-                  <SelectValue placeholder="Select beneficiary from harvest records" />
-                </SelectTrigger>
-                <SelectContent>
-                  {uniqueBeneficiaries.map((name) => (
-                    <SelectItem key={name} value={name}>{name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <SearchableSelect
+                value={form.beneficiary}
+                options={uniqueBeneficiaries}
+                placeholder="Select beneficiary"
+                searchPlaceholder="Search beneficiaries..."
+                emptyMessage="No beneficiary found."
+                loading={refreshingOptions}
+                onOpen={onRefreshOptions}
+                onChange={(beneficiary) => setForm({ ...form, beneficiary })}
+              />
             </div>
             <div className="space-y-1">
               <Label>Production Date <span className="text-red-500">*</span></Label>
@@ -1215,11 +1496,22 @@ function ProductionBoxesDialog({ open, onOpenChange, record, beneficiaryOptions,
             </div>
           </div>
 
+          {record && (
+            <div className="space-y-1">
+              <Label>Reason for Editing <span className="text-red-500">*</span></Label>
+              <Input
+                value={form.editReason ?? ""}
+                onChange={(event) => setForm({ ...form, editReason: event.target.value })}
+                placeholder="State why this production record needs correction"
+              />
+            </div>
+          )}
+
           <div className="flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:justify-end [&>button]:w-full sm:[&>button]:w-auto">
             <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isSaving}>Cancel</Button>
             <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={submit} disabled={isSaving}>
               {isSaving ? (
-                <><Loader2 className="h-4 w-4 mr-1 animate-spin" />Saving...</>
+                <><Loader2 className="h-4 w-4 mr-1 animate-spin" />Saving</>
               ) : (
                 <><Save className="h-4 w-4 mr-1" />Save Record</>
               )}

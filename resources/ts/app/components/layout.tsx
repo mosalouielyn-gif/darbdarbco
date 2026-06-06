@@ -26,6 +26,7 @@ const ROLE_COLORS: Record<Role, string> = {
   payroll_personnel: "bg-sky-700",
   finance_officer: "bg-violet-700",
   manager_admin: "bg-slate-800",
+  harvester: "bg-lime-700",
 };
 
 export function Layout({ user, onLogout, navItems, activeNav, onNavChange, children }: LayoutProps) {

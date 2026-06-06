@@ -18,6 +18,7 @@ class UserAccountController extends Controller
         'payroll_personnel',
         'finance_officer',
         'manager_admin',
+        'harvester',
     ];
 
     public function store(Request $request): JsonResponse
@@ -166,7 +167,28 @@ class UserAccountController extends Controller
             return null;
         }
 
-        return DB::table('roles')->where('code', $role)->value('id');
+        $existing = DB::table('roles')->where('code', $role)->value('id');
+        if ($existing) {
+            return (int) $existing;
+        }
+
+        $values = [];
+        if (Schema::hasColumn('roles', 'code')) {
+            $values['code'] = $role;
+        }
+        if (Schema::hasColumn('roles', 'label')) {
+            $values['label'] = ucwords(str_replace('_', ' ', $role));
+        } elseif (Schema::hasColumn('roles', 'name')) {
+            $values['name'] = ucwords(str_replace('_', ' ', $role));
+        }
+        if (Schema::hasColumn('roles', 'created_at')) {
+            $values['created_at'] = now();
+        }
+        if (Schema::hasColumn('roles', 'updated_at')) {
+            $values['updated_at'] = now();
+        }
+
+        return empty($values) ? null : (int) DB::table('roles')->insertGetId($values);
     }
 
     private function nameColumn(): string

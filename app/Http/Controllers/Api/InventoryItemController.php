@@ -40,14 +40,20 @@ class InventoryItemController extends Controller
     {
         $payload = $this->validatedPayload($request, $id);
 
+        $previous = $this->findItem($id);
+        abort_if(! $previous, 404, 'Inventory item not found.');
+
         DB::table('inventory_items')->where('id', $id)->update($this->itemValues($payload, false));
 
         $item = $this->findItem($id);
+        $reason = trim($payload['edit_reason'] ?? '');
+        $previousDetails = $this->auditItemDetails($previous);
+        $updatedDetails = $this->auditItemDetails($item);
         $this->recordAudit(
             $payload['user_id'] ?? null,
             $payload['user_name'] ?? null,
             'Updated',
-            "Updated inventory item {$item->name}",
+            "Updated inventory item {$item->name}. Previous item details: {$previousDetails}. Updated item details: {$updatedDetails}. Reason for editing: {$reason}",
         );
 
         return response()->json($item);
@@ -140,8 +146,10 @@ class InventoryItemController extends Controller
             'stock_date' => ['required', 'date'],
             'release_type' => ['required', 'string', 'max:50'],
             'beneficiary_id' => ['nullable', 'integer'],
+            'beneficiary_account_id' => ['nullable', 'string', 'max:255'],
             'beneficiary' => ['nullable', 'string', 'max:255'],
             'purpose' => ['nullable', 'string'],
+            'payment_method' => ['nullable', 'string', 'max:50'],
             'notes' => ['nullable', 'string'],
             'expected_return_date' => ['nullable', 'date'],
             'user_id' => ['nullable', 'integer'],
@@ -262,6 +270,7 @@ class InventoryItemController extends Controller
             'notes' => ['nullable', 'string'],
             'user_id' => ['nullable', 'integer'],
             'user_name' => ['nullable', 'string', 'max:255'],
+            'edit_reason' => [$ignoreId ? 'required' : 'nullable', 'string'],
         ]);
     }
 
@@ -313,7 +322,7 @@ class InventoryItemController extends Controller
                 'supplier_name' => $payload['supplier'] ?? null,
                 'reason' => $payload['notes'] ?? 'Received materials into inventory',
                 'recorded_by' => $userId,
-                'txn_at' => $payload['stock_date'],
+                'txn_at' => now(),
             ];
 
             DB::table('stock_transactions')->insert($values);
@@ -327,7 +336,7 @@ class InventoryItemController extends Controller
             'quantity' => $payload['on_hand'],
             'unit_cost' => $payload['unit_cost'],
             'reason' => $payload['notes'] ?? 'Received materials into inventory',
-            'transaction_at' => $payload['stock_date'],
+            'transaction_at' => now(),
             'created_at' => now(),
             'updated_at' => now(),
         ];
@@ -403,6 +412,9 @@ class InventoryItemController extends Controller
         }
         if (! empty($payload['notes'])) {
             $reason .= ' Notes: '.$payload['notes'];
+        }
+        if (! empty($payload['payment_method'])) {
+            $reason .= ' Payment Method: '.$payload['payment_method'].'.';
         }
 
         if (Schema::hasTable('stock_transactions')) {
@@ -508,7 +520,7 @@ class InventoryItemController extends Controller
             'release_reference_no' => $payload['reference_no'],
             'inventory_item_id' => $itemId,
             'beneficiary_name' => $beneficiaryName,
-            'beneficiary_account_id' => $this->beneficiaryAccountId($beneficiaryName),
+            'beneficiary_account_id' => $payload['beneficiary_account_id'] ?? $this->beneficiaryAccountId($beneficiaryName),
             'material_name' => $materialName,
             'quantity' => $payload['quantity'],
             'unit' => $item->unit,
@@ -610,6 +622,22 @@ class InventoryItemController extends Controller
         return $query->select($select)->where('inventory_items.id', $id)->first();
     }
 
+    private function auditItemDetails(object $item): string
+    {
+        return json_encode([
+            'material_id' => $item->code ?? null,
+            'name' => $item->name ?? null,
+            'category' => $item->category ?? null,
+            'unit' => $item->unit ?? null,
+            'on_hand' => $item->on_hand ?? null,
+            'minimum_stock' => $item->minimum_stock ?? null,
+            'unit_cost' => $item->unit_cost ?? null,
+            'supplier' => $item->supplier ?? null,
+            'stock_date' => $item->stock_date ?? null,
+            'expiry_date' => $item->expiry_date ?? null,
+        ], JSON_UNESCAPED_SLASHES);
+    }
+
     private function codeColumn(): string
     {
         return Schema::hasColumn('inventory_items', 'material_id') ? 'material_id' : 'item_code';
@@ -687,12 +715,12 @@ class InventoryItemController extends Controller
 
     private function resolveUserId(?int $userId, ?string $userName): ?int
     {
-        if ($userId) {
-            return $userId;
-        }
-
         if (! Schema::hasTable('users')) {
             return null;
+        }
+
+        if ($userId && DB::table('users')->where('id', $userId)->exists()) {
+            return $userId;
         }
 
         if ($userName) {
@@ -714,12 +742,17 @@ class InventoryItemController extends Controller
             return;
         }
 
-        $userId ??= DB::table('users')->value('id');
+        $userId = $this->resolveUserId($userId, $userName);
 
         $values = [
             'module' => 'Inventory',
             'action' => $action,
         ];
+
+        if (Schema::hasColumn('audit_logs', 'id')) {
+            $maxId = (int) DB::table('audit_logs')->max('id');
+            $values['id'] = $maxId + 1;
+        }
 
         if (Schema::hasColumn('audit_logs', 'user_id')) {
             $values['user_id'] = $userId;
@@ -753,6 +786,10 @@ class InventoryItemController extends Controller
             $values['updated_at'] = now();
         }
 
-        DB::table('audit_logs')->insert($values);
+        try {
+            DB::table('audit_logs')->insert($values);
+        } catch (\Throwable) {
+            // Audit logging should never block inventory item saves.
+        }
     }
 }

@@ -100,11 +100,24 @@ function parseDate(value: string) {
   return new Date(value);
 }
 
-function parseDatabaseTimestamp(value: string) {
+export function parseDatabaseTimestamp(value: string) {
   if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return parseDateOnly(value);
   const normalized = value.includes("T") ? value : value.replace(" ", "T");
   const hasTimeZone = /(?:Z|[+-]\d{2}:?\d{2})$/.test(normalized);
-  return new Date(hasTimeZone ? normalized : `${normalized}Z`);
+  if (hasTimeZone) return new Date(normalized);
+
+  const match = normalized.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?/);
+  if (!match) return new Date(normalized);
+
+  const [, year, month, day, hour, minute, second = "0"] = match;
+  return new Date(Date.UTC(
+    Number(year),
+    Number(month) - 1,
+    Number(day),
+    Number(hour) - 8,
+    Number(minute),
+    Number(second),
+  ));
 }
 
 function parseDateOnly(value: string) {

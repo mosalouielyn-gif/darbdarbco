@@ -11,15 +11,16 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from ".
 import { Textarea } from "../ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "../ui/dialog";
 import { DateInput } from "../ui/date-input";
+import { Checkbox } from "../ui/checkbox";
 import {
   LayoutDashboard, Boxes, ArrowDownCircle, ArrowUpCircle, CreditCard, History,
   FileBarChart2, AlertTriangle, Package, TrendingUp, Plus, Search, Edit, Eye,
-  Trash2, ChevronLeft, ChevronRight, Upload, Lock, Loader2,
+  Trash2, ChevronLeft, ChevronRight, ChevronDown, Check, Upload, Lock, Loader2, ShoppingCart, Receipt, Banknote,
 } from "lucide-react";
 import { User } from "../types";
 import { toast } from "sonner";
 import { useAppData } from "../../lib/app-data-context";
-import { adjustInventoryItem, cancelRestockRequest, createInventoryItem, createRestockRequest, deductCreditTransaction, releaseInventoryItem, returnBorrowedMaterial, stockInInventoryItem, updateInventoryItem, updateInventoryItemStatus, updateRestockRequest } from "../../lib/api";
+import { adjustInventoryItem, cancelRestockRequest, createInventoryItem, createRestockRequest, releaseInventoryItem, returnBorrowedMaterial, stockInInventoryItem, updateInventoryItem, updateInventoryItemStatus, updateRestockRequest } from "../../lib/api";
 import { addDaysSystemDate, currentSystemTime, databaseDateKey, formatDatabaseDateTime, formatSystemDate, formatSystemDateTime, todaySystemDate } from "../../lib/date-time";
 import { usePersistentState } from "../../lib/use-persistent-state";
 
@@ -30,9 +31,12 @@ type BeneficiaryOption = { id: string; dbId: number; code: string; name: string 
 const NAV = [
   { id: "dashboard", label: "Dashboard", icon: <LayoutDashboard className="h-4 w-4" /> },
   { id: "items", label: "Inventory Items", icon: <Boxes className="h-4 w-4" /> },
+  { id: "released", label: "Release Materials", icon: <Receipt className="h-4 w-4" /> },
+  { id: "sales", label: "Sales", icon: <ShoppingCart className="h-4 w-4" /> },
   { id: "credit", label: "Credit Transactions", icon: <CreditCard className="h-4 w-4" /> },
+  { id: "cash", label: "Cash Transactions", icon: <Banknote className="h-4 w-4" /> },
   { id: "history", label: "Stock History", icon: <History className="h-4 w-4" /> },
-  { id: "restock", label: "Restock Requests", icon: <FileBarChart2 className="h-4 w-4" /> },
+  { id: "restock", label: "Restock Request", icon: <FileBarChart2 className="h-4 w-4" /> },
 ];
 
 export function InventoryBookkeeperDashboard({ user, onLogout }: Props) {
@@ -98,7 +102,20 @@ export function InventoryBookkeeperDashboard({ user, onLogout }: Props) {
           beneficiaries={beneficiaries}
         />
       )}
+      {active === "released" && <ReleasedMaterialsHistory history={historyRows} items={items} />}
+      {active === "sales" && (
+        <SalesPos
+          items={items}
+          setItems={setItems}
+          setCredits={setCreditRows}
+          setHistory={setHistoryRows}
+          history={historyRows}
+          user={user}
+          beneficiaries={beneficiaries}
+        />
+      )}
       {active === "credit" && <CreditTransactions credits={creditRows} setCredits={setCreditRows} user={user} />}
+      {active === "cash" && <CashTransactions history={historyRows} items={items} />}
       {active === "history" && <StockHistory history={historyRows} />}
       {active === "restock" && <RestockRequests user={user} items={items} requests={restockRows} setRequests={setRestockRows} />}
     </DarbcoLayout>
@@ -261,7 +278,7 @@ function Dashboard({ goTo, items, credits, history, restockRequests }: {
                       : r.type === "Stock In" ? "bg-emerald-100 text-emerald-800"
                       : r.type === "Credit Issued" ? "bg-amber-100 text-amber-800"
                       : "bg-slate-100 text-slate-700"
-                    }>{r.type}</Badge>
+                    }>{historyDisplayLabel(r)}</Badge>
                   </TableCell>
                   <TableCell>{r.material}</TableCell>
                   <TableCell>{r.ref}</TableCell>
@@ -330,6 +347,7 @@ interface InventoryItem {
   onHand: number; stockDate: string; cost: number; expiry: string;
   minimumStock?: number; supplier?: string; createdAt?: string; updatedAt?: string;
   hasTransactions?: boolean; active?: boolean;
+  editReason?: string;
 }
 
 const seedItems: InventoryItem[] = [];
@@ -389,7 +407,7 @@ function mapInventoryItem(row: any): InventoryItem {
     onHand: Number(row.on_hand ?? row.onHand ?? 0),
     stockDate: databaseDateKey(row.stock_date ?? row.created_at ?? todayInputDate()),
     cost: Number(row.unit_cost ?? row.cost ?? 0),
-    expiry: row.expiry_date ? String(row.expiry_date).slice(0, 10) : "-",
+    expiry: row.expiry_date ? String(row.expiry_date).slice(0, 10) : "No Expiration Date",
     minimumStock: Number(row.minimum_stock ?? row.minimumStock ?? 20),
     supplier: row.supplier ?? "",
     createdAt: row.created_at ? databaseDateKey(row.created_at) : undefined,
@@ -402,6 +420,8 @@ function mapInventoryItem(row: any): InventoryItem {
 function mapStockTransaction(row: any): StockHistoryRow {
   const type = row.type ?? row.transaction_type ?? "Stock In";
   const quantity = Number(row.quantity ?? 0);
+  const unitCost = Number(row.unit_cost ?? 0);
+  const reason = row.reason ?? "";
   const isIncreaseAdjustment = type === "Adjustment" && String(row.reason ?? "").startsWith("Increase adjustment");
   const signedQuantity = isIncreaseAdjustment ? Math.abs(quantity) : [
     "Release",
@@ -419,12 +439,35 @@ function mapStockTransaction(row: any): StockHistoryRow {
     type,
     qty: signedQuantity,
     unit: row.unit ?? "",
-    reason: row.reason ?? "",
+    reason,
     account: row.user_name ?? row.created_by ?? "Inventory Bookkeeper",
     ref: row.reference_no ?? `TXN-${row.id}`,
+    beneficiary: row.beneficiary_name ?? row.beneficiary ?? "",
+    category: row.category ?? "",
+    unitCost,
+    totalAmount: Math.abs(quantity) * unitCost,
+    paymentMethod: inferPaymentMethod(type, reason),
     previousBalance: Number(row.previous_balance ?? 0),
     updatedBalance: Number(row.updated_balance ?? 0),
   };
+}
+
+function inferPaymentMethod(type: string, reason: string) {
+  if (type === "Credit Issued") return "Beneficiary Credit";
+  const match = String(reason).match(/Payment Method:\s*([^.;]+)/i);
+  if (match?.[1]) return match[1].trim();
+  if (type === "Direct Release") return "Cash";
+  return "";
+}
+
+function transactionTypeLabel(type: string) {
+  if (type === "Direct Release") return "Cash";
+  if (type === "Credit Issued") return "Beneficiary Credit";
+  return type;
+}
+
+function historyDisplayLabel(row: StockHistoryRow) {
+  return row.paymentMethod || inferPaymentMethod(row.type, row.reason) || transactionTypeLabel(row.type);
 }
 
 function mapBorrowedMaterial(row: any): BorrowedMaterialRow {
@@ -450,7 +493,7 @@ function mapCreditTransaction(row: any): CreditRow {
   return {
     dbId: Number(row.id) || undefined,
     receipt: String(row.credit_no ?? row.id),
-    date: formatDateLabel(databaseDateKey(row.credit_date ?? row.created_at ?? todayInputDate())),
+    date: formatCreditTransactionTime(row.created_at ?? row.credit_date ?? todayInputDate()),
     beneficiary: row.beneficiary_name ?? "",
     beneficiaryId: row.beneficiary_account_id ?? beneficiaryAccountId(row.beneficiary_name ?? ""),
     material: row.material_name ?? "",
@@ -462,7 +505,6 @@ function mapCreditTransaction(row: any): CreditRow {
     status: row.status ?? "Pending",
     slip: row.release_reference_no ?? "",
     deductionHistory: (row.deductions ?? []).map((deduction: any) => ({
-      payrollBatch: deduction.payroll_batch ?? "",
       date: formatDateLabel(String(deduction.deduction_date ?? deduction.created_at ?? todayInputDate()).slice(0, 10)),
       amount: Number(deduction.amount ?? 0),
       recordedBy: deduction.recorded_by_name ?? "Payroll Personnel",
@@ -470,8 +512,24 @@ function mapCreditTransaction(row: any): CreditRow {
   };
 }
 
+function formatCreditTransactionTime(value: string | null | undefined) {
+  if (!value) return formatDateTime(todayInputDate());
+  const text = String(value);
+  const match = text.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2}))?/);
+  if (!match) return formatDatabaseDateTime(text);
+  const [, year, month, day, hour = "00", minute = "00"] = match;
+  const date = new Date(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute));
+  return date.toLocaleString("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
 function mapRestockRequest(row: any): RestockRequest {
-  const status = row.status === "Returned" ? "Rejected" : row.status ?? "Pending";
+  const status = row.status ?? "Pending";
   return {
     dbId: Number(row.id) || undefined,
     itemDbId: Number(row.item_id ?? row.inventory_item_id) || undefined,
@@ -542,6 +600,10 @@ function getUpdatedAt(item: InventoryItem) {
   return item.updatedAt || item.stockDate;
 }
 
+function getItemCategory(items: InventoryItem[], material: string) {
+  return items.find((item) => item.name === material)?.category || "Not specified";
+}
+
 function transactionId(row: Pick<StockHistoryRow, "ref">) {
   return row.ref;
 }
@@ -562,9 +624,470 @@ function addDaysInputDate(value: string, days: number) {
   return addDaysSystemDate(value, days);
 }
 
-function InventoryDateInput({ value, onChange, className = "" }: { value: string; onChange: (value: string) => void; className?: string }) {
+function InventoryDateInput({ value, onChange, className = "", disabled = false }: { value: string; onChange: (value: string) => void; className?: string; disabled?: boolean }) {
   const dateValue = /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : "";
-  return <DateInput value={dateValue} onChange={(event) => onChange(event.target.value)} className={className} />;
+  return <DateInput value={dateValue} onChange={(event) => onChange(event.target.value)} className={className} disabled={disabled} />;
+}
+
+const RELEASED_TYPES = ["Direct Release", "Credit Issued", "Borrowed Material", "Internal Use", "Adjustment"];
+
+function ReleasedMaterialsHistory({ history, items }: { history: StockHistoryRow[]; items: InventoryItem[] }) {
+  const [search, setSearch] = useState("");
+  const releasedRows = history
+    .filter((row) => row.qty < 0 && RELEASED_TYPES.includes(row.type))
+    .filter((row) => {
+      const query = search.trim().toLowerCase();
+      if (!query) return true;
+      return `${row.ref} ${row.material} ${row.beneficiary ?? ""} ${row.type}`.toLowerCase().includes(query);
+    });
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="flex items-center gap-2"><Receipt className="h-6 w-6 text-emerald-700" />Release Materials</h1>
+          <p className="text-muted-foreground">History of all materials removed from inventory stock.</p>
+        </div>
+        <div className="relative w-full sm:w-72">
+          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+          <Input className="h-9 pl-8" placeholder="Search released materials..." value={search} onChange={(event) => setSearch(event.target.value)} />
+        </div>
+      </div>
+
+      <Card>
+        <CardContent className="p-4">
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Transaction No.</TableHead>
+                  <TableHead>Date and Time</TableHead>
+                  <TableHead>Beneficiary / Customer</TableHead>
+                  <TableHead>Item Name</TableHead>
+                  <TableHead>Category</TableHead>
+                  <TableHead className="text-right">Quantity Released</TableHead>
+                  <TableHead className="text-right">Unit Price</TableHead>
+                  <TableHead className="text-right">Total Amount</TableHead>
+                  <TableHead>Payment Method</TableHead>
+                  <TableHead>Processed By</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {releasedRows.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={10} className="py-6 text-center text-muted-foreground">No released materials found.</TableCell>
+                  </TableRow>
+                ) : releasedRows.map((row) => (
+                  <TableRow key={`${row.ref}-${row.material}-${row.date}`}>
+                    <TableCell className="font-medium">{row.ref}</TableCell>
+                    <TableCell className="text-xs">{row.date}</TableCell>
+                    <TableCell>{row.beneficiary || customerFromReason(row.reason) || "-"}</TableCell>
+                    <TableCell>{row.material}</TableCell>
+                    <TableCell>{row.category || getItemCategory(items, row.material)}</TableCell>
+                    <TableCell className="text-right">{Math.abs(row.qty)} {row.unit}</TableCell>
+                    <TableCell className="text-right">{money(row.unitCost ?? 0)}</TableCell>
+                    <TableCell className="text-right">{money(row.totalAmount ?? Math.abs(row.qty) * (row.unitCost ?? 0))}</TableCell>
+                    <TableCell>{row.paymentMethod || inferPaymentMethod(row.type, row.reason) || "-"}</TableCell>
+                    <TableCell>{row.account}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function money(value: number) {
+  return `PHP ${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function customerFromReason(reason: string) {
+  const match = String(reason).match(/(?:Released|Sold) to ([^.;]+)/i);
+  return match?.[1]?.trim() ?? "";
+}
+
+type PosCartItem = {
+  item: InventoryItem;
+  quantity: number;
+};
+
+function SalesPos({ items, setItems, setCredits, setHistory, history, user, beneficiaries }: {
+  items: InventoryItem[];
+  setItems: React.Dispatch<React.SetStateAction<InventoryItem[]>>;
+  setCredits: React.Dispatch<React.SetStateAction<CreditRow[]>>;
+  setHistory: React.Dispatch<React.SetStateAction<StockHistoryRow[]>>;
+  history: StockHistoryRow[];
+  user: User;
+  beneficiaries: BeneficiaryOption[];
+}) {
+  const [search, setSearch] = useState("");
+  const [cart, setCart] = useState<PosCartItem[]>([]);
+  const [customer, setCustomer] = useState("");
+  const [manualCustomer, setManualCustomer] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState<"Cash" | "Beneficiary Credit">("Cash");
+  const [transactionFilter, setTransactionFilter] = useState<"all" | "Cash" | "Beneficiary Credit">("all");
+  const [saving, setSaving] = useState(false);
+  const activeItems = items.filter((item) => item.active !== false);
+  const query = search.trim().toLowerCase();
+  const filteredItems = activeItems.filter((item) =>
+    !query || `${item.name} ${item.id} ${item.category}`.toLowerCase().includes(query)
+  );
+  const selectedBeneficiary = beneficiaries.find((item) => item.id === customer);
+  const customerName = selectedBeneficiary?.name || manualCustomer.trim();
+  const totalAmount = cart.reduce((sum, line) => sum + line.quantity * line.item.cost, 0);
+  const salesTransactions = history
+    .filter(isSalesHistoryRow)
+    .filter((row) => transactionFilter === "all" || normalizedPaymentMethod(row) === transactionFilter);
+
+  const addToCart = (item: InventoryItem) => {
+    if (item.onHand <= 0) {
+      toast.error(`${item.name} is out of stock`);
+      return;
+    }
+
+    setCart((current) => {
+      const existing = current.find((line) => line.item.id === item.id);
+      if (existing) {
+        return current.map((line) => line.item.id === item.id ? { ...line, quantity: Math.min(line.quantity + 1, item.onHand) } : line);
+      }
+      return [...current, { item, quantity: 1 }];
+    });
+  };
+
+  const updateQuantity = (itemId: string, quantity: number) => {
+    setCart((current) => current.map((line) => {
+      if (line.item.id !== itemId) return line;
+      return { ...line, quantity: Math.max(1, Math.min(quantity, line.item.onHand)) };
+    }));
+  };
+
+  const removeFromCart = (itemId: string) => {
+    setCart((current) => current.filter((line) => line.item.id !== itemId));
+  };
+
+  const confirmTransaction = async () => {
+    if (saving) return;
+    if (cart.length === 0) {
+      toast.error("Add at least one item to the cart");
+      return;
+    }
+    if (!customerName) {
+      toast.error("Beneficiary or customer name is required");
+      return;
+    }
+    if (paymentMethod === "Beneficiary Credit" && !selectedBeneficiary) {
+      toast.error("Select a beneficiary account for Beneficiary Credit");
+      return;
+    }
+
+    const reference = generatePosReference();
+    const date = todayInputDate();
+    setSaving(true);
+
+    try {
+      const savedItems = new Map<string, InventoryItem>();
+      const savedCredits: CreditRow[] = [];
+      for (const line of cart) {
+        const saved = await releaseInventoryItem(inventoryRecordId(line.item), {
+          quantity: line.quantity,
+          unit_cost: line.item.cost,
+          reference_no: `${reference}-${line.item.id}`,
+          stock_date: date,
+          release_type: paymentMethod === "Beneficiary Credit" ? "credit" : "direct",
+          beneficiary_id: selectedBeneficiary?.dbId || undefined,
+          beneficiary_account_id: selectedBeneficiary?.code || undefined,
+          beneficiary: customerName,
+          purpose: `POS sale to ${customerName}`,
+          payment_method: paymentMethod,
+          notes: `Payment Method: ${paymentMethod}; POS transaction ${reference}.`,
+          user_id: currentUserId(user),
+          user_name: user.name,
+        });
+        savedItems.set(line.item.id, mapInventoryItem(saved.item ?? saved));
+        if (saved.credit) savedCredits.push(mapCreditTransaction(saved.credit));
+      }
+
+      setItems((current) => current.map((item) => {
+        const line = cart.find((cartLine) => cartLine.item.id === item.id);
+        return line ? savedItems.get(item.id) ?? { ...item, onHand: item.onHand - line.quantity, updatedAt: date, hasTransactions: true } : item;
+      }));
+
+      setHistory((current) => [
+        ...cart.map((line) => ({
+          date: formatDateTime(date),
+          material: line.item.name,
+          type: paymentMethod === "Beneficiary Credit" ? "Credit Issued" : "Direct Release",
+          qty: -line.quantity,
+          unit: line.item.unit,
+          reason: `Sold to ${customerName}. Payment Method: ${paymentMethod}; POS transaction ${reference}.`,
+          account: user.name,
+          ref: `${reference}-${line.item.id}`,
+          beneficiary: customerName,
+          category: line.item.category,
+          unitCost: line.item.cost,
+          totalAmount: line.quantity * line.item.cost,
+          paymentMethod,
+          previousBalance: line.item.onHand,
+          updatedBalance: line.item.onHand - line.quantity,
+        })),
+        ...current,
+      ]);
+
+      if (paymentMethod === "Beneficiary Credit") {
+        setCredits((current) => [
+          ...(savedCredits.length ? savedCredits : cart.map((line, index) => ({
+            receipt: `CR-${reference}-${index + 1}`,
+            date: formatDateLabel(date),
+            beneficiary: customerName,
+            beneficiaryId: selectedBeneficiary?.code || beneficiaryAccountId(customerName),
+            material: line.item.name,
+            qty: line.quantity,
+            unit: line.item.unit,
+            unitCost: line.item.cost,
+            amount: line.quantity * line.item.cost,
+            status: "Pending",
+            remaining: line.quantity * line.item.cost,
+            slip: `${reference}-${line.item.id}`,
+          }))),
+          ...current,
+        ]);
+      }
+
+      toast.success(paymentMethod === "Cash" ? "Cash sale completed" : "Beneficiary credit sale recorded");
+      setCart([]);
+      setSearch("");
+      setCustomer("");
+      setManualCustomer("");
+      setPaymentMethod("Cash");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to save POS transaction.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h1 className="flex items-center gap-2"><ShoppingCart className="h-6 w-6 text-emerald-700" />Sales</h1>
+        <p className="text-muted-foreground">Record beneficiary purchases, cash payments, and beneficiary credit releases.</p>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_420px]">
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">Available Item List</CardTitle>
+            <CardDescription>Search or select an item from active inventory.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="relative">
+              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input className="h-9 pl-8" placeholder="Search item name, material ID, or category..." value={search} onChange={(event) => setSearch(event.target.value)} />
+            </div>
+            <div className="grid gap-2 md:grid-cols-2">
+              {filteredItems.map((item) => {
+                const cartLine = cart.find((line) => line.item.id === item.id);
+                const isSelected = !!cartLine;
+                const remainingStock = Math.max(0, item.onHand - (cartLine?.quantity ?? 0));
+
+                return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => addToCart(item)}
+                  aria-pressed={isSelected}
+                  className={`relative rounded-md border p-3 text-left transition-colors ${
+                    isSelected
+                      ? "border-emerald-500 bg-emerald-50 ring-2 ring-emerald-100"
+                      : "bg-white hover:border-emerald-400 hover:bg-emerald-50"
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="font-medium">{item.name}</div>
+                      <div className="text-xs text-muted-foreground">{item.category}</div>
+                    </div>
+                    <div className="flex shrink-0 flex-col items-end gap-1">
+                      {isSelected && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-600 px-2 py-0.5 text-xs font-medium text-white">
+                          <Check className="h-3 w-3" />Selected
+                        </span>
+                      )}
+                      <Badge className={
+                        remainingStock <= getMinimumStock(item)
+                          ? "bg-amber-100 text-amber-800"
+                          : "bg-emerald-100 text-emerald-800"
+                      }>
+                        {remainingStock} {item.unit}
+                      </Badge>
+                    </div>
+                  </div>
+                  <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-sm text-muted-foreground">
+                    <span>Unit Price: {money(item.cost)}</span>
+                    {cartLine && <span className="font-medium text-emerald-700">In cart: {cartLine.quantity}</span>}
+                  </div>
+                </button>
+                );
+              })}
+            </div>
+            {filteredItems.length === 0 && <div className="rounded-md border bg-slate-50 p-4 text-sm text-muted-foreground">No available items found.</div>}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">Selected Items / Cart</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              {cart.length === 0 ? (
+                <div className="rounded-md border border-dashed bg-slate-50 p-4 text-center text-sm text-muted-foreground">Cart is empty.</div>
+              ) : cart.map((line) => (
+                <div key={line.item.id} className="rounded-md border p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="font-medium">{line.item.name}</div>
+                      <div className="text-xs text-muted-foreground">{money(line.item.cost)} per {line.item.unit}</div>
+                    </div>
+                    <Button variant="ghost" size="sm" onClick={() => removeFromCart(line.item.id)}>Remove</Button>
+                  </div>
+                  <div className="mt-3 grid grid-cols-3 gap-2 text-sm">
+                    <div>
+                      <Label>Quantity</Label>
+                      <Input type="number" min={1} max={line.item.onHand} value={line.quantity} onChange={(event) => updateQuantity(line.item.id, Number(event.target.value) || 1)} />
+                    </div>
+                    <div>
+                      <Label>Unit Price</Label>
+                      <Input value={money(line.item.cost)} disabled />
+                    </div>
+                    <div>
+                      <Label>Subtotal</Label>
+                      <Input value={money(line.quantity * line.item.cost)} disabled />
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="space-y-2 border-t pt-3">
+              <div className="space-y-1">
+                <Label>Beneficiary or Customer Name</Label>
+                <Select value={customer} onValueChange={(value) => { setCustomer(value); setManualCustomer(""); }}>
+                  <SelectTrigger><SelectValue placeholder="Select beneficiary account" /></SelectTrigger>
+                  <SelectContent>
+                    {beneficiaries.map((beneficiary) => (
+                      <SelectItem key={beneficiary.id} value={beneficiary.id}>{beneficiary.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Input value={manualCustomer} onChange={(event) => { setManualCustomer(event.target.value); setCustomer(""); }} placeholder="Or type walk-in customer name" />
+              </div>
+              <div className="space-y-1">
+                <Label>Payment Method</Label>
+                <Select value={paymentMethod} onValueChange={(value) => setPaymentMethod(value as "Cash" | "Beneficiary Credit")}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Cash">Cash</SelectItem>
+                    <SelectItem value="Beneficiary Credit">Beneficiary Credit</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="rounded-md bg-emerald-50 p-3">
+                <div className="flex items-center justify-between">
+                  <span className="font-medium">Total Amount</span>
+                  <span className="text-xl font-semibold text-emerald-800">{money(totalAmount)}</span>
+                </div>
+              </div>
+              <Button className="h-11 w-full bg-emerald-600 hover:bg-emerald-700" onClick={confirmTransaction} disabled={saving}>
+                {saving ? "Saving Transaction..." : "Confirm Transaction"}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card>
+        <CardHeader className="pb-2">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <CardTitle className="text-base">Sales Transactions</CardTitle>
+              <CardDescription>Saved Sales records with the payment method used.</CardDescription>
+            </div>
+            <Select value={transactionFilter} onValueChange={(value) => setTransactionFilter(value as "all" | "Cash" | "Beneficiary Credit")}>
+              <SelectTrigger className="h-9 w-full sm:w-56"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Sales Transactions</SelectItem>
+                <SelectItem value="Cash">Cash Transactions</SelectItem>
+                <SelectItem value="Beneficiary Credit">Beneficiary Credit Transactions</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Transaction No.</TableHead>
+                  <TableHead>Date & Time</TableHead>
+                  <TableHead>Beneficiary / Customer</TableHead>
+                  <TableHead>Item Name</TableHead>
+                  <TableHead>Category</TableHead>
+                  <TableHead className="text-right">Quantity</TableHead>
+                  <TableHead className="text-right">Unit Price</TableHead>
+                  <TableHead className="text-right">Total Amount</TableHead>
+                  <TableHead>Payment Method</TableHead>
+                  <TableHead>Processed By</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {salesTransactions.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={10} className="py-6 text-center text-muted-foreground">
+                      No sales transactions found.
+                    </TableCell>
+                  </TableRow>
+                ) : salesTransactions.map((row, index) => (
+                  <TableRow key={`${row.ref}-${index}`}>
+                    <TableCell className="font-medium">{row.ref}</TableCell>
+                    <TableCell className="text-xs">{row.date}</TableCell>
+                    <TableCell>{row.beneficiary || "-"}</TableCell>
+                    <TableCell>{row.material}</TableCell>
+                    <TableCell>{row.category || "-"}</TableCell>
+                    <TableCell className="text-right">{Math.abs(row.qty)} {row.unit}</TableCell>
+                    <TableCell className="text-right">{money(row.unitCost ?? 0)}</TableCell>
+                    <TableCell className="text-right font-medium">{money(row.totalAmount ?? Math.abs(row.qty) * (row.unitCost ?? 0))}</TableCell>
+                    <TableCell>
+                      <Badge className={normalizedPaymentMethod(row) === "Beneficiary Credit" ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-800"}>
+                        {normalizedPaymentMethod(row) || "-"}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>{row.account}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function isSalesHistoryRow(row: StockHistoryRow) {
+  const text = `${row.ref} ${row.reason}`.toLowerCase();
+  return row.qty < 0 && (text.includes("pos-") || text.includes("pos sale") || text.includes("pos transaction"));
+}
+
+function normalizedPaymentMethod(row: StockHistoryRow) {
+  return row.paymentMethod || inferPaymentMethod(row.type, row.reason);
+}
+
+function generatePosReference() {
+  return `POS-${todayInputDate().replaceAll("-", "")}-${currentSystemTime().replaceAll(":", "")}`;
 }
 
 const CATEGORIES = [
@@ -574,6 +1097,35 @@ const CATEGORIES = [
   "Packaging Materials",
   "Other Supplies",
 ];
+
+function isNoExpiration(value?: string | null) {
+  return !value || value === "-" || value === "—" || value === "No Expiration Date" || value === "Not Applicable";
+}
+
+function mergeCategories(base: string[], incoming: string[]) {
+  return Array.from(new Set([...base, ...incoming.map((item) => item.trim()).filter(Boolean)]));
+}
+
+const DELETED_CATEGORY_STORAGE_KEY = "darbco_inventory_deleted_categories";
+
+function readDeletedCategories() {
+  if (typeof window === "undefined") return [];
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(DELETED_CATEGORY_STORAGE_KEY) || "[]");
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function rememberDeletedCategories(categories: string[]) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(DELETED_CATEGORY_STORAGE_KEY, JSON.stringify(categories));
+}
+
+function excludeDeletedCategories(categories: string[], deleted: string[]) {
+  return categories.filter((item) => !deleted.includes(item));
+}
 
 function InventoryItems({ items, setItems, setCredits, borrowedRows, setBorrowedRows, setHistory, user, beneficiaries }: {
   items: InventoryItem[];
@@ -598,6 +1150,38 @@ function InventoryItems({ items, setItems, setCredits, borrowedRows, setBorrowed
   const [viewing, setViewing] = useState<InventoryItem | null>(null);
   const [deleting, setDeleting] = useState<InventoryItem | null>(null);
   const [deleteSaving, setDeleteSaving] = useState(false);
+  const [deletedCategories, setDeletedCategories] = useState<string[]>(() => readDeletedCategories());
+  const [categories, setCategories] = useState<string[]>(() => {
+    const deleted = readDeletedCategories();
+    return excludeDeletedCategories(mergeCategories(CATEGORIES, items.map((item) => item.category)), deleted);
+  });
+
+  useEffect(() => {
+    setCategories((current) => excludeDeletedCategories(mergeCategories(current, items.map((item) => item.category)), deletedCategories));
+  }, [items, deletedCategories]);
+
+  const handleAddCategory = (categoryName: string) => {
+    const cleaned = categoryName.trim();
+    if (!cleaned) return cleaned;
+    setDeletedCategories((current) => {
+      const next = current.filter((item) => item !== cleaned);
+      rememberDeletedCategories(next);
+      return next;
+    });
+    setCategories((current) => mergeCategories(current, [cleaned]));
+    return cleaned;
+  };
+
+  const handleDeleteCategory = (categoryName: string) => {
+    setDeletedCategories((current) => {
+      const next = mergeCategories(current, [categoryName]);
+      rememberDeletedCategories(next);
+      return next;
+    });
+    setCategories((current) => current.filter((item) => item !== categoryName));
+    if (category === categoryName) setCategory("all");
+    toast.success("Category removed from options");
+  };
 
   const filtered = items.filter((i) => {
     if (i.active === false) return false;
@@ -629,10 +1213,11 @@ function InventoryItems({ items, setItems, setCredits, borrowedRows, setBorrowed
         minimum_stock: getMinimumStock(updated),
         unit_cost: updated.cost,
         stock_date: updated.stockDate,
-        expiry_date: updated.expiry && updated.expiry !== "-" ? updated.expiry : null,
+        expiry_date: isNoExpiration(updated.expiry) ? null : updated.expiry,
         supplier: updated.supplier,
         user_id: currentUserId(user),
         user_name: user.name,
+        edit_reason: updated.editReason,
       });
 
       setItems((cur) => cur.map((i) => (i.id === updated.id ? { ...i, ...mapInventoryItem(saved) } : i)));
@@ -686,7 +1271,7 @@ function InventoryItems({ items, setItems, setCredits, borrowedRows, setBorrowed
               <SelectTrigger className="h-9 w-full sm:w-56"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Categories</SelectItem>
-                {CATEGORIES.map((c) => (
+                {categories.map((c) => (
                   <SelectItem key={c} value={c}>{c}</SelectItem>
                 ))}
               </SelectContent>
@@ -714,7 +1299,6 @@ function InventoryItems({ items, setItems, setCredits, borrowedRows, setBorrowed
             <Button variant="outline" onClick={() => setShowStockIn(true)}><ArrowDownCircle className="h-4 w-4 mr-1" />Stock-In</Button>
             <Button variant="outline" onClick={() => setShowRelease(true)}><ArrowUpCircle className="h-4 w-4 mr-1" />Release</Button>
             <Button variant="outline" onClick={() => setShowBorrowed(true)}><History className="h-4 w-4 mr-1" />Borrowed</Button>
-            <Button variant="outline" onClick={() => setShowAdjustment(true)}><Edit className="h-4 w-4 mr-1" />Adjust</Button>
             <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={() => setShowAdd(true)}><Plus className="h-4 w-4 mr-1" />Add Item</Button>
           </div>
 
@@ -749,9 +1333,7 @@ function InventoryItems({ items, setItems, setCredits, borrowedRows, setBorrowed
                     <TableCell><Badge className={badge}>{s}</Badge></TableCell>
                     <TableCell>
                       <div className="flex gap-1">
-                        <button className="p-1.5 rounded bg-sky-100 text-sky-700 hover:bg-sky-200" onClick={() => setViewing(i)} aria-label="View"><Eye className="h-3.5 w-3.5" /></button>
                         <button className="p-1.5 rounded bg-sky-100 text-sky-700 hover:bg-sky-200" onClick={() => setEditing(i)} aria-label="Edit"><Edit className="h-3.5 w-3.5" /></button>
-                        <button className="p-1.5 rounded bg-red-100 text-red-700 hover:bg-red-200" onClick={() => setDeleting(i)} aria-label="Delete"><Trash2 className="h-3.5 w-3.5" /></button>
                       </div>
                     </TableCell>
                   </TableRow>
@@ -778,6 +1360,9 @@ function InventoryItems({ items, setItems, setCredits, borrowedRows, setBorrowed
         setItems={setItems}
         setHistory={setHistory}
         user={user}
+        categories={categories}
+        onAddCategory={handleAddCategory}
+        onDeleteCategory={handleDeleteCategory}
       />
       <StockIn
         open={showStockIn}
@@ -817,7 +1402,7 @@ function InventoryItems({ items, setItems, setCredits, borrowedRows, setBorrowed
         user={user}
       />
       <ItemDetailDialog item={viewing} onClose={() => setViewing(null)} />
-      <EditItemDialog item={editing} onClose={() => setEditing(null)} onSave={handleSaveEdit} />
+      <EditItemDialog item={editing} onClose={() => setEditing(null)} onSave={handleSaveEdit} categories={categories} onAddCategory={handleAddCategory} onDeleteCategory={handleDeleteCategory} />
 
       <Dialog open={!!deleting} onOpenChange={(o) => !o && setDeleting(null)}>
         <DialogContent>
@@ -889,10 +1474,132 @@ function ItemDetailDialog({ item, onClose }: { item: InventoryItem | null; onClo
   );
 }
 
-function EditItemDialog({ item, onClose, onSave }: { item: InventoryItem | null; onClose: () => void; onSave: (i: InventoryItem) => Promise<void> }) {
+function CategorySelectWithAdd({ value, onChange, categories, onAddCategory, onDeleteCategory }: {
+  value: string;
+  onChange: (value: string) => void;
+  categories: string[];
+  onAddCategory: (value: string) => string;
+  onDeleteCategory: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [newCategory, setNewCategory] = useState("");
+  const menuRef = React.useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", closeOnOutsideClick);
+    return () => document.removeEventListener("mousedown", closeOnOutsideClick);
+  }, [menuOpen]);
+
+  const saveCategory = () => {
+    const saved = onAddCategory(newCategory);
+    if (!saved) {
+      toast.error("Category name is required");
+      return;
+    }
+    onChange(saved);
+    setNewCategory("");
+    setOpen(false);
+    toast.success("Category added");
+  };
+
+  const deleteCategory = (event: React.MouseEvent, category: string) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (value === category) onChange("");
+    onDeleteCategory(category);
+  };
+
+  return (
+    <div className="flex gap-2">
+      <div ref={menuRef} className="relative min-w-0 flex-1">
+        <button
+          type="button"
+          className="flex min-h-9 w-full items-center justify-between gap-2 rounded-md border border-input bg-input-background px-3 py-2 text-left text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+          onClick={() => setMenuOpen((current) => !current)}
+        >
+          <span className={`min-w-0 whitespace-normal break-words ${value ? "" : "text-muted-foreground"}`}>
+            {value || "Select category"}
+          </span>
+          <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+        </button>
+        {menuOpen && (
+          <div className="absolute left-0 top-[calc(100%+4px)] z-50 max-h-72 w-[min(520px,calc(100vw-2rem))] overflow-y-auto rounded-md border bg-white p-1 shadow-md">
+            {categories.length === 0 ? (
+              <div className="px-3 py-2 text-sm text-muted-foreground">No categories available</div>
+            ) : categories.map((category) => (
+              <div
+                key={category}
+                role="option"
+                aria-selected={value === category}
+                className={`grid min-h-10 grid-cols-[1.25rem_minmax(0,1fr)_2rem] items-center gap-2 rounded px-2 py-2 text-sm leading-snug hover:bg-slate-100 ${value === category ? "bg-slate-100" : ""}`}
+                onClick={() => {
+                  onChange(category);
+                  setMenuOpen(false);
+                }}
+              >
+                <span className="flex h-5 w-5 items-center justify-center text-emerald-700">
+                  {value === category && <Check className="h-4 w-4" />}
+                </span>
+                <span className="min-w-0 whitespace-normal break-words">{category}</span>
+                <button
+                  type="button"
+                  aria-label={`Delete ${category}`}
+                  title="Delete category"
+                  className="inline-flex h-7 w-7 items-center justify-center rounded text-red-600 hover:bg-red-50"
+                  onClick={(event) => deleteCategory(event, category)}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      <Button type="button" variant="outline" className="shrink-0 px-3" onClick={() => setOpen(true)} title="Add New Category">
+        <Plus className="h-4 w-4 mr-1" />Add Category
+      </Button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="w-[calc(100vw-1rem)] sm:!max-w-[420px]">
+          <DialogHeader>
+            <DialogTitle>Add New Category</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-1">
+            <Label>Category Name</Label>
+            <Input value={newCategory} onChange={(event) => setNewCategory(event.target.value)} placeholder="Enter category name" />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
+            <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={saveCategory}>Save Category</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+function EditItemDialog({ item, onClose, onSave, categories, onAddCategory, onDeleteCategory }: {
+  item: InventoryItem | null;
+  onClose: () => void;
+  onSave: (i: InventoryItem) => Promise<void>;
+  categories: string[];
+  onAddCategory: (value: string) => string;
+  onDeleteCategory: (value: string) => void;
+}) {
   const [form, setForm] = useState<InventoryItem | null>(item);
   const [saving, setSaving] = useState(false);
-  if (item && form?.id !== item.id) setForm(item);
+  const hasExpiration = form ? !isNoExpiration(form.expiry) : false;
+
+  useEffect(() => {
+    setForm(item ? { ...item, editReason: "" } : null);
+    setSaving(false);
+  }, [item]);
 
   return (
     <Dialog open={!!item} onOpenChange={(o) => !o && onClose()}>
@@ -902,7 +1609,7 @@ function EditItemDialog({ item, onClose, onSave }: { item: InventoryItem | null;
             <Edit className="h-5 w-5" />Edit Inventory Item
           </DialogTitle>
           <DialogDescription>
-            Update the material's basic information. On Hand quantity must be changed through stock-in or material-release transactions.
+            Update item details and record the reason for inventory corrections.
           </DialogDescription>
         </DialogHeader>
         {form && (
@@ -913,12 +1620,13 @@ function EditItemDialog({ item, onClose, onSave }: { item: InventoryItem | null;
             </div>
             <div className="space-y-1">
               <Label>Category</Label>
-              <Select value={form.category} onValueChange={(v) => setForm({ ...form, category: v })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {CATEGORIES.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <CategorySelectWithAdd
+                value={form.category}
+                onChange={(value) => setForm({ ...form, category: value })}
+                categories={categories}
+                onAddCategory={onAddCategory}
+                onDeleteCategory={onDeleteCategory}
+              />
             </div>
             <div className="space-y-1">
               <Label>Unit</Label>
@@ -947,10 +1655,23 @@ function EditItemDialog({ item, onClose, onSave }: { item: InventoryItem | null;
             </div>
             <div className="space-y-1 md:col-span-2">
               <Label>Expiration Date</Label>
-              <InventoryDateInput value={form.expiry} onChange={(value) => setForm({ ...form, expiry: value })} />
+              <InventoryDateInput
+                value={hasExpiration ? form.expiry : ""}
+                disabled={!hasExpiration}
+                className={!hasExpiration ? "bg-slate-100 text-muted-foreground" : ""}
+                onChange={(value) => setForm({ ...form, expiry: value })}
+              />
               <div className="hidden">
               <Input value={form.expiry} onChange={(e) => setForm({ ...form, expiry: e.target.value })} placeholder="MM/YYYY or —" />
             </div>
+            <div className="flex items-center gap-2">
+                <Checkbox
+                  id="edit-item-has-expiration"
+                  checked={hasExpiration}
+                  onCheckedChange={(checked) => setForm({ ...form, expiry: checked === true ? "" : "No Expiration Date" })}
+                />
+                <Label htmlFor="edit-item-has-expiration">This item has an expiration date</Label>
+              </div>
             </div>
             <div className="space-y-1">
               <Label className="text-muted-foreground">Date Created</Label>
@@ -961,9 +1682,12 @@ function EditItemDialog({ item, onClose, onSave }: { item: InventoryItem | null;
               <Input value={getUpdatedAt(form)} disabled />
             </div>
             <div className="space-y-1 md:col-span-2">
-              <Label className="text-muted-foreground">On Hand (read-only)</Label>
-              <Input value={`${form.onHand} ${form.unit}`} disabled />
-              <p className="text-xs text-muted-foreground">Update quantities via stock-in or release transactions to maintain history.</p>
+              <Label>Current Quantity</Label>
+              <Input type="number" min={0} value={form.onHand} onChange={(event) => setForm({ ...form, onHand: Number(event.target.value) || 0 })} />
+            </div>
+            <div className="space-y-1 md:col-span-2">
+              <Label>Reason for Editing <span className="text-red-500">*</span></Label>
+              <Textarea value={form.editReason ?? ""} onChange={(event) => setForm({ ...form, editReason: event.target.value })} placeholder="Explain the correction or item update." />
             </div>
           </div>
         )}
@@ -974,8 +1698,12 @@ function EditItemDialog({ item, onClose, onSave }: { item: InventoryItem | null;
             disabled={saving}
             onClick={async () => {
               if (!form) return;
+              if (!form.editReason?.trim()) {
+                toast.error("Reason for editing is required");
+                return;
+              }
               setSaving(true);
-              await onSave({ ...form, updatedAt: todayInputDate() });
+              await onSave({ ...form, expiry: hasExpiration ? form.expiry : "No Expiration Date", updatedAt: todayInputDate() });
               setSaving(false);
             }}
           >
@@ -987,7 +1715,7 @@ function EditItemDialog({ item, onClose, onSave }: { item: InventoryItem | null;
   );
 }
 
-interface StockInRow { name: string; category: string; qty: string; unit: string; cost: string; expiry: string; minimumStock: string; supplier: string; notes: string }
+interface StockInRow { name: string; category: string; qty: string; unit: string; cost: string; expiry: string; hasExpiration: boolean; minimumStock: string; supplier: string; notes: string }
 
 const CATEGORY_PREFIX: Record<string, string> = {
   "Fertilizers and Soil Inputs": "FERT",
@@ -997,45 +1725,58 @@ const CATEGORY_PREFIX: Record<string, string> = {
   "Other Supplies": "MISC",
 };
 
+function materialCategoryPrefix(category: string): string {
+  return CATEGORY_PREFIX[category] ?? (category.replace(/[^A-Za-z0-9]/g, "").toUpperCase().slice(0, 4) || "ITEM");
+}
+
 function generateMaterialId(category: string, rowIndex: number, rows: StockInRow[], items: InventoryItem[]): string {
-  const prefix = CATEGORY_PREFIX[category];
-  if (!prefix) return "";
-  const existingCount = items.filter((s) => CATEGORY_PREFIX[s.category] === prefix).length;
-  const offsetInForm = rows.slice(0, rowIndex).filter((r) => CATEGORY_PREFIX[r.category] === prefix).length;
+  const prefix = materialCategoryPrefix(category);
+  const existingCount = items.filter((s) => materialCategoryPrefix(s.category) === prefix).length;
+  const offsetInForm = rows.slice(0, rowIndex).filter((r) => materialCategoryPrefix(r.category) === prefix).length;
   const next = existingCount + offsetInForm + 1;
   return `${prefix}-${String(next).padStart(3, "0")}`;
 }
 
-function AddInventoryItem({ open, onOpenChange, items, setItems, setHistory, user }: {
+function AddInventoryItem({ open, onOpenChange, items, setItems, setHistory, user, categories, onAddCategory, onDeleteCategory }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   items: InventoryItem[];
   setItems: React.Dispatch<React.SetStateAction<InventoryItem[]>>;
   setHistory: React.Dispatch<React.SetStateAction<StockHistoryRow[]>>;
   user: User;
+  categories: string[];
+  onAddCategory: (value: string) => string;
+  onDeleteCategory: (value: string) => void;
 }) {
   const today = todayInputDate();
   const [date, setDate] = useState(today);
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
   const [rows, setRows] = useState<StockInRow[]>([
-    { name: "", category: "", qty: "", unit: "kg", cost: "", expiry: "", minimumStock: "", supplier: "", notes: "" },
+    { name: "", category: "", qty: "", unit: "kg", cost: "", expiry: "", hasExpiration: false, minimumStock: "", supplier: "", notes: "" },
   ]);
 
   React.useEffect(() => {
     if (!open) return;
     setDate(today);
     setNotes("");
-    setRows([{ name: "", category: "", qty: "", unit: "kg", cost: "", expiry: "", minimumStock: "", supplier: "", notes: "" }]);
+    setRows([{ name: "", category: "", qty: "", unit: "kg", cost: "", expiry: "", hasExpiration: false, minimumStock: "", supplier: "", notes: "" }]);
   }, [open, today]);
 
   const update = (i: number, k: keyof StockInRow, v: string) =>
     setRows(rows.map((r, idx) => (idx === i ? { ...r, [k]: v } : r)));
 
+  const updateExpirationFlag = (i: number, checked: boolean) =>
+    setRows(rows.map((r, idx) => (idx === i ? { ...r, hasExpiration: checked, expiry: checked ? r.expiry : "" } : r)));
+
   const handleSave = async () => {
     if (rows.some((r) => !r.category)) { toast.error("Category is required for each item"); return; }
     if (rows.some((r) => !r.name.trim() || !r.qty.trim() || !r.cost.trim())) {
       toast.error("Item Name, Quantity, and Unit Cost are required");
+      return;
+    }
+    if (rows.some((r) => r.hasExpiration && !r.expiry)) {
+      toast.error("Expiration Date is required when an item has an expiration date");
       return;
     }
     const validRows = rows.map((row, index) => ({
@@ -1045,6 +1786,7 @@ function AddInventoryItem({ open, onOpenChange, items, setItems, setHistory, use
       costValue: Number(row.cost) || 0,
       minimumStockValue: Number(row.minimumStock) || 0,
       supplierValue: row.supplier.trim() || "Not specified",
+      normalizedExpiry: row.hasExpiration ? row.expiry : "No Expiration Date",
       expiryValue: row.expiry || "—",
     }));
 
@@ -1062,7 +1804,7 @@ function AddInventoryItem({ open, onOpenChange, items, setItems, setHistory, use
           minimum_stock: row.minimumStockValue,
           unit_cost: row.costValue,
           stock_date: date,
-          expiry_date: row.expiry ? row.expiry : null,
+          expiry_date: row.hasExpiration ? row.expiry : null,
           supplier: row.supplierValue,
           notes: row.notes.trim() || notes.trim(),
           user_id: currentUserId(user),
@@ -1099,7 +1841,7 @@ function AddInventoryItem({ open, onOpenChange, items, setItems, setHistory, use
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="!max-w-[920px] w-[calc(100vw-1rem)] max-h-[86dvh] overflow-y-auto">
+      <DialogContent className="!max-w-[1240px] w-[calc(100vw-1rem)] max-h-[88dvh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-emerald-700">
             <Plus className="h-5 w-5" />Add Inventory Item
@@ -1107,21 +1849,49 @@ function AddInventoryItem({ open, onOpenChange, items, setItems, setHistory, use
           <DialogDescription>Register newly received materials into the inventory.</DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <Label>Date Received <span className="text-red-500">*</span></Label>
-              <InventoryDateInput value={date} onChange={setDate} />
+          <div className="rounded-md border bg-slate-50 p-4">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+              <div className="space-y-1">
+                <Label>Date Received <span className="text-red-500">*</span></Label>
+                <InventoryDateInput value={date} onChange={setDate} />
+              </div>
+              <div className="flex items-end md:col-span-2">
+                <p className="text-xs text-muted-foreground">Material ID is generated automatically based on the selected category prefix.</p>
+              </div>
             </div>
           </div>
-          <p className="text-xs text-muted-foreground">Material ID is generated automatically based on the selected Category (FERT / CHEM / FARM / PACK).</p>
 
           <div className="space-y-2">
             {rows.map((r, i) => {
               const match = items.find((s) => s.active !== false && s.name.toLowerCase() === r.name.trim().toLowerCase());
               const expiryConflict = !!(match && r.expiry.trim() && match.expiry !== "—" && match.expiry !== r.expiry.trim());
               return (
-              <div key={i} className="grid grid-cols-1 gap-3 rounded-md border p-3 md:grid-cols-12">
-                <div className="space-y-1 md:col-span-4">
+              <div key={i} className="grid grid-cols-1 gap-4 rounded-md border bg-white p-4 md:grid-cols-12">
+                <div className="flex items-center justify-between border-b pb-2 md:col-span-12">
+                  <div>
+                    <div className="text-sm font-semibold">Item Row {i + 1}</div>
+                    <div className="text-xs text-muted-foreground">{r.category ? `Material ID: ${generateMaterialId(r.category, i, rows, items)}` : "Choose a category to generate a Material ID"}</div>
+                  </div>
+                  <button
+                    className="inline-flex h-9 w-9 items-center justify-center rounded border border-red-200 text-red-600 hover:bg-red-50 disabled:opacity-40"
+                    disabled={rows.length === 1 || saving}
+                    onClick={() => setRows(rows.filter((_, idx) => idx !== i))}
+                    title="Remove item row"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
+                <div className="space-y-1 md:col-span-6">
+                  <Label>Category</Label>
+                  <CategorySelectWithAdd
+                    value={r.category}
+                    onChange={(value) => update(i, "category", value)}
+                    categories={categories}
+                    onAddCategory={onAddCategory}
+                    onDeleteCategory={onDeleteCategory}
+                  />
+                </div>
+                <div className="space-y-1 md:col-span-6">
                   <Label>Item Name</Label>
                   <Input
                     list={`existing-items-${i}`}
@@ -1143,25 +1913,11 @@ function AddInventoryItem({ open, onOpenChange, items, setItems, setHistory, use
                     <p className="text-xs text-amber-700">Expiry differs from saved record ({match!.expiry}). This batch will be saved as a separate inventory entry.</p>
                   )}
                 </div>
-                <div className="space-y-1 md:col-span-4">
-                  <Label>Category</Label>
-                  <Select value={r.category} onValueChange={(v) => update(i, "category", v)}>
-                    <SelectTrigger><SelectValue placeholder="Select category" /></SelectTrigger>
-                    <SelectContent>
-                      {CATEGORIES.map((c) => (
-                        <SelectItem key={c} value={c}>{c}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  {r.category && (
-                    <p className="text-xs text-emerald-700">Material ID: {generateMaterialId(r.category, i, rows, items)}</p>
-                  )}
-                </div>
-                <div className="space-y-1 md:col-span-2">
-                  <Label>Qty</Label>
+                <div className="space-y-1 md:col-span-3">
+                  <Label>Quantity</Label>
                   <Input value={r.qty} onChange={(e) => update(i, "qty", e.target.value)} placeholder="" />
                 </div>
-                <div className="space-y-1 md:col-span-2">
+                <div className="space-y-1 md:col-span-3">
                   <Label>Unit</Label>
                   <Select value={r.unit} onValueChange={(v) => update(i, "unit", v)}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
@@ -1180,37 +1936,41 @@ function AddInventoryItem({ open, onOpenChange, items, setItems, setHistory, use
                   <Label>Minimum Stock</Label>
                   <Input value={r.minimumStock} onChange={(e) => update(i, "minimumStock", e.target.value)} placeholder="0" />
                 </div>
-                <div className="space-y-1 md:col-span-3">
+                <div className="space-y-1 md:col-span-6">
+                  <Label>Expiration Date</Label>
+                  <InventoryDateInput
+                    value={r.hasExpiration ? r.expiry : ""}
+                    disabled={!r.hasExpiration}
+                    className={!r.hasExpiration ? "bg-slate-100 text-muted-foreground" : ""}
+                    onChange={(value) => update(i, "expiry", value)}
+                  />
+                  <div className="flex items-center gap-2 pt-2">
+                    <Checkbox
+                      id={`add-item-has-expiration-${i}`}
+                      checked={r.hasExpiration}
+                      onCheckedChange={(checked) => updateExpirationFlag(i, checked === true)}
+                    />
+                    <Label htmlFor={`add-item-has-expiration-${i}`}>This item has an expiration date</Label>
+                  </div>
+                </div>
+                <div className="space-y-1 md:col-span-6">
                   <Label>Supplier</Label>
                   <Input value={r.supplier} onChange={(e) => update(i, "supplier", e.target.value)} placeholder="Supplier name" />
-                </div>
-                <div className="space-y-1 md:col-span-3">
-                  <Label>Expiration Date</Label>
-                  <InventoryDateInput value={r.expiry} onChange={(value) => update(i, "expiry", value)} />
-                </div>
-                <div className="flex items-end md:col-span-12 md:justify-end">
-                  <button
-                    className="p-2 rounded border border-red-300 text-red-600 hover:bg-red-50 disabled:opacity-40"
-                    disabled={rows.length === 1 || saving}
-                    onClick={() => setRows(rows.filter((_, idx) => idx !== i))}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
                 </div>
               </div>
               );
             })}
-            <Button variant="outline" disabled={saving} onClick={() => setRows([...rows, { name: "", category: "", qty: "", unit: "kg", cost: "", expiry: "", minimumStock: "", supplier: "", notes: "" }])}>
+            <Button variant="outline" disabled={saving} onClick={() => setRows([...rows, { name: "", category: "", qty: "", unit: "kg", cost: "", expiry: "", hasExpiration: false, minimumStock: "", supplier: "", notes: "" }])}>
               <Plus className="h-4 w-4 mr-1" />Add Item Row
             </Button>
           </div>
 
-          <div className="space-y-1">
+          <div className="space-y-1 rounded-md border bg-slate-50 p-4">
             <Label>Notes</Label>
             <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Delivered in good condition." />
           </div>
 
-          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end [&>button]:w-full sm:[&>button]:w-auto">
+          <div className="sticky bottom-0 -mx-1 flex flex-col-reverse gap-2 border-t bg-white/95 px-1 pt-3 sm:flex-row sm:justify-end [&>button]:w-full sm:[&>button]:w-auto">
             <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Cancel</Button>
             <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={handleSave} disabled={saving}>
               {saving ? "Saving..." : "Save Item"}
@@ -1524,40 +2284,29 @@ function ReleaseMaterials({ open, onOpenChange, items, setItems, setCredits, set
   const [slipNo, setSlipNo] = useState(generateReleaseSlip(today));
   const [date, setDate] = useState(today);
   const [beneficiary, setBeneficiary] = useState("");
+  const [customerName, setCustomerName] = useState("");
   const [materialId, setMaterialId] = useState("");
   const [qty, setQty] = useState("");
-  const [unit, setUnit] = useState("pcs");
   const [unitPrice, setUnitPrice] = useState("");
-  const [expectedReturnDate, setExpectedReturnDate] = useState(addDaysInputDate(today, 7));
-  const [purpose, setPurpose] = useState("");
-  const [notes, setNotes] = useState("");
   const [savingRelease, setSavingRelease] = useState(false);
   const selectedItem = items.find((item) => item.id === materialId);
   const selectedBeneficiaryOption = beneficiaries.find((item) => item.id === beneficiary);
   const selectedBeneficiaryName = selectedBeneficiaryOption?.name.trim() ?? "";
+  const recipientName = selectedBeneficiaryName || customerName.trim();
   const qtyValue = Number(qty) || 0;
   const unitPriceValue = Number(unitPrice) || 0;
   const totalAmount = qtyValue * unitPriceValue;
 
-  const banner = {
-    direct: { title: "Direct Release", text: "Material is released and deducted from stock without creating beneficiary credit.", bg: "bg-sky-50 border-sky-200 text-sky-800" },
-    credit: { title: "Beneficiary Credit", text: "Material taken now, payment will be recorded as outstanding balance.", bg: "bg-amber-50 border-amber-200 text-amber-800" },
-    borrowed: { title: "Borrowed Material", text: "Material is temporarily issued and should be returned or settled later.", bg: "bg-violet-50 border-violet-200 text-violet-800" },
-    internal: { title: "Internal Use", text: "Material is consumed by internal farm or office operations.", bg: "bg-emerald-50 border-emerald-200 text-emerald-800" },
-    adjustment: { title: "Stock Adjustment", text: "Material is deducted to correct count, damage, expiry, or other stock discrepancies.", bg: "bg-slate-50 border-slate-200 text-slate-800" },
-  }[type] || { title: "", text: "", bg: "" };
-
   const resetReleaseForm = () => {
+    setType("direct");
     setBeneficiary("");
+    setCustomerName("");
     setMaterialId("");
     setQty("");
     setUnitPrice("");
     const today = todayInputDate();
     setSlipNo(generateReleaseSlip(today));
     setDate(today);
-    setExpectedReturnDate(addDaysInputDate(todayInputDate(), 7));
-    setPurpose("");
-    setNotes("");
   };
 
   useEffect(() => {
@@ -1565,127 +2314,25 @@ function ReleaseMaterials({ open, onOpenChange, items, setItems, setCredits, set
       const today = todayInputDate();
       setSlipNo(generateReleaseSlip(today));
       setDate(today);
-      setExpectedReturnDate(addDaysInputDate(today, 7));
     }
   }, [open]);
 
   const releaseHistoryType = () => {
     if (type === "credit") return "Credit Issued";
-    if (type === "borrowed") return "Borrowed Material";
-    if (type === "internal") return "Internal Use";
-    if (type === "adjustment") return "Adjustment";
     return "Direct Release";
-  };
-
-  const handleSaveRelease = () => {
-    if (!slipNo.trim() || !selectedItem || qtyValue <= 0) {
-      toast.error("Slip number, material, and quantity are required");
-      return;
-    }
-    if (type === "credit" && !selectedBeneficiaryName) {
-      toast.error("Beneficiary is required for beneficiary credit releases");
-      return;
-    }
-    if (type === "borrowed" && !selectedBeneficiaryName) {
-      toast.error("Borrower or beneficiary is required for borrowed materials");
-      return;
-    }
-    if (type === "borrowed" && !expectedReturnDate) {
-      toast.error("Expected return date is required for borrowed materials");
-      return;
-    }
-    if (unitPriceValue <= 0) {
-      toast.error("Unit price must be greater than zero");
-      return;
-    }
-    if (qtyValue > selectedItem.onHand) {
-      toast.error(`Only ${selectedItem.onHand} ${selectedItem.unit} available for ${selectedItem.name}`);
-      return;
-    }
-
-    setItems((current) => current.map((item) =>
-      item.id === selectedItem.id
-        ? { ...item, onHand: item.onHand - qtyValue, updatedAt: date, hasTransactions: true }
-        : item
-    ));
-
-    if (type === "credit") {
-      setCredits((current) => [
-        {
-          receipt: `CR-${date.slice(0, 4)}-${String(current.length + 1).padStart(4, "0")}`,
-          date: formatDateLabel(date),
-          beneficiary: selectedBeneficiaryName,
-          beneficiaryId: selectedBeneficiaryOption?.code || beneficiaryAccountId(selectedBeneficiaryName),
-          material: selectedItem.name,
-          qty: qtyValue,
-          unit: selectedItem.unit,
-          unitCost: unitPriceValue,
-          amount: totalAmount,
-          status: "Pending",
-          remaining: totalAmount,
-          slip: "—",
-        },
-        ...current,
-      ]);
-    }
-
-    if (type === "borrowed") {
-      setBorrowedRows((current) => [
-        {
-          id: `BOR-${date.slice(0, 4)}-${String(current.length + 1).padStart(4, "0")}`,
-          slipNo: slipNo.trim(),
-          borrower: selectedBeneficiaryName,
-          materialId: selectedItem.id,
-          material: selectedItem.name,
-          qtyBorrowed: qtyValue,
-          qtyReturned: 0,
-          dateBorrowed: date,
-          expectedReturnDate,
-          actualReturnDate: "",
-          unit: selectedItem.unit,
-          status: "Borrowed",
-          notes: notes.trim(),
-        },
-        ...current,
-      ]);
-    }
-
-    setHistory((current) => [
-      {
-        date: formatDateTime(date),
-        material: selectedItem.name,
-        type: releaseHistoryType(),
-        qty: -qtyValue,
-        unit: selectedItem.unit,
-        reason: `${purpose.trim() || `Released${selectedBeneficiaryName ? ` to ${selectedBeneficiaryName}` : ""}`}. Total amount: ₱${totalAmount.toLocaleString()}. Audit: material release recorded by ${user.name}.${notes.trim() ? ` Notes: ${notes.trim()}` : ""}`,
-        account: user.name,
-        ref: slipNo.trim(),
-        previousBalance: selectedItem.onHand,
-        updatedBalance: selectedItem.onHand - qtyValue,
-      },
-      ...current,
-    ]);
-
-    toast.success(type === "credit" ? "Credit release saved and dashboard updated" : "Release saved and dashboard updated");
-    resetReleaseForm();
-    onOpenChange(false);
   };
 
   const handleSaveReleaseToDatabase = async () => {
     if (!slipNo.trim() || !selectedItem || qtyValue <= 0) {
-      toast.error("Slip number, material, and quantity are required");
+      toast.error("Transaction number, material, and quantity are required");
       return;
     }
     if (type === "credit" && !selectedBeneficiaryName) {
       toast.error("Beneficiary is required for beneficiary credit releases");
       return;
     }
-    if (type === "borrowed" && !selectedBeneficiaryName) {
-      toast.error("Borrower or beneficiary is required for borrowed materials");
-      return;
-    }
-    if (type === "borrowed" && !expectedReturnDate) {
-      toast.error("Expected return date is required for borrowed materials");
+    if (!recipientName) {
+      toast.error("Beneficiary or customer name is required");
       return;
     }
     if (unitPriceValue <= 0) {
@@ -1706,24 +2353,25 @@ function ReleaseMaterials({ open, onOpenChange, items, setItems, setCredits, set
         stock_date: date,
         release_type: type,
         beneficiary_id: selectedBeneficiaryOption?.dbId || undefined,
-        beneficiary: selectedBeneficiaryName || undefined,
-        purpose: purpose.trim() || undefined,
-        notes: notes.trim() || undefined,
-        expected_return_date: type === "borrowed" ? expectedReturnDate : undefined,
+        beneficiary_account_id: selectedBeneficiaryOption?.code || undefined,
+        beneficiary: recipientName,
+        purpose: `${type === "credit" ? "Beneficiary credit" : "Cash"} release to ${recipientName}`,
+        payment_method: type === "credit" ? "Beneficiary Credit" : "Cash",
+        notes: `Payment Method: ${type === "credit" ? "Beneficiary Credit" : "Cash"}.`,
         user_id: currentUserId(user),
         user_name: user.name,
       });
-      const savedItem = mapInventoryItem(saved);
+      const savedItem = mapInventoryItem(saved.item ?? saved);
 
       setItems((current) => current.map((item) => item.id === selectedItem.id ? savedItem : item));
 
       if (type === "credit") {
         setCredits((current) => [
-          {
+          saved.credit ? mapCreditTransaction(saved.credit) : {
             receipt: `CR-${date.slice(0, 4)}-${String(current.length + 1).padStart(4, "0")}`,
             date: formatDateLabel(date),
-            beneficiary: selectedBeneficiaryName,
-            beneficiaryId: selectedBeneficiaryOption?.code || beneficiaryAccountId(selectedBeneficiaryName),
+            beneficiary: recipientName,
+            beneficiaryId: selectedBeneficiaryOption?.code || beneficiaryAccountId(recipientName),
             material: selectedItem.name,
             qty: qtyValue,
             unit: selectedItem.unit,
@@ -1737,10 +2385,6 @@ function ReleaseMaterials({ open, onOpenChange, items, setItems, setCredits, set
         ]);
       }
 
-      if (type === "borrowed" && saved.borrowed) {
-        setBorrowedRows((current) => [mapBorrowedMaterial(saved.borrowed), ...current]);
-      }
-
       setHistory((current) => [
         {
           date: formatDateTime(date),
@@ -1748,9 +2392,14 @@ function ReleaseMaterials({ open, onOpenChange, items, setItems, setCredits, set
           type: releaseHistoryType(),
           qty: -qtyValue,
           unit: selectedItem.unit,
-          reason: `${purpose.trim() || `Released${selectedBeneficiaryName ? ` to ${selectedBeneficiaryName}` : ""}`}. Total amount: PHP ${totalAmount.toLocaleString()}. Audit: material release recorded by ${user.name}.${notes.trim() ? ` Notes: ${notes.trim()}` : ""}`,
+          reason: `Released to ${recipientName}. Payment Method: ${type === "credit" ? "Beneficiary Credit" : "Cash"}. Total amount: PHP ${totalAmount.toLocaleString()}. Audit: material release recorded by ${user.name}.`,
           account: user.name,
           ref: slipNo.trim(),
+          beneficiary: recipientName,
+          category: selectedItem.category,
+          unitCost: unitPriceValue,
+          totalAmount,
+          paymentMethod: type === "credit" ? "Beneficiary Credit" : "Cash",
           previousBalance: selectedItem.onHand,
           updatedBalance: selectedItem.onHand - qtyValue,
         },
@@ -1769,161 +2418,149 @@ function ReleaseMaterials({ open, onOpenChange, items, setItems, setCredits, set
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="!max-w-[860px] w-[calc(100vw-1rem)] max-h-[86dvh] overflow-y-auto">
+      <DialogContent className="!max-w-[1240px] w-[calc(100vw-1rem)] max-h-[88dvh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-emerald-700">
             <ArrowUpCircle className="h-5 w-5" />Release Materials
           </DialogTitle>
-          <DialogDescription>Material released to beneficiaries or for farm use.</DialogDescription>
+          <DialogDescription>Record cash and beneficiary credit material releases.</DialogDescription>
         </DialogHeader>
-        <div className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <div className="space-y-1">
-              <Label>Release Slip No. <span className="text-red-500">*</span></Label>
-              <Input value={slipNo} onChange={(event) => setSlipNo(event.target.value)} placeholder="Auto-generated, e.g. RS-20260603-191245" />
-            </div>
-            <div className="space-y-1">
-              <Label>Date Released <span className="text-red-500">*</span></Label>
-              <InventoryDateInput value={date} onChange={(value) => {
-                setDate(value);
-                if (type === "borrowed") setExpectedReturnDate(addDaysInputDate(value, 7));
-              }} />
-            </div>
-            <div className="space-y-1">
-              <Label>Beneficiary / Recipient {(type === "credit" || type === "borrowed") && <span className="text-red-500">*</span>}</Label>
-              <Select value={beneficiary} onValueChange={setBeneficiary}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select beneficiary" />
-                </SelectTrigger>
-                <SelectContent>
-                  {beneficiaries.length === 0 ? (
-                    <SelectItem value="no-beneficiaries" disabled>No beneficiaries available</SelectItem>
-                  ) : beneficiaries.map((item) => (
-                    <SelectItem key={item.id} value={item.id}>
-                      {item.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1">
-              <Label>Material <span className="text-red-500">*</span></Label>
-              <Select value={materialId} onValueChange={(value) => {
-                setMaterialId(value);
-                const item = items.find((inventoryItem) => inventoryItem.id === value);
-                if (item) {
-                  setUnit(item.unit);
-                  setUnitPrice(String(item.cost || ""));
-                }
-              }}>
-                <SelectTrigger><SelectValue placeholder="Select an inventory item" /></SelectTrigger>
-                <SelectContent>
-                  {items
-                    .filter((i) => i.active !== false)
-                    .slice()
-                    .sort((a, b) => {
-                      const av = a.expiry === "—" ? "9999-12" : a.expiry;
-                      const bv = b.expiry === "—" ? "9999-12" : b.expiry;
-                      return av.localeCompare(bv);
-                    })
-                    .map((i) => (
-                      <SelectItem key={i.id} value={i.id}>
-                        {i.name} — Expiry: {i.expiry}
-                      </SelectItem>
+
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+          <div className="space-y-4">
+            <section className="space-y-3 rounded-md border p-4">
+              <h3 className="text-sm font-semibold text-slate-800">Transaction Information</h3>
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                <div className="space-y-1">
+                  <Label>Transaction Number <span className="text-red-500">*</span></Label>
+                  <Input value={slipNo} onChange={(event) => setSlipNo(event.target.value)} placeholder="Auto-generated, e.g. RS-20260603-191245" />
+                </div>
+                <div className="space-y-1">
+                  <Label>Transaction Date <span className="text-red-500">*</span></Label>
+                  <InventoryDateInput value={date} onChange={setDate} />
+                </div>
+                <div className="space-y-2 md:col-span-2">
+                  <Label>Payment Method <span className="text-red-500">*</span></Label>
+                  <RadioGroup value={type} onValueChange={setType} className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    {[{ v: "direct", t: "Cash" }, { v: "credit", t: "Beneficiary Credit" }].map((option) => (
+                      <label key={option.v} className={`flex min-h-11 cursor-pointer items-center gap-3 rounded-md border px-3 py-2 text-sm leading-snug ${type === option.v ? "border-emerald-500 bg-emerald-50 text-emerald-800" : "border-slate-200"}`}>
+                        <RadioGroupItem value={option.v} id={`release-${option.v}`} />
+                        <span className="min-w-0 whitespace-normal break-words font-medium">{option.t}</span>
+                      </label>
                     ))}
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-muted-foreground">Sorted by nearest expiry — release earliest-expiring items first.</p>
-            </div>
-            <div className="space-y-1">
-              <Label>Quantity Released <span className="text-red-500">*</span></Label>
-              <Input type="number" value={qty} onChange={(event) => setQty(event.target.value)} />
-            </div>
-            <div className="space-y-1">
-              <Label>Unit <span className="text-red-500">*</span></Label>
-              <Select value={unit} onValueChange={setUnit}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {["pcs", "kg", "L", "roll", "pair", "bag"].map((u) => <SelectItem key={u} value={u}>{u}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1">
-              <Label>Unit Price (₱) <span className="text-red-500">*</span></Label>
-              <Input type="number" step="0.01" value={unitPrice} onChange={(event) => setUnitPrice(event.target.value)} placeholder="0.00" />
-            </div>
-            {type === "borrowed" && (
-              <div className="space-y-1">
-                <Label>Expected Return Date <span className="text-red-500">*</span></Label>
-                <InventoryDateInput value={expectedReturnDate} onChange={setExpectedReturnDate} />
+                  </RadioGroup>
+                </div>
               </div>
-            )}
-            <div className="space-y-1">
-              <Label>Total Amount</Label>
-              <Input value={`₱${totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} disabled />
+            </section>
+
+            <section className="space-y-3 rounded-md border p-4">
+              <h3 className="text-sm font-semibold text-slate-800">Beneficiary or Customer Information</h3>
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                <div className="space-y-1">
+                  <Label>Beneficiary or Customer Name <span className="text-red-500">*</span></Label>
+                  <Select value={beneficiary} onValueChange={(value) => { setBeneficiary(value); setCustomerName(""); }}>
+                    <SelectTrigger><SelectValue placeholder="Select beneficiary account" /></SelectTrigger>
+                    <SelectContent>
+                      {beneficiaries.length === 0 ? (
+                        <SelectItem value="no-beneficiaries" disabled>No beneficiaries available</SelectItem>
+                      ) : beneficiaries.map((item) => (
+                        <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {type === "direct" && (
+                    <Input value={customerName} onChange={(event) => { setCustomerName(event.target.value); setBeneficiary(""); }} placeholder="Or type walk-in customer name" />
+                  )}
+                </div>
+                <div className="space-y-1">
+                  <Label>Beneficiary ID</Label>
+                  <Input value={selectedBeneficiaryOption?.code ?? ""} placeholder="Not applicable" disabled />
+                </div>
+              </div>
+            </section>
+
+            <section className="space-y-3 rounded-md border p-4">
+              <h3 className="text-sm font-semibold text-slate-800">Material Information</h3>
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-6">
+                <div className="space-y-1 md:col-span-4">
+                  <Label>Item Name <span className="text-red-500">*</span></Label>
+                  <Select value={materialId} onValueChange={(value) => {
+                    setMaterialId(value);
+                    const item = items.find((inventoryItem) => inventoryItem.id === value);
+                    if (item) setUnitPrice(String(item.cost || ""));
+                  }}>
+                    <SelectTrigger><SelectValue placeholder="Select an inventory item" /></SelectTrigger>
+                    <SelectContent>
+                      {items
+                        .filter((item) => item.active !== false)
+                        .slice()
+                        .sort((a, b) => {
+                          const av = isNoExpiration(a.expiry) ? "9999-12-31" : a.expiry;
+                          const bv = isNoExpiration(b.expiry) ? "9999-12-31" : b.expiry;
+                          return av.localeCompare(bv);
+                        })
+                        .map((item) => (
+                          <SelectItem key={item.id} value={item.id}>{item.name} - Expiration: {item.expiry}</SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">Sorted by nearest expiration date.</p>
+                </div>
+                <div className="space-y-1 md:col-span-2">
+                  <Label>Category</Label>
+                  <Input value={selectedItem?.category ?? ""} placeholder="Auto-filled" disabled />
+                </div>
+                <div className="space-y-1 md:col-span-2">
+                  <Label>Available Stock</Label>
+                  <Input value={selectedItem ? `${selectedItem.onHand} ${selectedItem.unit}` : ""} placeholder="Auto-filled" disabled />
+                </div>
+                <div className="space-y-1 md:col-span-2">
+                  <Label>Quantity to Release <span className="text-red-500">*</span></Label>
+                  <Input type="number" min={0} value={qty} onChange={(event) => setQty(event.target.value)} placeholder="0" />
+                </div>
+                <div className="space-y-1 md:col-span-2">
+                  <Label>Unit Price <span className="text-red-500">*</span></Label>
+                  <Input type="number" step="0.01" value={unitPrice} onChange={(event) => setUnitPrice(event.target.value)} placeholder="0.00" />
+                </div>
+                <div className="space-y-1 md:col-span-2">
+                  <Label>Total Amount</Label>
+                  <Input value={money(totalAmount)} disabled />
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <aside className="space-y-4 rounded-md border bg-slate-50 p-4">
+            <h3 className="text-sm font-semibold text-slate-800">Transaction Summary</h3>
+            <div className="rounded-md border bg-white p-3 text-sm">
+              <div className="text-xs text-muted-foreground">Selected Items</div>
+              <div className="mt-1 font-medium">{selectedItem?.name ?? "No item selected"}</div>
+              {selectedItem && <div className="text-xs text-muted-foreground">{selectedItem.category}</div>}
             </div>
-          </div>
-
-          <div className="space-y-2">
-            <Label>Transaction Type <span className="text-red-500">*</span></Label>
-            <RadioGroup value={type} onValueChange={(value) => {
-              setType(value);
-              if (value === "borrowed") setExpectedReturnDate(addDaysInputDate(date, 7));
-            }} className="grid grid-cols-1 md:grid-cols-2 gap-2">
-              {[
-                { v: "direct", t: "Direct Release", d: "Deduct stock without credit." },
-                { v: "credit", t: "Beneficiary Credit", d: "Outstanding balance recorded." },
-                { v: "borrowed", t: "Borrowed Material", d: "Temporary issue to be returned." },
-                { v: "internal", t: "Internal Use", d: "Used for operations." },
-                { v: "adjustment", t: "Stock Adjustment", d: "Correct count or remove damaged/expired stock." },
-              ].map((o) => (
-                <label
-                  key={o.v}
-                  className={`p-3 border rounded-md cursor-pointer ${type === o.v ? "border-emerald-500 bg-emerald-50" : "border-slate-200"}`}
-                >
-                  <div className="flex items-center gap-2">
-                    <RadioGroupItem value={o.v} id={o.v} />
-                    <span>{o.t}</span>
-                  </div>
-                  <div className="text-xs text-muted-foreground mt-1">{o.d}</div>
-                </label>
-              ))}
-            </RadioGroup>
-          </div>
-
-          {selectedItem && (
-            <div className="rounded-md border bg-slate-50 p-3 text-sm">
-              <div className="font-medium">{selectedItem.name}</div>
-              <div className="text-muted-foreground">
-                Current balance: {selectedItem.onHand} {selectedItem.unit} • New balance after release: {Math.max(0, selectedItem.onHand - qtyValue)} {selectedItem.unit} • Status: {deriveStatus({ ...selectedItem, onHand: selectedItem.onHand - qtyValue })}
+            <div className="space-y-2 text-sm">
+              <div className="flex items-start justify-between gap-3">
+                <span className="text-muted-foreground">Payment Method</span>
+                <span className="text-right font-medium">{type === "credit" ? "Beneficiary Credit" : "Cash"}</span>
+              </div>
+              <div className="flex items-start justify-between gap-3">
+                <span className="text-muted-foreground">Total Quantity</span>
+                <span className="text-right font-medium">{qtyValue} {selectedItem?.unit ?? ""}</span>
+              </div>
+              <div className="flex items-start justify-between gap-3 border-t pt-3">
+                <span className="font-medium">Grand Total</span>
+                <span className="text-right text-xl font-semibold text-emerald-800">{money(totalAmount)}</span>
               </div>
             </div>
-          )}
-
-          <div className="space-y-1">
-            <Label>Purpose / Use</Label>
-            <Input value={purpose} onChange={(event) => setPurpose(event.target.value)} placeholder="e.g. Covering banana bunches for pest and sun protection." />
-          </div>
-
-          <div className="space-y-1">
-            <Label>Notes</Label>
-            <Textarea value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Release for Block 12 — Weekly operations." />
-          </div>
-
-          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end [&>button]:w-full sm:[&>button]:w-auto">
-            <Button variant="outline" onClick={() => { resetReleaseForm(); onOpenChange(false); }} disabled={savingRelease}>Cancel</Button>
-            <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={handleSaveReleaseToDatabase} disabled={savingRelease}>
-              {savingRelease ? "Saving..." : "Save Release"}
+            <Button className="h-11 w-full bg-emerald-600 hover:bg-emerald-700" onClick={handleSaveReleaseToDatabase} disabled={savingRelease}>
+              {savingRelease ? "Saving..." : "Confirm Transaction"}
             </Button>
-          </div>
-
-          <div className={`p-3 border rounded-md ${banner.bg}`}>
-            This is a <strong>{banner.title}</strong>. {banner.text}
-          </div>
+            <Button variant="outline" className="w-full" onClick={() => { resetReleaseForm(); onOpenChange(false); }} disabled={savingRelease}>Cancel</Button>
+          </aside>
         </div>
       </DialogContent>
     </Dialog>
   );
+
 }
 
 interface CreditRow {
@@ -1953,7 +2590,6 @@ interface BorrowedMaterialRow {
 }
 
 interface CreditDeduction {
-  payrollBatch: string;
   date: string;
   amount: number;
   recordedBy: string;
@@ -1964,6 +2600,91 @@ const credits: CreditRow[] = [];
 function beneficiaryAccountId(name: string) {
   const normalized = name.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "-").replace(/^-|-$/g, "");
   return normalized ? `BEN-${normalized}` : "";
+}
+
+function CashTransactions({ history, items }: { history: StockHistoryRow[]; items: InventoryItem[] }) {
+  const [search, setSearch] = useState("");
+  const cashRows = history
+    .filter((row) => row.qty < 0 && (row.paymentMethod || inferPaymentMethod(row.type, row.reason)) === "Cash")
+    .filter((row) => {
+      const q = search.trim().toLowerCase();
+      if (!q) return true;
+      return `${row.ref} ${row.material} ${row.beneficiary ?? ""} ${row.reason}`.toLowerCase().includes(q);
+    });
+  const totalCollected = cashRows.reduce((sum, row) => sum + (row.totalAmount ?? Math.abs(row.qty) * (row.unitCost ?? 0)), 0);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="flex items-center gap-2"><Banknote className="h-6 w-6 text-emerald-700" />Cash Transactions</h1>
+          <p className="text-muted-foreground">Completed cash payments from Sales and Release Materials.</p>
+        </div>
+        <div className="relative w-full sm:w-72">
+          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+          <Input className="h-9 pl-8" placeholder="Search cash transactions..." value={search} onChange={(event) => setSearch(event.target.value)} />
+        </div>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-3">
+        <Card>
+          <CardContent className="p-4">
+            <div className="text-xs text-muted-foreground">Completed Cash Transactions</div>
+            <div className="text-2xl font-semibold">{cashRows.length}</div>
+          </CardContent>
+        </Card>
+        <Card className="sm:col-span-2">
+          <CardContent className="p-4">
+            <div className="text-xs text-muted-foreground">Total Cash Collected</div>
+            <div className="text-2xl font-semibold text-emerald-700">{money(totalCollected)}</div>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card>
+        <CardContent className="p-4">
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Transaction No.</TableHead>
+                  <TableHead>Date and Time</TableHead>
+                  <TableHead>Beneficiary / Customer</TableHead>
+                  <TableHead>Item Name</TableHead>
+                  <TableHead>Category</TableHead>
+                  <TableHead className="text-right">Quantity</TableHead>
+                  <TableHead className="text-right">Unit Price</TableHead>
+                  <TableHead className="text-right">Total Amount</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Processed By</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {cashRows.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={10} className="py-6 text-center text-muted-foreground">No completed cash transactions found.</TableCell>
+                  </TableRow>
+                ) : cashRows.map((row) => (
+                  <TableRow key={`${row.ref}-${row.material}-${row.date}`}>
+                    <TableCell className="font-medium">{row.ref}</TableCell>
+                    <TableCell className="text-xs">{row.date}</TableCell>
+                    <TableCell>{row.beneficiary || customerFromReason(row.reason) || "-"}</TableCell>
+                    <TableCell>{row.material}</TableCell>
+                    <TableCell>{row.category || getItemCategory(items, row.material)}</TableCell>
+                    <TableCell className="text-right">{Math.abs(row.qty)} {row.unit}</TableCell>
+                    <TableCell className="text-right">{money(row.unitCost ?? 0)}</TableCell>
+                    <TableCell className="text-right">{money(row.totalAmount ?? Math.abs(row.qty) * (row.unitCost ?? 0))}</TableCell>
+                    <TableCell><Badge className="bg-emerald-100 text-emerald-800">Completed</Badge></TableCell>
+                    <TableCell>{row.account}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
 }
 
 const borrowedMaterials: BorrowedMaterialRow[] = [];
@@ -2344,10 +3065,6 @@ function CreditTransactions({ credits, setCredits, user }: { credits: CreditRow[
   }));
   const total = displayCredits.reduce((s, c) => s + c.remaining, 0);
   const [view, setView] = useState<CreditRow | null>(null);
-  const [deducting, setDeducting] = useState<CreditRow | null>(null);
-  const [deductionAmount, setDeductionAmount] = useState("");
-  const [payrollBatch, setPayrollBatch] = useState("PB-2026-06");
-  const [savingDeduction, setSavingDeduction] = useState(false);
   const [ledgerOpen, setLedgerOpen] = useState(false);
   const [ledgerSearch, setLedgerSearch] = useState("");
   const [ledgerStatus, setLedgerStatus] = useState("all");
@@ -2366,49 +3083,6 @@ function CreditTransactions({ credits, setCredits, user }: { credits: CreditRow[
   const ledgerRemaining = ledgerRows.reduce((sum, credit) => sum + credit.remaining, 0);
   const ledgerDeducted = ledgerRows.reduce((sum, credit) => sum + (credit.amount - credit.remaining), 0);
 
-  const openDeduction = (credit: CreditRow) => {
-    setDeducting(credit);
-    setDeductionAmount(String(credit.remaining || ""));
-    setPayrollBatch(credit.slip && credit.slip !== "—" && credit.slip !== "â€”" ? credit.slip : "PB-2026-06");
-  };
-
-  const saveDeduction = async () => {
-    if (!deducting) return;
-    const amount = Number(deductionAmount) || 0;
-    if (amount <= 0) {
-      toast.error("Deduction amount must be greater than zero");
-      return;
-    }
-    if (amount > deducting.remaining) {
-      toast.error("Deduction cannot exceed the remaining balance");
-      return;
-    }
-    if (!payrollBatch.trim()) {
-      toast.error("Payroll batch is required");
-      return;
-    }
-
-    setSavingDeduction(true);
-    try {
-      const saved = await deductCreditTransaction(deducting.dbId ?? deducting.receipt, {
-        amount,
-        payroll_batch: payrollBatch.trim(),
-        deduction_date: todayInputDate(),
-        user_id: currentUserId(user),
-        user_name: user.name,
-      });
-      const savedCredit = mapCreditTransaction(saved);
-
-      setCredits((current) => current.map((credit) => credit.receipt === deducting.receipt ? savedCredit : credit));
-      toast.success("Payroll deduction saved to Supabase");
-      setDeducting(null);
-      setDeductionAmount("");
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Unable to save payroll deduction.");
-    } finally {
-      setSavingDeduction(false);
-    }
-  };
 
   const printReceipt = () => {
     const node = document.getElementById("credit-receipt-print");
@@ -2453,7 +3127,7 @@ function CreditTransactions({ credits, setCredits, user }: { credits: CreditRow[
   };
 
   const exportLedgerCsv = () => {
-    const headers = ["Receipt No.", "Date", "Beneficiary", "Beneficiary ID", "Material", "Qty", "Unit", "Unit Cost", "Amount Charged", "Deducted", "Remaining", "Status", "Payroll Batch"];
+    const headers = ["Receipt No.", "Date", "Beneficiary", "Beneficiary ID", "Material", "Qty", "Unit", "Unit Cost", "Amount Charged", "Deducted", "Remaining", "Status"];
     const lines = ledgerRows.map((credit) => [
       credit.receipt,
       credit.date,
@@ -2467,7 +3141,6 @@ function CreditTransactions({ credits, setCredits, user }: { credits: CreditRow[
       (credit.amount - credit.remaining).toFixed(2),
       credit.remaining.toFixed(2),
       credit.status,
-      credit.slip,
     ]);
     const csv = [headers, ...lines]
       .map((row) => row.map((value) => `"${value.replace(/"/g, '""')}"`).join(","))
@@ -2484,13 +3157,13 @@ function CreditTransactions({ credits, setCredits, user }: { credits: CreditRow[
     <div className="space-y-4">
       <div>
         <h1 className="flex items-center gap-2"><CreditCard className="h-6 w-6 text-emerald-700" />Credit Transactions</h1>
-        <p className="text-muted-foreground">Manage credit releases and deductions for beneficiaries.</p>
+        <p className="text-muted-foreground">Review beneficiary credit releases and remaining balances.</p>
       </div>
 
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-base">Credit Transactions</CardTitle>
-          <CardDescription>Credit transactions to be deducted during payroll preparation.</CardDescription>
+          <CardDescription>Credit balances are handled during payroll preparation by Payroll Personnel.</CardDescription>
         </CardHeader>
         <CardContent>
           <Table>
@@ -2498,7 +3171,7 @@ function CreditTransactions({ credits, setCredits, user }: { credits: CreditRow[
               <TableRow>
                 <TableHead>Beneficiary Name</TableHead><TableHead>Material Released</TableHead>
                 <TableHead>Amount Charged (₱)</TableHead><TableHead>Deduction Status</TableHead>
-                <TableHead>Remaining Balance (₱)</TableHead><TableHead>Payroll Batch</TableHead>
+                <TableHead>Remaining Balance (₱)</TableHead>
                 <TableHead>Actions</TableHead>
               </TableRow>
             </TableHeader>
@@ -2519,7 +3192,6 @@ function CreditTransactions({ credits, setCredits, user }: { credits: CreditRow[
                     }>{c.status}</Badge>
                   </TableCell>
                   <TableCell>{c.remaining.toLocaleString()}.00</TableCell>
-                  <TableCell>{c.slip}</TableCell>
                   <TableCell>
                     <div className="flex items-center gap-1">
                     <button
@@ -2529,15 +3201,6 @@ function CreditTransactions({ credits, setCredits, user }: { credits: CreditRow[
                     >
                       <Eye className="h-3.5 w-3.5" />
                     </button>
-                    {c.remaining > 0 && (
-                      <button
-                        title="Record Payroll Deduction"
-                        className="p-1.5 rounded bg-emerald-100 text-emerald-700 hover:bg-emerald-200"
-                        onClick={() => openDeduction(c)}
-                      >
-                        <CreditCard className="h-3.5 w-3.5" />
-                      </button>
-                    )}
                     </div>
                   </TableCell>
                 </TableRow>
@@ -2561,7 +3224,7 @@ function CreditTransactions({ credits, setCredits, user }: { credits: CreditRow[
               <CreditCard className="h-5 w-5" />Full Credit Ledger
             </DialogTitle>
             <DialogDescription>
-              Complete ledger of beneficiary credit releases, payroll deductions, and remaining balances.
+              Complete ledger of beneficiary credit releases and remaining balances.
             </DialogDescription>
           </DialogHeader>
 
@@ -2616,13 +3279,12 @@ function CreditTransactions({ credits, setCredits, user }: { credits: CreditRow[
                   <TableHead className="text-right">Deducted</TableHead>
                   <TableHead className="text-right">Remaining</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead>Payroll Batch</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {ledgerRows.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={12} className="text-center text-muted-foreground py-6">No credit ledger records match the selected filters.</TableCell>
+                    <TableCell colSpan={11} className="text-center text-muted-foreground py-6">No credit ledger records match the selected filters.</TableCell>
                   </TableRow>
                 ) : ledgerRows.map((credit) => (
                   <TableRow key={credit.receipt}>
@@ -2642,7 +3304,6 @@ function CreditTransactions({ credits, setCredits, user }: { credits: CreditRow[
                         : "bg-amber-100 text-amber-800"
                       }>{credit.status}</Badge>
                     </TableCell>
-                    <TableCell>{credit.slip}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -2677,7 +3338,6 @@ function CreditTransactions({ credits, setCredits, user }: { credits: CreditRow[
                   <div><div className="text-xs text-muted-foreground mb-0.5">Date</div><div>{view.date}</div></div>
                   <div><div className="text-xs text-muted-foreground mb-0.5">Beneficiary</div><div>{view.beneficiary}</div></div>
                   <div><div className="text-xs text-muted-foreground mb-0.5">Beneficiary ID</div><div>{view.beneficiaryId}</div></div>
-                  <div><div className="text-xs text-muted-foreground mb-0.5">Payroll Batch</div><div>{view.slip}</div></div>
                 </div>
                 <table className="w-full border-collapse">
                   <thead>
@@ -2707,13 +3367,12 @@ function CreditTransactions({ credits, setCredits, user }: { credits: CreditRow[
                 <div className="space-y-2">
                   <div className="font-medium">Deduction History</div>
                   {(view.deductionHistory ?? []).length === 0 ? (
-                    <div className="rounded-md border bg-slate-50 p-3 text-muted-foreground">No payroll deductions have been recorded yet.</div>
+                    <div className="rounded-md border bg-slate-50 p-3 text-muted-foreground">No deductions have been recorded yet.</div>
                   ) : (
                     <div className="rounded-md border overflow-hidden">
                       <Table>
                         <TableHeader>
                           <TableRow>
-                            <TableHead>Payroll Batch</TableHead>
                             <TableHead>Date</TableHead>
                             <TableHead>Recorded By</TableHead>
                             <TableHead className="text-right">Amount</TableHead>
@@ -2721,8 +3380,7 @@ function CreditTransactions({ credits, setCredits, user }: { credits: CreditRow[
                         </TableHeader>
                         <TableBody>
                           {(view.deductionHistory ?? []).map((entry, index) => (
-                            <TableRow key={`${entry.payrollBatch}-${index}`}>
-                              <TableCell>{entry.payrollBatch}</TableCell>
+                            <TableRow key={`${entry.date}-${index}`}>
                               <TableCell>{entry.date}</TableCell>
                               <TableCell>{entry.recordedBy}</TableCell>
                               <TableCell className="text-right">â‚±{entry.amount.toLocaleString()}.00</TableCell>
@@ -2751,52 +3409,6 @@ function CreditTransactions({ credits, setCredits, user }: { credits: CreditRow[
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!deducting} onOpenChange={(open) => !open && setDeducting(null)}>
-        <DialogContent className="!max-w-[calc(100vw-1rem)] w-[calc(100vw-1rem)] sm:!max-w-[460px]">
-          {deducting && (
-            <>
-              <DialogHeader>
-                <DialogTitle className="flex items-center gap-2 text-emerald-700">
-                  <CreditCard className="h-5 w-5" />Record Payroll Deduction
-                </DialogTitle>
-                <DialogDescription>
-                  Apply a payroll deduction to this beneficiary credit and update the remaining balance.
-                </DialogDescription>
-              </DialogHeader>
-              <div className="space-y-4">
-                <div className="rounded-md border bg-slate-50 p-3 text-sm">
-                  <div className="font-medium">{deducting.beneficiary}</div>
-                  <div className="text-muted-foreground">{deducting.receipt} - {deducting.material}</div>
-                  <div className="mt-2 flex justify-between">
-                    <span>Remaining Balance</span>
-                    <span className="font-semibold">â‚±{deducting.remaining.toLocaleString()}.00</span>
-                  </div>
-                </div>
-                <div className="space-y-1">
-                  <Label>Payroll Batch <span className="text-red-500">*</span></Label>
-                  <Input value={payrollBatch} onChange={(event) => setPayrollBatch(event.target.value)} placeholder="e.g. PB-2026-06" />
-                </div>
-                <div className="space-y-1">
-                  <Label>Deduction Amount <span className="text-red-500">*</span></Label>
-                  <Input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={deductionAmount}
-                    onChange={(event) => setDeductionAmount(event.target.value)}
-                  />
-                </div>
-              </div>
-              <DialogFooter>
-                <Button variant="outline" onClick={() => setDeducting(null)} disabled={savingDeduction}>Cancel</Button>
-                <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={saveDeduction} disabled={savingDeduction}>
-                  {savingDeduction ? "Saving..." : "Save Deduction"}
-                </Button>
-              </DialogFooter>
-            </>
-          )}
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
@@ -2810,6 +3422,11 @@ interface StockHistoryRow {
   reason: string;
   account: string;
   ref: string;
+  beneficiary?: string;
+  category?: string;
+  unitCost?: number;
+  totalAmount?: number;
+  paymentMethod?: "Cash" | "Beneficiary Credit" | string;
   previousBalance?: number;
   updatedBalance?: number;
 }
@@ -2869,8 +3486,8 @@ function StockHistory({ history }: { history: StockHistoryRow[] }) {
             <Select value={type} onValueChange={setType}>
               <SelectTrigger className="h-9 w-full sm:w-52"><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Transaction Types</SelectItem>
-                {TXN_TYPES.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+                <SelectItem value="all">All Payment Methods / Movements</SelectItem>
+                {TXN_TYPES.map((t) => <SelectItem key={t} value={t}>{transactionTypeLabel(t)}</SelectItem>)}
               </SelectContent>
             </Select>
             <Select value={material} onValueChange={setMaterial}>
@@ -2886,7 +3503,7 @@ function StockHistory({ history }: { history: StockHistoryRow[] }) {
             <TableHeader>
               <TableRow>
                 <TableHead>Transaction ID</TableHead><TableHead>Date & Time</TableHead><TableHead>Material</TableHead>
-                <TableHead>Transaction Type</TableHead><TableHead className="text-right">Qty Added</TableHead>
+                <TableHead>Payment Method</TableHead><TableHead className="text-right">Qty Added</TableHead>
                 <TableHead className="text-right">Qty Deducted</TableHead>
                 <TableHead className="text-right">Previous Balance</TableHead>
                 <TableHead className="text-right">Updated Balance</TableHead>
@@ -2916,7 +3533,7 @@ function StockHistory({ history }: { history: StockHistoryRow[] }) {
                       : r.type === "Stock Out — Expired" ? "bg-red-100 text-red-800"
                       : r.type === "Returned Material" ? "bg-teal-100 text-teal-800"
                       : "bg-slate-100 text-slate-800"
-                    }>{r.type}</Badge>
+                    }>{historyDisplayLabel(r)}</Badge>
                   </TableCell>
                   <TableCell className="text-right text-emerald-700">{quantityAdded(r) ? `${quantityAdded(r)} ${r.unit}` : "-"}</TableCell>
                   <TableCell className="text-right text-red-600">{quantityDeducted(r) ? `${quantityDeducted(r)} ${r.unit}` : "-"}</TableCell>
@@ -2970,6 +3587,7 @@ function RestockRequests({ user, items, requests, setRequests }: {
       case "Pending": return "bg-amber-100 text-amber-800";
       case "Approved": return "bg-emerald-100 text-emerald-800";
       case "Rejected": return "bg-red-100 text-red-800";
+      case "Cancelled": return "bg-slate-100 text-slate-700";
       case "Completed": return "bg-sky-100 text-sky-800";
       default: return "bg-slate-100 text-slate-800";
     }
@@ -3080,6 +3698,7 @@ function RestockRequests({ user, items, requests, setRequests }: {
                 <SelectItem value="pending">Pending</SelectItem>
                 <SelectItem value="approved">Approved</SelectItem>
                 <SelectItem value="rejected">Rejected</SelectItem>
+                <SelectItem value="cancelled">Cancelled</SelectItem>
                 <SelectItem value="completed">Completed</SelectItem>
               </SelectContent>
             </Select>
@@ -3235,7 +3854,7 @@ type RestockRequest = {
   requested: number;
   reason: string;
   requestedBy: string;
-  status: "Pending" | "Approved" | "Rejected" | "Completed";
+  status: "Pending" | "Approved" | "Rejected" | "Cancelled" | "Completed";
   priority?: string;
   notes?: string;
 };
@@ -3264,10 +3883,14 @@ function CreateRestockRequestDialog({ open, onOpenChange, items, onCreate }: { o
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
   const activeItems = items.filter((item) => item.active !== false);
-  const selectedItem = activeItems.find((item) => item.id === material);
+  const eligibleItems = activeItems.filter((item) => item.onHand <= getMinimumStock(item));
+  const selectedItem = eligibleItems.find((item) => item.id === material);
+  const selectedCurrent = Number(currentQty) || 0;
+  const selectedMinimum = Number(minStock) || 0;
+  const canRequestRestock = !!selectedItem && selectedCurrent <= selectedMinimum;
 
   const handleMaterialChange = (itemId: string) => {
-    const item = activeItems.find((option) => option.id === itemId);
+    const item = eligibleItems.find((option) => option.id === itemId);
     setMaterial(itemId);
     setCategory(item?.category ?? "");
     setCurrentQty(item ? String(item.onHand) : "");
@@ -3278,6 +3901,14 @@ function CreateRestockRequestDialog({ open, onOpenChange, items, onCreate }: { o
     if (saving) return;
     if (!selectedItem || !requestedQty || !reason) {
       toast.error("Please fill in all required fields");
+      return;
+    }
+    if (!canRequestRestock) {
+      toast.error("Restock requests are allowed only when current stock is at or below the minimum stock level.");
+      return;
+    }
+    if ((Number(requestedQty) || 0) <= 0) {
+      toast.error("Requested quantity must be greater than zero");
       return;
     }
 
@@ -3318,7 +3949,7 @@ function CreateRestockRequestDialog({ open, onOpenChange, items, onCreate }: { o
             <Plus className="h-5 w-5" />Create Restock Request
           </DialogTitle>
           <DialogDescription>
-            Submit a request to restock materials that are low or out of stock
+            Submit a request only for materials at or below minimum stock.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
@@ -3328,11 +3959,14 @@ function CreateRestockRequestDialog({ open, onOpenChange, items, onCreate }: { o
               <Select value={material} onValueChange={handleMaterialChange} disabled={saving}>
                 <SelectTrigger disabled={saving}><SelectValue placeholder="Select inventory item" /></SelectTrigger>
                 <SelectContent>
-                  {activeItems.map((item) => (
+                  {eligibleItems.map((item) => (
                     <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
+              {eligibleItems.length === 0 && (
+                <p className="text-xs text-muted-foreground">No inventory items are currently at or below minimum stock.</p>
+              )}
             </div>
             <div className="space-y-1">
               <Label>Category</Label>
@@ -3373,12 +4007,12 @@ function CreateRestockRequestDialog({ open, onOpenChange, items, onCreate }: { o
           </div>
 
           <div className="text-xs text-muted-foreground bg-sky-50 border border-sky-200 rounded-md p-3">
-            <strong>Note:</strong> This request will be sent to the Manager/Admin for review and approval.
+            <strong>Note:</strong> This request will be sent to the Manager/Admin only when current stock is at or below the minimum stock level.
           </div>
 
           <DialogFooter>
             <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Cancel</Button>
-            <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={handleSubmit} disabled={saving}>
+            <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={handleSubmit} disabled={saving || !canRequestRestock}>
               {saving ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <FileBarChart2 className="h-4 w-4 mr-1" />}
               {saving ? "Submitting..." : "Submit Request"}
             </Button>
@@ -3429,6 +4063,14 @@ function EditRestockRequestDialog({ request, onOpenChange, onUpdate }: {
 
     if (!material || !requestedQty || !reason) {
       toast.error("Please fill in all required fields");
+      return;
+    }
+    if ((Number(currentQty) || 0) > (Number(minStock) || 0)) {
+      toast.error("Restock requests are allowed only when current stock is at or below the minimum stock level.");
+      return;
+    }
+    if ((Number(requestedQty) || 0) <= 0) {
+      toast.error("Requested quantity must be greater than zero");
       return;
     }
 

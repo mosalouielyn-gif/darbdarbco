@@ -48,6 +48,54 @@ class AuthController extends Controller
         ]);
     }
 
+    public function verifyAdminPassword(Request $request): JsonResponse
+    {
+        $credentials = $request->validate([
+            'user_id' => ['required', 'integer'],
+            'email' => ['required', 'email'],
+            'password' => ['required', 'string'],
+        ]);
+
+        $user = $this->findUserById((int) $credentials['user_id']);
+        $email = strtolower(trim($credentials['email']));
+
+        if (
+            ! $user ||
+            strtolower($user->email) !== $email ||
+            $user->role !== 'manager_admin' ||
+            ! $user->active ||
+            ! $this->passwordMatches(trim($credentials['password']), $user->password_hash)
+        ) {
+            throw ValidationException::withMessages([
+                'password' => ['Admin password verification failed.'],
+            ]);
+        }
+
+        return response()->json(['verified' => true]);
+    }
+
+    private function findUserById(int $id): ?object
+    {
+        try {
+            return DB::table('users')
+                ->leftJoin('roles', 'roles.id', '=', 'users.role_id')
+                ->where('users.id', $id)
+                ->selectRaw('users.id, users.full_name as name, users.email, users.password_hash, roles.code as role, users.is_active as active')
+                ->first();
+        } catch (QueryException) {
+            // Fall back to the earlier demo schema if the current DARBCO schema is not present.
+        }
+
+        try {
+            return DB::table('users')
+                ->where('id', $id)
+                ->selectRaw('id, name, email, password as password_hash, role, active')
+                ->first();
+        } catch (QueryException) {
+            return null;
+        }
+    }
+
     private function findUserByEmail(string $email): ?object
     {
         try {

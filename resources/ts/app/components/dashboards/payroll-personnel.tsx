@@ -11,27 +11,28 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Textarea } from "../ui/textarea";
 import { DateInput } from "../ui/date-input";
 import {
-  LayoutDashboard, Wallet, FileText, History, Plus, Search, Eye, Edit, Trash2,
+  LayoutDashboard, Wallet, FileText, History, Plus, Search, Eye, Edit,
   Send, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Printer, Download, Save, X, Loader2,
 } from "lucide-react";
 import { User } from "../types";
 import { toast } from "sonner";
+import { jsPDF } from "jspdf";
 import { useAppData } from "../../lib/app-data-context";
-import { createPayrollSlip, deletePayrollSlip, submitPayrollSlip, updatePayrollSlip } from "../../lib/api";
-import { currentPayrollPeriodLabel, databaseDateKey, formatSystemDateTime, todaySystemDate } from "../../lib/date-time";
+import { createPayrollSlip, submitPayrollSlip, updatePayrollSlip } from "../../lib/api";
+import { currentPayrollPeriodLabel, databaseDateKey, formatSystemDate, formatSystemDateTime, todaySystemDate } from "../../lib/date-time";
 import { usePersistentState } from "../../lib/use-persistent-state";
 
 interface Props { user: User; onLogout: () => void }
 
 const NAV = [
   { id: "dashboard", label: "Dashboard", icon: <LayoutDashboard className="h-4 w-4" /> },
-  { id: "beneficiary", label: "Beneficiary Payroll", icon: <Wallet className="h-4 w-4" /> },
-  { id: "records", label: "Payroll Records", icon: <History className="h-4 w-4" /> },
+  { id: "beneficiary", label: "Beneficiary Payroll History", icon: <Wallet className="h-4 w-4" /> },
 ];
 
 export function PayrollPersonnelDashboard({ user, onLogout }: Props) {
   const { data } = useAppData();
   const [active, setActive] = usePersistentState("darbco.payrollPersonnel.active", "dashboard");
+  const [prepareSignal, setPrepareSignal] = useState(0);
   const [payrollRecords, setPayrollRecords] = useState<PayrollRecord[]>([]);
   const beneficiaries = (data?.beneficiaries ?? []).map(mapBeneficiary);
   const productionRecords = (data?.productionRecords ?? []).map(mapProductionRecord);
@@ -41,23 +42,28 @@ export function PayrollPersonnelDashboard({ user, onLogout }: Props) {
     setPayrollRecords((data?.payrollSlips ?? []).map(mapPayrollSlip));
   }, [data?.payrollSlips]);
 
+  const openPreparePayroll = () => {
+    setPrepareSignal((current) => current + 1);
+    setActive("work");
+  };
+
   return (
     <DarbcoLayout user={user} onLogout={onLogout} navItems={NAV} active={active} onChange={setActive}>
-      {active === "dashboard" && <Dashboard onNavigate={setActive} />}
-      {active === "beneficiary" && <BeneficiaryPayroll user={user} beneficiaries={beneficiaries} productionRecords={productionRecords} creditTransactions={creditTransactions} payrollRecords={payrollRecords} setPayrollRecords={setPayrollRecords} />}
-      {active === "records" && <PayrollRecords records={payrollRecords} />}
+      {active === "dashboard" && <Dashboard onNavigate={setActive} onPrepare={openPreparePayroll} />}
+      {active === "work" && <BeneficiaryPayroll mode="work" user={user} beneficiaries={beneficiaries} productionRecords={productionRecords} creditTransactions={creditTransactions} payrollRecords={payrollRecords} setPayrollRecords={setPayrollRecords} prepareSignal={prepareSignal} />}
+      {active === "beneficiary" && <BeneficiaryPayroll mode="history" user={user} beneficiaries={beneficiaries} productionRecords={productionRecords} creditTransactions={creditTransactions} payrollRecords={payrollRecords} setPayrollRecords={setPayrollRecords} prepareSignal={0} />}
     </DarbcoLayout>
   );
 }
 
-function Dashboard({ onNavigate }: { onNavigate: (id: string) => void }) {
+function Dashboard({ onNavigate, onPrepare }: { onNavigate: (id: string) => void; onPrepare: () => void }) {
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="flex items-center gap-2">
           <LayoutDashboard className="h-6 w-6 text-emerald-700" />Payroll Dashboard
         </h1>
-        <div className="text-muted-foreground">June 2, 2026</div>
+        <div className="text-muted-foreground">{formatSystemDate()}</div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -73,14 +79,14 @@ function Dashboard({ onNavigate }: { onNavigate: (id: string) => void }) {
           value="1"
           subtext="Submitted to Finance"
           color="violet"
-          onClick={() => onNavigate("records")}
+          onClick={() => onNavigate("beneficiary")}
         />
         <KpiCard
           label="Approved Payroll"
           value="3"
           subtext="Ready for release"
           color="emerald"
-          onClick={() => onNavigate("records")}
+          onClick={() => onNavigate("beneficiary")}
         />
       </div>
 
@@ -92,7 +98,7 @@ function Dashboard({ onNavigate }: { onNavigate: (id: string) => void }) {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <Button
               className="h-20 bg-emerald-600 hover:bg-emerald-700 justify-start"
-              onClick={() => onNavigate("beneficiary")}
+              onClick={onPrepare}
             >
               <div className="flex items-center gap-3">
                 <div className="h-12 w-12 rounded-full bg-white/20 flex items-center justify-center">
@@ -107,14 +113,14 @@ function Dashboard({ onNavigate }: { onNavigate: (id: string) => void }) {
             <Button
               variant="outline"
               className="h-20 justify-start border-emerald-200 hover:bg-emerald-50"
-              onClick={() => onNavigate("records")}
+              onClick={() => onNavigate("beneficiary")}
             >
               <div className="flex items-center gap-3">
                 <div className="h-12 w-12 rounded-full bg-emerald-100 flex items-center justify-center">
                   <History className="h-6 w-6 text-emerald-700" />
                 </div>
                 <div className="text-left">
-                  <div className="font-semibold text-emerald-700">View Payroll Records</div>
+                  <div className="font-semibold text-emerald-700">View Beneficiary Payroll History</div>
                   <div className="text-xs text-muted-foreground">Access all payroll history</div>
                 </div>
               </div>
@@ -216,6 +222,8 @@ type PayrollCreditMaterial = {
   remaining: number;
   deductionAmount: number;
 };
+
+const DEFAULT_DEDUCTION_TYPES = ["SSS", "Pag-IBIG", "Other Approved Deductions"];
 
 function mapBeneficiary(row: any): BeneficiaryOption {
   return {
@@ -364,27 +372,32 @@ type PayrollAuditRecord = {
   remarks: string;
 };
 
-function BeneficiaryPayroll({ user, beneficiaries, productionRecords, creditTransactions, payrollRecords, setPayrollRecords }: {
+function BeneficiaryPayroll({ mode, user, beneficiaries, productionRecords, creditTransactions, payrollRecords, setPayrollRecords, prepareSignal }: {
+  mode: "work" | "history";
   user: User;
   beneficiaries: BeneficiaryOption[];
   productionRecords: PayrollProductionRecord[];
   creditTransactions: PayrollCreditMaterial[];
   payrollRecords: PayrollRecord[];
   setPayrollRecords: Dispatch<SetStateAction<PayrollRecord[]>>;
+  prepareSignal: number;
 }) {
   const [openPrepare, setOpenPrepare] = useState(false);
   const [viewSlip, setViewSlip] = useState<PayrollRecord | null>(null);
   const [editRecord, setEditRecord] = useState<PayrollRecord | null>(null);
-  const [deleteRecord, setDeleteRecord] = useState<PayrollRecord | null>(null);
   const [search, setSearch] = useState("");
   const [periodFilter, setPeriodFilter] = useState("all-period");
-  const [validationFilter, setValidationFilter] = useState("all-validation");
-  const [approvalFilter, setApprovalFilter] = useState("all-approval");
-  const [submittingRecordId, setSubmittingRecordId] = useState<number | null>(null);
-  const [isDeletingPayroll, setIsDeletingPayroll] = useState(false);
   const [auditRecords, setAuditRecords] = useState<PayrollAuditRecord[]>([]);
   const currentPeriod = currentPayrollPeriodLabel();
-  const periodOptions = Array.from(new Set([currentPeriod, ...payrollRecords.map((record) => record.period).filter(Boolean)]));
+  const visibleRecords = payrollRecords.filter((record) => mode === "history" ? record.approvalStatus === "Approved" : record.approvalStatus !== "Approved");
+  const periodOptions = Array.from(new Set([currentPeriod, ...visibleRecords.map((record) => record.period).filter(Boolean)]));
+
+  useEffect(() => {
+    if (mode === "work" && prepareSignal > 0) {
+      setEditRecord(null);
+      setOpenPrepare(true);
+    }
+  }, [mode, prepareSignal]);
 
   const getValidationBadge = (status: string) => {
     if (status === "Draft") return <Badge className="bg-slate-100 text-slate-700">Draft</Badge>;
@@ -399,23 +412,11 @@ function BeneficiaryPayroll({ user, beneficiaries, productionRecords, creditTran
     return <Badge className="bg-slate-100 text-slate-700">Pending</Badge>;
   };
 
-  // Filter payroll records
-  const filteredRecords = payrollRecords.filter((record) => {
+  const filteredRecords = visibleRecords.filter((record) => {
     const q = search.trim().toLowerCase();
     if (q && !record.slipNo.toLowerCase().includes(q) && !record.beneficiary.toLowerCase().includes(q)) return false;
 
     if (periodFilter !== "all-period" && record.period !== periodFilter) return false;
-
-    // Validation status filter
-    if (validationFilter === "draft" && record.validationStatus !== "Draft") return false;
-    if (validationFilter === "submitted" && record.validationStatus !== "Submitted for Validation") return false;
-    if (validationFilter === "validated" && record.validationStatus !== "Validated") return false;
-    if (validationFilter === "returned" && record.validationStatus !== "Returned for Correction") return false;
-
-    // Approval status filter
-    if (approvalFilter === "pending" && record.approvalStatus !== "Pending Approval") return false;
-    if (approvalFilter === "approved" && record.approvalStatus !== "Approved") return false;
-    if (approvalFilter === "rejected" && record.approvalStatus !== "Rejected") return false;
 
     return true;
   });
@@ -491,7 +492,6 @@ function BeneficiaryPayroll({ user, beneficiaries, productionRecords, creditTran
     const action = record.validationStatus === "Returned for Correction" ? "Resubmitted" : "Submitted";
 
     try {
-      setSubmittingRecordId(record.id);
       const saved = await submitPayrollSlip(record.id, {
         user_id: currentUserId(user),
         user_name: user.name,
@@ -509,26 +509,6 @@ function BeneficiaryPayroll({ user, beneficiaries, productionRecords, creditTran
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Unable to submit payroll slip.");
       throw error;
-    } finally {
-      setSubmittingRecordId(null);
-    }
-  };
-
-  const handleConfirmDelete = async () => {
-    if (!deleteRecord) return;
-    try {
-      setIsDeletingPayroll(true);
-      await deletePayrollSlip(deleteRecord.id, {
-        user_id: currentUserId(user),
-        user_name: user.name,
-      });
-      setPayrollRecords((current) => current.filter((record) => record.id !== deleteRecord.id));
-      toast.success(`${deleteRecord.slipNo} deleted`);
-      setDeleteRecord(null);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Unable to delete payroll slip.");
-    } finally {
-      setIsDeletingPayroll(false);
     }
   };
 
@@ -537,13 +517,15 @@ function BeneficiaryPayroll({ user, beneficiaries, productionRecords, creditTran
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="flex items-center gap-2">
-            <Wallet className="h-6 w-6 text-emerald-700" />Beneficiary Payroll
+            <Wallet className="h-6 w-6 text-emerald-700" />{mode === "history" ? "Beneficiary Payroll History" : "Prepare Beneficiary Payroll"}
           </h1>
-          <p className="text-muted-foreground text-sm">Prepare payroll records for beneficiaries</p>
+          <p className="text-muted-foreground text-sm">{mode === "history" ? "Approved beneficiary payroll records." : "Create drafts, edit returned payrolls, and submit records for validation."}</p>
         </div>
-        <Button className="w-full bg-emerald-600 hover:bg-emerald-700 sm:w-auto" onClick={() => setOpenPrepare(true)}>
-          <Plus className="h-4 w-4 mr-1" />Prepare Beneficiary Payroll
-        </Button>
+        {mode === "work" && (
+          <Button className="w-full bg-emerald-600 hover:bg-emerald-700 sm:w-auto" onClick={() => { setEditRecord(null); setOpenPrepare(true); }}>
+            <Plus className="h-4 w-4 mr-1" />Prepare Beneficiary Payroll
+          </Button>
+        )}
       </div>
 
       <Card>
@@ -551,7 +533,7 @@ function BeneficiaryPayroll({ user, beneficiaries, productionRecords, creditTran
           <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
             <div className="relative min-w-0 flex-1 sm:min-w-[220px]">
               <Search className="h-4 w-4 absolute left-2.5 top-2.5 text-muted-foreground" />
-              <Input placeholder="Search beneficiary payroll..." className="pl-8 h-9" value={search} onChange={(event) => setSearch(event.target.value)} />
+              <Input placeholder={mode === "history" ? "Search beneficiary payroll history..." : "Search payroll work queue..."} className="pl-8 h-9" value={search} onChange={(event) => setSearch(event.target.value)} />
             </div>
             <Select value={periodFilter} onValueChange={setPeriodFilter}>
               <SelectTrigger className="h-9 w-full sm:w-44"><SelectValue /></SelectTrigger>
@@ -560,25 +542,6 @@ function BeneficiaryPayroll({ user, beneficiaries, productionRecords, creditTran
                 {periodOptions.map((period) => (
                   <SelectItem key={period} value={period}>{period}</SelectItem>
                 ))}
-              </SelectContent>
-            </Select>
-            <Select value={validationFilter} onValueChange={setValidationFilter}>
-              <SelectTrigger className="h-9 w-full sm:w-44"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all-validation">All Validation Status</SelectItem>
-                <SelectItem value="draft">Draft</SelectItem>
-                <SelectItem value="submitted">Submitted</SelectItem>
-                <SelectItem value="validated">Validated</SelectItem>
-                <SelectItem value="returned">Returned for Correction</SelectItem>
-              </SelectContent>
-            </Select>
-            <Select value={approvalFilter} onValueChange={setApprovalFilter}>
-              <SelectTrigger className="h-9 w-full sm:w-44"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all-approval">All Approval Status</SelectItem>
-                <SelectItem value="pending">Pending</SelectItem>
-                <SelectItem value="approved">Approved</SelectItem>
-                <SelectItem value="rejected">Rejected</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -594,16 +557,16 @@ function BeneficiaryPayroll({ user, beneficiaries, productionRecords, creditTran
                 <TableHead className="text-right">Gross Income</TableHead>
                 <TableHead className="text-right">Total Deductions</TableHead>
                 <TableHead className="text-right">Net Income</TableHead>
-                <TableHead>Validation Status</TableHead>
+                {mode === "work" && <TableHead>Validation Status</TableHead>}
                 <TableHead>Approval Status</TableHead>
-                <TableHead className="w-[150px] text-center">Actions</TableHead>
+                <TableHead className={mode === "work" ? "w-[96px] text-center" : "w-[64px] text-center"}>Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filteredRecords.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={11} className="text-center text-muted-foreground h-24">
-                    No beneficiary payroll records match the selected filters.
+                  <TableCell colSpan={mode === "work" ? 11 : 10} className="text-center text-muted-foreground h-24">
+                    {mode === "history" ? "No approved beneficiary payroll records yet." : "No draft, submitted, or returned payroll records yet."}
                   </TableCell>
                 </TableRow>
               ) : (
@@ -617,9 +580,9 @@ function BeneficiaryPayroll({ user, beneficiaries, productionRecords, creditTran
                     <TableCell className="text-right">₱{record.grossIncome.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
                     <TableCell className="text-right">₱{record.totalDeductions.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
                     <TableCell className="text-right font-semibold text-emerald-700">₱{record.netIncome.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
-                    <TableCell>{getValidationBadge(record.validationStatus)}</TableCell>
+                    {mode === "work" && <TableCell>{getValidationBadge(record.validationStatus)}</TableCell>}
                     <TableCell>{getApprovalBadge(record.approvalStatus)}</TableCell>
-                    <TableCell className="w-[150px]">
+                    <TableCell className={mode === "work" ? "w-[96px]" : "w-[64px]"}>
                       <div className="flex items-center justify-center gap-1 whitespace-nowrap">
                         <Button
                           variant="ghost"
@@ -631,40 +594,21 @@ function BeneficiaryPayroll({ user, beneficiaries, productionRecords, creditTran
                         >
                           <Eye className="h-4 w-4" />
                         </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-8 w-8 shrink-0 p-0 text-emerald-600 hover:text-emerald-700"
-                          onClick={() => {
-                            setEditRecord(record);
-                            setOpenPrepare(true);
-                          }}
-                          title="Edit"
-                          aria-label={`Edit ${record.slipNo}`}
-                        >
-                          <Edit className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-8 w-8 shrink-0 p-0 text-red-600 hover:text-red-700"
-                          onClick={() => setDeleteRecord(record)}
-                          title="Delete"
-                          aria-label={`Delete ${record.slipNo}`}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-8 w-8 shrink-0 p-0 text-violet-600 hover:text-violet-700"
-                          onClick={() => handleSubmitForValidation(record)}
-                          disabled={submittingRecordId === record.id}
-                          title="Submit for Validation"
-                          aria-label={`Submit ${record.slipNo} for validation`}
-                        >
-                          {submittingRecordId === record.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                        </Button>
+                        {mode === "work" && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 w-8 shrink-0 p-0 text-emerald-600 hover:text-emerald-700"
+                            onClick={() => {
+                              setEditRecord(record);
+                              setOpenPrepare(true);
+                            }}
+                            title="Edit"
+                            aria-label={`Edit ${record.slipNo}`}
+                          >
+                            <Edit className="h-4 w-4" />
+                          </Button>
+                        )}
                       </div>
                     </TableCell>
                   </TableRow>
@@ -674,7 +618,11 @@ function BeneficiaryPayroll({ user, beneficiaries, productionRecords, creditTran
           </Table>
 
           <div className="flex flex-col gap-2 pt-2 sm:flex-row sm:items-center sm:justify-between">
-            <span className="text-sm text-muted-foreground">Showing {filteredRecords.length} of {payrollRecords.length} records</span>
+            <span className="text-sm text-muted-foreground">
+              {mode === "history"
+                ? `Showing ${filteredRecords.length} of ${visibleRecords.length} approved records`
+                : `Showing ${filteredRecords.length} of ${visibleRecords.length} payroll work records`}
+            </span>
             <div className="flex gap-1">
               <Button variant="outline" size="sm" className="h-8 w-8 p-0" disabled>
                 <ChevronLeft className="h-4 w-4" />
@@ -707,34 +655,10 @@ function BeneficiaryPayroll({ user, beneficiaries, productionRecords, creditTran
           slip={viewSlip}
           auditEntries={auditRecords.filter((entry) => entry.slipNo === viewSlip.slipNo)}
           onClose={() => setViewSlip(null)}
-          onEdit={(record) => {
-            setViewSlip(null);
-            setEditRecord(record);
-            setOpenPrepare(true);
-          }}
           onSubmit={handleSubmitForValidation}
         />
       )}
 
-      <Dialog open={!!deleteRecord} onOpenChange={(open) => !open && setDeleteRecord(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-red-700">
-              <Trash2 className="h-5 w-5" />Delete Beneficiary Payroll
-            </DialogTitle>
-            <DialogDescription>
-              Are you sure you want to delete <strong>{deleteRecord?.slipNo}</strong> for <strong>{deleteRecord?.beneficiary}</strong>? This will remove it from the Beneficiary Payroll list.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteRecord(null)} disabled={isDeletingPayroll}>Cancel</Button>
-            <Button className="bg-red-600 hover:bg-red-700 text-white" onClick={handleConfirmDelete} disabled={isDeletingPayroll}>
-              {isDeletingPayroll ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Trash2 className="h-4 w-4 mr-1" />}
-              {isDeletingPayroll ? "Deleting..." : "Delete Payroll"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
@@ -753,6 +677,9 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, beneficiar
   const today = todaySystemDate();
   const [showProductionDetails, setShowProductionDetails] = useState(false);
   const [otherDeductions, setOtherDeductions] = useState<any[]>([]);
+  const [deductionTypes, setDeductionTypes] = useState(DEFAULT_DEDUCTION_TYPES);
+  const [openDeductionType, setOpenDeductionType] = useState(false);
+  const [newDeductionType, setNewDeductionType] = useState("");
   const [laborCost, setLaborCost] = useState("0");
   const [selectedBeneficiary, setSelectedBeneficiary] = useState("");
   const currentPeriod = currentPayrollPeriodLabel();
@@ -864,6 +791,22 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, beneficiar
   const otherDeductionsTotal = otherDeductions.reduce((sum, d) => sum + (parseFloat(d.amount) || 0), 0);
   const totalDeductions = totalCreditDeductions + previousBalance + laborCostAmount + otherDeductionsTotal;
   const netIncome = grossIncome - totalDeductions;
+
+  const addDeductionType = () => {
+    const cleaned = newDeductionType.trim();
+    if (!cleaned) {
+      toast.error("Deduction type is required");
+      return;
+    }
+    if (deductionTypes.some((type) => type.toLowerCase() === cleaned.toLowerCase())) {
+      toast.error("Deduction type already exists");
+      return;
+    }
+    setDeductionTypes((current) => [...current, cleaned]);
+    setNewDeductionType("");
+    setOpenDeductionType(false);
+    toast.success("Deduction type added");
+  };
 
   const handleClose = () => {
     if (savingAction) return;
@@ -978,7 +921,7 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, beneficiar
                     <div className="space-y-1">
                       <Label>Beneficiary ID</Label>
                       <Input
-                        value={selectedBeneficiary || ""}
+                        value={selectedBeneficiaryOption?.code || ""}
                         placeholder="Auto-filled"
                         disabled
                         className="bg-slate-50"
@@ -1203,7 +1146,6 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, beneficiar
                       <TableHead>Material Name</TableHead>
                       <TableHead className="text-right">Quantity</TableHead>
                       <TableHead>Unit</TableHead>
-                      <TableHead>Status</TableHead>
                       <TableHead className="text-right">Remaining Balance</TableHead>
                       <TableHead className="text-right">Amount Charged</TableHead>
                     </TableRow>
@@ -1211,7 +1153,7 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, beneficiar
                 <TableBody>
                   {creditMaterials.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={8} className="text-center text-muted-foreground h-16">
+                      <TableCell colSpan={7} className="text-center text-muted-foreground h-16">
                         No credit material deductions found for this beneficiary.
                       </TableCell>
                     </TableRow>
@@ -1223,13 +1165,6 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, beneficiar
                         <TableCell>{credit.materialName}</TableCell>
                         <TableCell className="text-right">{credit.quantity}</TableCell>
                         <TableCell>{credit.unit}</TableCell>
-                        <TableCell>
-                          <Badge className={
-                            credit.status === "Pending" ? "bg-amber-100 text-amber-800"
-                            : credit.status === "Partially Deducted" ? "bg-orange-100 text-orange-800"
-                            : "bg-emerald-100 text-emerald-800"
-                          }>{credit.status}</Badge>
-                        </TableCell>
                         <TableCell className="text-right">â‚±{credit.remaining.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
                         <TableCell className="text-right">₱{credit.amountCharged.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
                       </TableRow>
@@ -1282,7 +1217,7 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, beneficiar
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => setOtherDeductions([...otherDeductions, { type: "", description: "", amount: "0", reference: "" }])}
+                onClick={() => setOtherDeductions([...otherDeductions, { type: deductionTypes[0] ?? "", amount: "0" }])}
               >
                 <Plus className="h-4 w-4 mr-1" />Add Authorized Deduction
               </Button>
@@ -1295,64 +1230,76 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, beneficiar
               ) : (
                 <div className="space-y-3">
                   {otherDeductions.map((deduction, i) => (
-                    <div key={i} className="border rounded-md p-3 bg-slate-50 grid grid-cols-1 lg:grid-cols-4 gap-3 items-start">
-                      <Input
-                        placeholder="Deduction type"
-                        className="h-9"
-                        value={deduction.type}
-                        onChange={(e) => {
-                          const updated = [...otherDeductions];
-                          updated[i].type = e.target.value;
-                          setOtherDeductions(updated);
-                        }}
-                      />
-                      <Input
-                        placeholder="Description"
-                        className="h-9"
-                        value={deduction.description}
-                        onChange={(e) => {
-                          const updated = [...otherDeductions];
-                          updated[i].description = e.target.value;
-                          setOtherDeductions(updated);
-                        }}
-                      />
-                      <Input
-                        type="number"
-                        placeholder="Amount"
-                        className="h-9"
-                        value={deduction.amount}
-                        onChange={(e) => {
-                          const updated = [...otherDeductions];
-                          updated[i].amount = e.target.value;
-                          setOtherDeductions(updated);
-                        }}
-                      />
+                    <div key={i} className="border rounded-md p-3 bg-slate-50 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_180px_auto] gap-3 items-start">
                       <div className="flex gap-2">
-                        <Input
-                          placeholder="Reference"
-                          className="h-9 flex-1"
-                          value={deduction.reference}
-                          onChange={(e) => {
+                        <Select
+                          value={deduction.type}
+                          onValueChange={(value) => {
                             const updated = [...otherDeductions];
-                            updated[i].reference = e.target.value;
+                            updated[i].type = value;
+                            setOtherDeductions(updated);
+                          }}
+                        >
+                          <SelectTrigger className="h-9 min-w-0 flex-1"><SelectValue placeholder="Select deduction type" /></SelectTrigger>
+                          <SelectContent>
+                            {deductionTypes.map((type) => (
+                              <SelectItem key={type} value={type}>{type}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Button type="button" variant="outline" className="h-9 shrink-0" onClick={() => setOpenDeductionType(true)}>
+                          <Plus className="h-4 w-4 mr-1" />Add Deduction Type
+                        </Button>
+                      </div>
+                      <div className="relative">
+                        <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">₱</span>
+                        <Input
+                          type="text"
+                          inputMode="decimal"
+                          placeholder="0.00"
+                          className="h-9 pl-7 text-right"
+                          value={deduction.amount}
+                          onFocus={(event) => event.currentTarget.select()}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            if (!/^\d*\.?\d{0,2}$/.test(value)) return;
+                            const updated = [...otherDeductions];
+                            updated[i].amount = value;
                             setOtherDeductions(updated);
                           }}
                         />
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-9 w-9 p-0 text-red-600 hover:text-red-700"
-                          onClick={() => setOtherDeductions(otherDeductions.filter((_, idx) => idx !== i))}
-                        >
-                          <X className="h-4 w-4" />
-                        </Button>
                       </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-9 w-9 p-0 text-red-600 hover:text-red-700"
+                        onClick={() => setOtherDeductions(otherDeductions.filter((_, idx) => idx !== i))}
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
                     </div>
                   ))}
                 </div>
               )}
             </CardContent>
           </Card>
+
+          <Dialog open={openDeductionType} onOpenChange={setOpenDeductionType}>
+            <DialogContent className="w-[calc(100vw-1rem)] sm:max-w-md">
+              <DialogHeader>
+                <DialogTitle>Add Deduction Type</DialogTitle>
+                <DialogDescription>Create another authorized deduction type for this payroll form.</DialogDescription>
+              </DialogHeader>
+              <div className="space-y-1">
+                <Label>Deduction Type</Label>
+                <Input value={newDeductionType} onChange={(event) => setNewDeductionType(event.target.value)} placeholder="Enter deduction type" />
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setOpenDeductionType(false)}>Cancel</Button>
+                <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={addDeductionType}>Save Type</Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
 
           {/* Section G: Final Payroll Summary */}
           <Card className="border-emerald-200 bg-gradient-to-br from-emerald-50 to-white">
@@ -1380,6 +1327,14 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, beneficiar
                 <span>Other Authorized Deductions</span>
                 <span className="font-semibold">−₱{otherDeductionsTotal.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
               </div>
+              {otherDeductions
+                .filter((deduction) => (parseFloat(deduction.amount) || 0) > 0)
+                .map((deduction, index) => (
+                  <div key={`${deduction.type}-${index}`} className="flex justify-between pl-4 text-xs text-red-600">
+                    <span>{deduction.type?.trim() || "Other Deduction"}</span>
+                    <span className="font-medium">-PHP {(parseFloat(deduction.amount) || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+                  </div>
+                ))}
               <div className="border-t pt-2 flex justify-between text-sm">
                 <span className="font-semibold">Total Deductions</span>
                 <span className="font-semibold text-red-600">₱{totalDeductions.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
@@ -1582,6 +1537,71 @@ function ViewPayrollSlipDialog({ slip, auditEntries = [], onClose, onEdit, onSub
   }
 
   const isValid = validationErrors.length === 0;
+
+  const downloadPdf = () => {
+    const doc = new jsPDF();
+    const moneyText = (value: number) => `PHP ${value.toLocaleString("en-US", { minimumFractionDigits: 2 })}`;
+    let y = 18;
+
+    doc.setFontSize(16);
+    doc.text("DARBCO Beneficiary Payroll Slip", 14, y);
+    y += 8;
+    doc.setFontSize(10);
+    doc.text(`Slip No.: ${slip.slipNo}`, 14, y);
+    doc.text(`Date Generated: ${formatSystemDateTime()}`, 115, y);
+    y += 7;
+    doc.text(`Beneficiary: ${slip.beneficiary}`, 14, y);
+    y += 7;
+    doc.text(`Payroll Period: ${slip.period}`, 14, y);
+    y += 7;
+    doc.text(`Harvest Date: ${slip.harvestDate}`, 14, y);
+    y += 10;
+
+    doc.setFontSize(12);
+    doc.text("Earnings", 14, y);
+    y += 7;
+    doc.setFontSize(10);
+    [
+      ["Class A", productionData.classA.total, priceClassA, subtotalClassA],
+      ["Class B", productionData.classB.total, priceClassB, subtotalClassB],
+      ["Special Product", productionData.special, priceSpecial, subtotalSpecial],
+    ].forEach(([label, boxes, price, subtotal]) => {
+      doc.text(`${label}: ${boxes} boxes x ${moneyText(Number(price))}`, 18, y);
+      doc.text(moneyText(Number(subtotal)), 150, y, { align: "right" });
+      y += 6;
+    });
+    doc.text("Gross Income", 18, y);
+    doc.text(moneyText(grossIncome), 150, y, { align: "right" });
+    y += 10;
+
+    doc.setFontSize(12);
+    doc.text("Deductions", 14, y);
+    y += 7;
+    doc.setFontSize(10);
+    [
+      ["Material Credit Deductions", totalMaterialDeductions],
+      ["Previous Unpaid Balance", previousUnpaid],
+      ["Labor Cost", laborCostAmount],
+      ["Other Authorized Deductions", otherDeductions],
+      ["Total Deductions", totalDeductions],
+    ].forEach(([label, amount]) => {
+      doc.text(String(label), 18, y);
+      doc.text(moneyText(Number(amount)), 150, y, { align: "right" });
+      y += 6;
+    });
+    y += 4;
+    doc.setFontSize(13);
+    doc.text("Net Income", 18, y);
+    doc.text(moneyText(netIncome), 150, y, { align: "right" });
+    y += 18;
+
+    doc.setFontSize(10);
+    doc.text("Prepared By", 32, y, { align: "center" });
+    doc.text("Received By", 150, y, { align: "center" });
+    doc.line(14, y - 5, 64, y - 5);
+    doc.line(125, y - 5, 175, y - 5);
+    doc.save(`${slip.slipNo}-payroll-slip.pdf`);
+  };
 
   return (
     <Dialog open={!!slip} onOpenChange={onClose}>
@@ -2057,7 +2077,7 @@ function ViewPayrollSlipDialog({ slip, auditEntries = [], onClose, onEdit, onSub
                     <Printer className="h-4 w-4 mr-1" />
                     Print
                   </Button>
-                  <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={() => toast.success(`${slip.slipNo} PDF download prepared`)}>
+                  <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={downloadPdf}>
                     <Download className="h-4 w-4 mr-1" />
                     Download PDF
                   </Button>
@@ -2068,148 +2088,6 @@ function ViewPayrollSlipDialog({ slip, auditEntries = [], onClose, onEdit, onSub
         </div>
       </DialogContent>
     </Dialog>
-  );
-}
-
-
-function PayrollRecords({ records }: { records: PayrollRecord[] }) {
-  const [viewSlip, setViewSlip] = useState<PayrollRecord | null>(null);
-  const [statusFilter, setStatusFilter] = useState("all-status");
-  const [search, setSearch] = useState("");
-
-  const auditRecords: PayrollAuditRecord[] = [];
-
-  const allRecords: (PayrollRecord & { type: string })[] = records.map((record) => ({ ...record, type: "Beneficiary" }));
-
-  const getValidationBadge = (status: string) => {
-    if (status === "Draft") return <Badge className="bg-slate-100 text-slate-700">Draft</Badge>;
-    if (status === "Submitted for Validation") return <Badge className="bg-violet-100 text-violet-700">Submitted</Badge>;
-    if (status === "Validated") return <Badge className="bg-emerald-100 text-emerald-700">Validated</Badge>;
-    return <Badge className="bg-amber-100 text-amber-700">Returned</Badge>;
-  };
-
-  const getApprovalBadge = (status: string) => {
-    if (status === "Approved") return <Badge className="bg-emerald-100 text-emerald-700">Approved</Badge>;
-    if (status === "Rejected") return <Badge className="bg-red-100 text-red-700">Rejected</Badge>;
-    return <Badge className="bg-slate-100 text-slate-700">Pending</Badge>;
-  };
-
-  // Filter records (only showing Beneficiary records)
-  const filteredRecords = allRecords.filter((record) => {
-    // Only show beneficiary records
-    if (record.type !== "Beneficiary") return false;
-    const q = search.trim().toLowerCase();
-    if (q && !record.slipNo.toLowerCase().includes(q) && !record.beneficiary.toLowerCase().includes(q)) return false;
-
-    // Approval status filter
-    if (statusFilter === "approved" && record.approvalStatus !== "Approved") return false;
-    if (statusFilter === "pending" && record.approvalStatus !== "Pending Approval") return false;
-    if (statusFilter === "rejected" && record.approvalStatus !== "Rejected") return false;
-
-    return true;
-  });
-
-  return (
-    <div className="space-y-4">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="flex items-center gap-2">
-            <History className="h-6 w-6 text-emerald-700" />Payroll Records
-          </h1>
-          <p className="text-muted-foreground text-sm">View all payroll history</p>
-        </div>
-      </div>
-      <Card>
-        <CardContent className="p-4 space-y-3">
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <div className="relative flex-1">
-              <Search className="h-4 w-4 absolute left-2.5 top-2.5 text-muted-foreground" />
-              <Input placeholder="Search beneficiary payroll records..." className="pl-8 h-9" value={search} onChange={(event) => setSearch(event.target.value)} />
-            </div>
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="h-9 w-full sm:w-44"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all-status">All Status</SelectItem>
-                <SelectItem value="approved">Approved</SelectItem>
-                <SelectItem value="pending">Pending</SelectItem>
-                <SelectItem value="rejected">Rejected</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Payroll Slip No.</TableHead>
-                <TableHead>Type</TableHead>
-                <TableHead>Payroll Period</TableHead>
-                <TableHead>Beneficiary/Worker</TableHead>
-                <TableHead>Date</TableHead>
-                <TableHead className="text-right">Net Income</TableHead>
-                <TableHead>Validation Status</TableHead>
-                <TableHead>Approval Status</TableHead>
-                <TableHead>Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filteredRecords.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={9} className="text-center text-muted-foreground h-24">
-                    No payroll records match the selected filters.
-                  </TableCell>
-                </TableRow>
-              ) : (
-                filteredRecords.map((record) => (
-                  <TableRow key={record.id}>
-                    <TableCell className="font-medium">{record.slipNo}</TableCell>
-                    <TableCell><Badge variant="outline">{record.type}</Badge></TableCell>
-                    <TableCell>{record.period}</TableCell>
-                    <TableCell>{record.beneficiary}</TableCell>
-                    <TableCell>{record.harvestDate}</TableCell>
-                    <TableCell className="text-right font-semibold text-emerald-700">
-                      ₱{record.netIncome.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                    </TableCell>
-                    <TableCell>{getValidationBadge(record.validationStatus)}</TableCell>
-                    <TableCell>{getApprovalBadge(record.approvalStatus)}</TableCell>
-                    <TableCell>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 w-8 p-0 text-blue-600 hover:text-blue-700"
-                        onClick={() => setViewSlip(record)}
-                      >
-                        <Eye className="h-4 w-4" />
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
-
-          <div className="flex flex-col gap-2 pt-2 sm:flex-row sm:items-center sm:justify-between">
-            <span className="text-sm text-muted-foreground">Showing {filteredRecords.length} of {allRecords.length} records</span>
-            <div className="flex gap-1">
-              <Button variant="outline" size="sm" className="h-8 w-8 p-0" disabled>
-                <ChevronLeft className="h-4 w-4" />
-              </Button>
-              <Button size="sm" className="h-8 w-8 p-0 bg-emerald-600 hover:bg-emerald-700">1</Button>
-              <Button variant="outline" size="sm" className="h-8 w-8 p-0" disabled>
-                <ChevronRight className="h-4 w-4" />
-              </Button>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {viewSlip && (
-        <ViewPayrollSlipDialog
-          slip={viewSlip}
-          auditEntries={auditRecords.filter((entry) => entry.slipNo === viewSlip.slipNo)}
-          onClose={() => setViewSlip(null)}
-        />
-      )}
-    </div>
   );
 }
 

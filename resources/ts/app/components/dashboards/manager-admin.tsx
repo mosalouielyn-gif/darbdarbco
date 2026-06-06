@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { DarbcoLayout } from "../darbco-layout";
-import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
+import { Card, CardAction, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Button } from "../ui/button";
 import { Badge } from "../ui/badge";
 import { Input } from "../ui/input";
@@ -12,7 +12,8 @@ import { Textarea } from "../ui/textarea";
 import { DateInput } from "../ui/date-input";
 import {
   LayoutDashboard, ClipboardCheck, PackagePlus, Activity, FileBarChart2, History, Users, Settings,
-  TrendingUp, AlertTriangle, Wallet, CheckCircle2, Eye, Undo2, Plus, ArrowRight, Edit, Power, Loader2,
+  TrendingUp, AlertTriangle, Wallet, CheckCircle2, Eye, Undo2, Plus, ArrowRight, Edit, Power, Loader2, UserPlus,
+  Database, Trash2, LockKeyhole,
 } from "lucide-react";
 import {
   LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip, BarChart, Bar, CartesianGrid,
@@ -26,14 +27,21 @@ import { useAppData } from "../../lib/app-data-context";
 import {
   approvePayrollSlipByManager,
   approveRestockRequest,
+  createBeneficiary,
   createUserAccount,
+  deleteAllMaintenanceTables,
+  fetchMaintenanceTables,
+  MaintenanceTable,
   returnPayrollSlipByManager,
   returnRestockRequest,
+  updateBeneficiary,
+  updateBeneficiaryStatus,
   updateRolePermissions,
   updateUserAccount,
   updateUserAccountStatus,
+  verifyAdminPassword,
 } from "../../lib/api";
-import { currentSystemDateTime, databaseDateKey, formatDatabaseDateTime, formatSystemDate, SYSTEM_TIME_ZONE, todaySystemDate } from "../../lib/date-time";
+import { currentSystemDateTime, databaseDateKey, formatDatabaseDateTime, formatSystemDate, parseDatabaseTimestamp, SYSTEM_TIME_ZONE, todaySystemDate } from "../../lib/date-time";
 import { usePersistentState } from "../../lib/use-persistent-state";
 
 interface Props { user: User; onLogout: () => void }
@@ -46,6 +54,8 @@ const NAV = [
   { id: "reports", label: "Reports", icon: <FileBarChart2 className="h-4 w-4" /> },
   { id: "audit", label: "Audit History", icon: <History className="h-4 w-4" /> },
   { id: "users", label: "User Management", icon: <Users className="h-4 w-4" /> },
+  { id: "beneficiary-harvester", label: "Beneficiary / Harvester", icon: <UserPlus className="h-4 w-4" /> },
+  { id: "database-cleanup", label: "Database Cleanup", icon: <Database className="h-4 w-4" /> },
   { id: "settings", label: "Settings / Role Access", icon: <Settings className="h-4 w-4" /> },
 ];
 
@@ -62,11 +72,21 @@ interface RestockRow {
   returnReason?: string;
 }
 interface AuditRow {
-  id?: string; ts: string; user: string; role?: string; action: "Validated" | "Submitted" | "Approved" | "Returned" | "Created" | "Updated" | "Activated" | "Deactivated"; module: string; affectedRecord?: string; description: string; remarks?: string; status: "Completed" | "Returned";
+  id?: string; ts: string; user: string; role?: string; action: "Validated" | "Submitted" | "Approved" | "Returned" | "Created" | "Updated" | "Activated" | "Deactivated" | "Deleted"; module: string; affectedRecord?: string; description: string; remarks?: string; status: "Completed" | "Returned";
 }
 interface Account {
   id: string; name: string; email: string; username: string; role: Role; active: boolean; lastLogin: string;
   createdAt?: string; contact?: string; remarks?: string;
+}
+interface MasterBeneficiary {
+  id: string;
+  name: string;
+  code: string;
+  contact: string;
+  address: string;
+  active: boolean;
+  createdAt?: string;
+  updatedAt?: string;
 }
 interface RolePermission {
   role: Role;
@@ -106,6 +126,7 @@ export function ManagerAdminDashboard({ user, onLogout }: Props) {
   const [restock, setRestock] = useState(RESTOCK_SEED);
   const [audit, setAudit] = useState(AUDIT_SEED);
   const [users, setUsers] = useState(USERS_SEED);
+  const [beneficiaries, setBeneficiaries] = useState<MasterBeneficiary[]>([]);
   const [rolePermissions, setRolePermissions] = useState<RolePermission[]>([]);
 
   useEffect(() => {
@@ -127,6 +148,10 @@ export function ManagerAdminDashboard({ user, onLogout }: Props) {
       setUsers(data.users.map(mapAccount));
     }
   }, [data?.users]);
+
+  useEffect(() => {
+    setBeneficiaries((data?.beneficiaries ?? []).map(mapBeneficiary));
+  }, [data?.beneficiaries]);
 
   useEffect(() => {
     if (data?.auditLogs?.length) {
@@ -218,6 +243,8 @@ export function ManagerAdminDashboard({ user, onLogout }: Props) {
       {active === "reports" && <Reports payroll={payroll} restock={restock} users={users} audit={audit} inventoryItems={data?.inventoryItems || []} productionRecords={data?.productionRecords || []} />}
       {active === "audit" && <AuditHistory audit={audit} />}
       {active === "users" && <UserManagement users={users} setUsers={setUsers} setAudit={setAudit} adminId={user.id} adminName={user.name} />}
+      {active === "beneficiary-harvester" && <BeneficiaryHarvesterManagement beneficiaries={beneficiaries} setBeneficiaries={setBeneficiaries} users={users} setUsers={setUsers} setAudit={setAudit} adminId={user.id} adminName={user.name} />}
+      {active === "database-cleanup" && <DatabaseCleanup adminId={user.id} adminName={user.name} adminEmail={user.email} setAudit={setAudit} />}
       {active === "settings" && <SettingsRoleAccess permissions={rolePermissions} setPermissions={setRolePermissions} adminId={user.id} adminName={user.name} />}
     </DarbcoLayout>
   );
@@ -231,9 +258,7 @@ function formatDateLabel(value: string) {
 
 function parseAuditTimestamp(value: string) {
   if (!value) return null;
-  const normalized = value.includes("T") ? value : value.replace(" ", "T");
-  const hasTimeZone = /(?:Z|[+-]\d{2}:?\d{2})$/.test(normalized);
-  const date = new Date(hasTimeZone ? normalized : `${normalized}Z`);
+  const date = parseDatabaseTimestamp(value);
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
@@ -273,7 +298,7 @@ function roleLabel(role?: string) {
 }
 
 function normalizeAuditAction(action: string): AuditRow["action"] {
-  if (action === "Validated" || action === "Submitted" || action === "Approved" || action === "Returned" || action === "Created" || action === "Updated" || action === "Activated" || action === "Deactivated") return action;
+  if (action === "Validated" || action === "Submitted" || action === "Approved" || action === "Returned" || action === "Created" || action === "Updated" || action === "Activated" || action === "Deactivated" || action === "Deleted") return action;
   return "Submitted";
 }
 
@@ -289,6 +314,19 @@ function mapAccount(row: any): Account {
     createdAt: row.created_at ? formatDatabaseDateTime(row.created_at) : "-",
     contact: row.contact_information || row.contact || "",
     remarks: row.remarks || "",
+  };
+}
+
+function mapBeneficiary(row: any): MasterBeneficiary {
+  return {
+    id: String(row.id),
+    name: String(row.name ?? row.full_name ?? row.beneficiary_name ?? ""),
+    code: String(row.code ?? row.beneficiary_code ?? ""),
+    contact: String(row.contact_number ?? row.contact ?? ""),
+    address: String(row.address ?? ""),
+    active: row.active === undefined || row.active === true || row.active === 1 || row.active === "1",
+    createdAt: row.created_at ? formatDatabaseDateTime(row.created_at) : "-",
+    updatedAt: row.updated_at ? formatDatabaseDateTime(row.updated_at) : "-",
   };
 }
 
@@ -520,9 +558,11 @@ function Dashboard({ goTo, payroll, restock, audit, inventoryItems, productionRe
       </Card>
 
       <Card>
-        <CardHeader className="flex-row items-center justify-between pb-2">
+        <CardHeader className="pb-2">
           <CardTitle className="text-base flex items-center gap-2"><Users className="h-4 w-4 text-emerald-700" />Recent Account Changes</CardTitle>
-          <Button variant="link" className="text-emerald-700" onClick={() => goTo("audit")}>View audit logs</Button>
+          <CardAction>
+            <Button variant="link" className="h-auto p-0 text-emerald-700" onClick={() => goTo("audit")}>View audit logs</Button>
+          </CardAction>
         </CardHeader>
         <CardContent>
           {recentAccountChanges.length === 0 ? (
@@ -1734,6 +1774,7 @@ function AuditHistory({ audit }: { audit: AuditRow[] }) {
   const [actionFilter, setActionFilter] = useState("all");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
+  const [viewing, setViewing] = useState<{ row: AuditRow; activityId: string } | null>(null);
 
   const filtered = useMemo(() => audit.filter((a) => {
     const query = search.toLowerCase();
@@ -1787,13 +1828,14 @@ function AuditHistory({ audit }: { audit: AuditRow[] }) {
               <SelectItem value="Updated">Updated</SelectItem>
               <SelectItem value="Activated">Activated</SelectItem>
               <SelectItem value="Deactivated">Deactivated</SelectItem>
+              <SelectItem value="Deleted">Deleted</SelectItem>
             </SelectContent>
           </Select>
-          <div className="relative w-full pt-5 lg:w-40">
+          <div className="relative w-full lg:w-40">
             <Label className="absolute -top-5 left-0 text-xs text-muted-foreground">From Date</Label>
             <DateInput className="w-full" value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
           </div>
-          <div className="relative w-full pt-5 lg:w-40">
+          <div className="relative w-full lg:w-40">
             <Label className="absolute -top-5 left-0 text-xs text-muted-foreground">To Date</Label>
             <DateInput className="w-full" value={toDate} onChange={(e) => setToDate(e.target.value)} />
           </div>
@@ -1802,51 +1844,243 @@ function AuditHistory({ audit }: { audit: AuditRow[] }) {
 
       <Card>
         <CardContent className="p-4">
-          <Table>
+          <Table className="!min-w-0 table-fixed">
             <TableHeader>
               <TableRow>
-                <TableHead>Activity ID</TableHead><TableHead>Timestamp</TableHead><TableHead>User</TableHead>
-                <TableHead>Role</TableHead><TableHead>Action</TableHead><TableHead>Module</TableHead>
-                <TableHead>Affected Record</TableHead><TableHead>Remarks</TableHead><TableHead>Status</TableHead>
+                <TableHead className="w-[82px]">Activity ID</TableHead><TableHead className="w-[126px]">Timestamp</TableHead><TableHead className="w-[112px]">User</TableHead>
+                <TableHead className="w-[120px]">Role</TableHead><TableHead className="w-[92px]">Action</TableHead><TableHead className="w-[90px]">Module</TableHead>
+                <TableHead className="w-[190px]">Affected Record</TableHead><TableHead>Remarks</TableHead><TableHead className="w-[96px]">Status</TableHead><TableHead className="w-[76px] text-center">Action</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filtered.map((a, i) => (
                 <TableRow key={i}>
-                  <TableCell className="text-xs">{a.id || `AUD-${i + 1}`}</TableCell>
-                  <TableCell className="text-xs">{formatAuditTimestamp(a.ts)}</TableCell>
-                  <TableCell>{a.user}</TableCell>
-                  <TableCell className="text-xs">{roleLabel(a.role) || "-"}</TableCell>
-                  <TableCell><Badge variant="outline">{a.action}</Badge></TableCell>
-                  <TableCell>{a.module}</TableCell>
-                  <TableCell className="text-xs">{a.affectedRecord || a.description}</TableCell>
-                  <TableCell>{a.remarks || a.description}</TableCell>
-                  <TableCell><Badge className={a.status === "Completed" ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"}>{a.status}</Badge></TableCell>
+                  <TableCell className="overflow-hidden text-xs">{a.id || `AUD-${i + 1}`}</TableCell>
+                  <TableCell className="overflow-hidden text-xs">{formatAuditTimestamp(a.ts)}</TableCell>
+                  <TableCell className="overflow-hidden">
+                    <div className="truncate" title={a.user}>{a.user}</div>
+                  </TableCell>
+                  <TableCell className="overflow-hidden text-xs">
+                    <div className="truncate" title={roleLabel(a.role) || "-"}>{roleLabel(a.role) || "-"}</div>
+                  </TableCell>
+                  <TableCell className="overflow-hidden"><Badge variant="outline">{a.action}</Badge></TableCell>
+                  <TableCell className="overflow-hidden">
+                    <div className="truncate" title={a.module}>{a.module}</div>
+                  </TableCell>
+                  <TableCell className="overflow-hidden text-xs">
+                    <div className="truncate" title={a.affectedRecord || a.description}>{a.affectedRecord || a.description}</div>
+                  </TableCell>
+                  <TableCell className="overflow-hidden">
+                    <div className="truncate" title={a.remarks || a.description}>{a.remarks || a.description}</div>
+                  </TableCell>
+                  <TableCell className="overflow-hidden"><Badge className={a.status === "Completed" ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"}>{a.status}</Badge></TableCell>
+                  <TableCell className="overflow-hidden text-center">
+                    <Button variant="outline" size="icon" className="h-8 w-8" title="View full details" aria-label="View full details" onClick={() => setViewing({ row: a, activityId: a.id || `AUD-${i + 1}` })}>
+                      <Eye className="h-3.5 w-3.5" />
+                    </Button>
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
         </CardContent>
       </Card>
+
+      <Dialog open={!!viewing} onOpenChange={(open) => !open && setViewing(null)}>
+        <DialogContent className="w-[calc(100vw-1rem)] sm:!max-w-[820px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-emerald-700">
+              <Eye className="h-5 w-5" />Full Audit Details
+            </DialogTitle>
+          </DialogHeader>
+          {viewing && (
+            <div className="space-y-4 text-sm">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <AuditDetail label="Activity ID" value={viewing.activityId} />
+                <AuditDetail label="Timestamp" value={formatAuditTimestamp(viewing.row.ts)} />
+                <AuditDetail label="User" value={viewing.row.user || "-"} />
+                <AuditDetail label="Role" value={roleLabel(viewing.row.role) || "-"} />
+                <AuditDetail label="Action" value={viewing.row.action} />
+                <AuditDetail label="Module" value={viewing.row.module} />
+                <AuditDetail label="Status" value={viewing.row.status} />
+              </div>
+              <div className="rounded-md border bg-slate-50 p-3">
+                <div className="mb-1 text-xs font-medium text-muted-foreground">Affected Record</div>
+                <AuditLongDetail value={viewing.row.affectedRecord || viewing.row.description || "-"} />
+              </div>
+              <div className="rounded-md border bg-white p-3">
+                <div className="mb-1 text-xs font-medium text-muted-foreground">Remarks</div>
+                <AuditLongDetail value={viewing.row.remarks || viewing.row.description || "-"} />
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
 
-function UserManagement({ users, setUsers, setAudit, adminId, adminName }: { users: Account[]; setUsers: (u: Account[]) => void; setAudit: React.Dispatch<React.SetStateAction<AuditRow[]>>; adminId: string; adminName: string }) {
-  const [openAdd, setOpenAdd] = useState(false);
-  const [view, setView] = useState<Account | null>(null);
-  const [editing, setEditing] = useState<Account | null>(null);
-  const [deactivating, setDeactivating] = useState<Account | null>(null);
+function AuditDetail({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md border bg-white px-3 py-2">
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className="mt-1 break-words font-medium">{value}</div>
+    </div>
+  );
+}
+
+function AuditLongDetail({ value }: { value: string }) {
+  const inventoryAudit = parseInventoryItemAudit(value);
+  const productionAudit = parseProductionAudit(value);
+
+  if (inventoryAudit) {
+    return (
+      <div className="space-y-3">
+        <p className="font-medium text-slate-900">Updated inventory item {inventoryAudit.itemName}.</p>
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          <AuditFieldGroup title="Previous Item Details" values={inventoryAudit.previous} />
+          <AuditFieldGroup title="Updated Item Details" values={inventoryAudit.updated} />
+        </div>
+        <AuditReason value={inventoryAudit.reason} />
+      </div>
+    );
+  }
+
+  if (productionAudit) {
+    return (
+      <div className="space-y-3">
+        <AuditDetail label="Production Record ID" value={productionAudit.recordId} />
+        {productionAudit.changes.length > 0 ? (
+          <div className="rounded-md border bg-white p-3">
+            <div className="mb-2 font-medium text-emerald-700">Changed Production Fields</div>
+            <div className="overflow-hidden rounded-md border">
+              <div className="grid grid-cols-[1.4fr_1fr_1fr] bg-slate-50 text-xs font-medium text-muted-foreground">
+                <div className="px-3 py-2">Field Changed</div>
+                <div className="px-3 py-2">Previous Value</div>
+                <div className="px-3 py-2">Updated Value</div>
+              </div>
+              {productionAudit.changes.map((change, index) => (
+                <div key={`${change.field}-${index}`} className="grid grid-cols-[1.4fr_1fr_1fr] border-t text-sm">
+                  <div className="break-words px-3 py-2 font-medium">{change.field}</div>
+                  <div className="break-words px-3 py-2">{change.previous}</div>
+                  <div className="break-words px-3 py-2">{change.updated}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <AuditDetail label="Changed Production Fields" value="No field value changed" />
+        )}
+        <AuditReason value={productionAudit.reason} />
+      </div>
+    );
+  }
+
+  return <p className="whitespace-pre-wrap break-words leading-relaxed">{value}</p>;
+}
+
+function AuditReason({ value }: { value: string }) {
+  return (
+    <div className="rounded-md border bg-white px-3 py-2">
+      <div className="text-xs font-medium text-muted-foreground">Reason for Editing</div>
+      <div className="mt-1 break-words">{value || "-"}</div>
+    </div>
+  );
+}
+
+function AuditFieldGroup({ title, values }: { title: string; values: Record<string, unknown> }) {
+  const fields = [
+    ["material_id", "Material ID"],
+    ["name", "Item Name"],
+    ["category", "Category"],
+    ["unit", "Unit"],
+    ["on_hand", "On-Hand Stock"],
+    ["minimum_stock", "Minimum Stock"],
+    ["unit_cost", "Unit Cost"],
+    ["supplier", "Supplier"],
+    ["stock_date", "Stock Date"],
+    ["expiry_date", "Expiration Date"],
+  ];
+
+  return (
+    <div className="rounded-md border bg-white p-3">
+      <div className="mb-2 font-medium text-emerald-700">{title}</div>
+      <div className="space-y-2">
+        {fields.map(([key, label]) => (
+          <div key={key} className="grid grid-cols-[128px_1fr] gap-2 border-b pb-2 last:border-b-0 last:pb-0">
+            <div className="text-xs font-medium text-muted-foreground">{label}</div>
+            <div className="break-words text-sm">{formatAuditFieldValue(values[key])}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function parseInventoryItemAudit(value: string): { itemName: string; previous: Record<string, unknown>; updated: Record<string, unknown>; reason: string } | null {
+  const match = value.match(/^Updated inventory item (.*?)\. Previous item details: (\{.*?\})\. Updated item details: (\{.*?\})\. Reason for editing: (.*)$/s);
+  if (!match) return null;
+
+  try {
+    return {
+      itemName: match[1] || "-",
+      previous: JSON.parse(match[2]),
+      updated: JSON.parse(match[3]),
+      reason: match[4] || "-",
+    };
+  } catch {
+    return null;
+  }
+}
+
+function parseProductionAudit(value: string): { recordId: string; changes: Array<{ field: string; previous: string; updated: string }>; reason: string } | null {
+  const match = value.match(/^Production record #([^;]+); (.*?); Reason for editing: (.*)$/s);
+  if (!match) return null;
+
+  const details = match[2] || "";
+  const changes = details === "No field value changed"
+    ? []
+    : details.split(" | ").map((entry) => {
+      const change = entry.match(/^Field changed: (.*?); Previous value: (.*?); Updated value: (.*)$/s);
+      return change ? { field: change[1] || "-", previous: change[2] || "-", updated: change[3] || "-" } : null;
+    }).filter((entry): entry is { field: string; previous: string; updated: string } => Boolean(entry));
+
+  return {
+    recordId: `#${match[1]}`,
+    changes,
+    reason: match[3] || "-",
+  };
+}
+
+function formatAuditFieldValue(value: unknown): string {
+  if (value === null || value === undefined || value === "") return "-";
+  return String(value);
+}
+
+function UserManagement({ users, setUsers, setAudit, adminId, adminName }: {
+  users: Account[];
+  setUsers: React.Dispatch<React.SetStateAction<Account[]>>;
+  setAudit: React.Dispatch<React.SetStateAction<AuditRow[]>>;
+  adminId: string;
+  adminName: string;
+}) {
+  const emptyForm = { name: "", email: "", username: "", password: "", role: "production_clerk" as Role, contact: "", remarks: "", active: true };
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
-  const [sortBy, setSortBy] = useState("created-desc");
-  const [savingUser, setSavingUser] = useState(false);
-  const [form, setForm] = useState<{ name: string; email: string; username: string; password: string; passwordConfirm: string; role: Role; active: boolean; contact: string; remarks: string }>({
-    name: "", email: "", username: "", password: "", passwordConfirm: "", role: "production_clerk", active: true, contact: "", remarks: "",
+  const [form, setForm] = useState(emptyForm);
+  const [editing, setEditing] = useState<Account | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const filteredUsers = users.filter((account) => {
+    const query = search.toLowerCase();
+    if (query && !`${account.name} ${account.email} ${account.username} ${roleLabel(account.role)} ${account.contact || ""}`.toLowerCase().includes(query)) return false;
+    if (roleFilter !== "all" && account.role !== roleFilter) return false;
+    if (statusFilter !== "all" && String(account.active) !== statusFilter) return false;
+    return true;
   });
 
-  const recordAccountAudit = (action: AuditRow["action"], account: Account, remarks: string) => {
+  const recordUserAudit = (action: AuditRow["action"], account: Account, remarks: string) => {
     setAudit((current) => [{
       id: `AUD-${Date.now()}`,
       ts: now(),
@@ -1861,243 +2095,556 @@ function UserManagement({ users, setUsers, setAudit, adminId, adminName }: { use
     }, ...current]);
   };
 
-  const filteredUsers = users.filter((u) => {
-    const query = search.toLowerCase();
-    if (query && !`${u.name} ${u.email} ${u.username}`.toLowerCase().includes(query)) return false;
-    if (roleFilter !== "all" && u.role !== roleFilter) return false;
-    if (statusFilter === "active" && !u.active) return false;
-    if (statusFilter === "inactive" && u.active) return false;
-    return true;
-  }).slice().sort((a, b) => {
-    if (sortBy === "name") return a.name.localeCompare(b.name);
-    if (sortBy === "role") return ROLE_LABELS[a.role].localeCompare(ROLE_LABELS[b.role]);
-    if (sortBy === "status") return Number(b.active) - Number(a.active);
-    return String(b.createdAt || "").localeCompare(String(a.createdAt || ""));
-  });
-
-  const saveEdit = async (acct: Account) => {
-    if (savingUser) return;
-    setSavingUser(true);
-
-    try {
-      const saved = mapAccount(await updateUserAccount(acct.id, {
-        name: acct.name,
-        email: acct.email,
-        username: acct.username,
-        role: acct.role,
-        active: acct.active,
-        contact: acct.contact,
-        remarks: acct.remarks,
-        admin_id: Number(adminId) || undefined,
-        admin_name: adminName,
-      }));
-
-      setUsers(users.map((u) => u.id === saved.id ? saved : u));
-      recordAccountAudit("Updated", saved, saved.remarks || "User profile fields updated.");
-      setEditing(null);
-      toast.success("User updated");
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Unable to update user account.");
-    } finally {
-      setSavingUser(false);
+  const submitNewUser = async () => {
+    if (!form.name.trim() || !form.email.trim() || !form.username.trim() || !form.password.trim()) {
+      toast.error("Name, email, username, and temporary password are required.");
+      return;
     }
-  };
-
-  const confirmDeactivate = async () => {
-    if (!deactivating) return;
-    const next = !deactivating.active;
-    if (savingUser) return;
-    setSavingUser(true);
+    if (saving) return;
+    setSaving(true);
 
     try {
-      const updated = mapAccount(await updateUserAccountStatus(deactivating.id, {
-        active: next,
-        admin_id: Number(adminId) || undefined,
-        admin_name: adminName,
-        remarks: next ? "Account access restored." : "Account access disabled; audit history preserved.",
-      }));
-
-      setUsers(users.map((u) => u.id === updated.id ? updated : u));
-      recordAccountAudit(next ? "Activated" : "Deactivated", updated, next ? "Account access restored." : "Account access disabled; audit history preserved.");
-      toast.success(`User ${next ? "activated" : "deactivated"}`);
-      setDeactivating(null);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Unable to update account status.");
-    } finally {
-      setSavingUser(false);
-    }
-  };
-
-  const submit = async () => {
-    if (!form.name || !form.email || !form.username || !form.password || !form.passwordConfirm) { toast.error("All required fields are required"); return; }
-    if (form.password !== form.passwordConfirm) { toast.error("Temporary password and confirmation must match"); return; }
-    if (savingUser) return;
-    setSavingUser(true);
-
-    try {
-      const acct = mapAccount(await createUserAccount({
-        ...form,
+      const saved = mapAccount(await createUserAccount({
+        name: form.name.trim(),
+        email: form.email.trim(),
+        username: form.username.trim(),
+        password: form.password,
+        role: form.role,
+        active: form.active,
+        contact: form.contact.trim(),
+        remarks: form.remarks.trim(),
         admin_id: Number(adminId) || undefined,
         admin_name: adminName,
       }));
-
-      setUsers([acct, ...users]);
-      recordAccountAudit("Created", acct, form.remarks || "New user account created with temporary password.");
-      toast.success("User created");
-      setOpenAdd(false);
-      setForm({ name: "", email: "", username: "", password: "", passwordConfirm: "", role: "production_clerk", active: true, contact: "", remarks: "" });
+      setUsers((current) => [saved, ...current]);
+      recordUserAudit("Created", saved, form.remarks || "New account created.");
+      setForm(emptyForm);
+      toast.success("User account created");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Unable to create user account.");
     } finally {
-      setSavingUser(false);
+      setSaving(false);
+    }
+  };
+
+  const saveEdit = async () => {
+    if (!editing?.name.trim() || !editing.email.trim() || !editing.username.trim()) {
+      toast.error("Name, email, and username are required.");
+      return;
+    }
+    if (saving || !editing) return;
+    setSaving(true);
+
+    try {
+      const saved = mapAccount(await updateUserAccount(editing.id, {
+        name: editing.name.trim(),
+        email: editing.email.trim(),
+        username: editing.username.trim(),
+        role: editing.role,
+        active: editing.active,
+        contact: editing.contact?.trim() || "",
+        remarks: editing.remarks?.trim() || "Account details updated.",
+        admin_id: Number(adminId) || undefined,
+        admin_name: adminName,
+      }));
+      setUsers((current) => current.map((account) => account.id === saved.id ? saved : account));
+      recordUserAudit("Updated", saved, editing.remarks || "Account details updated.");
+      setEditing(null);
+      toast.success("User account updated");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to update user account.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const toggleStatus = async (account: Account) => {
+    if (saving) return;
+    const next = !account.active;
+    setSaving(true);
+
+    try {
+      const saved = mapAccount(await updateUserAccountStatus(account.id, {
+        active: next,
+        admin_id: Number(adminId) || undefined,
+        admin_name: adminName,
+        remarks: next ? "Account activated." : "Account deactivated.",
+      }));
+      setUsers((current) => current.map((item) => item.id === saved.id ? saved : item));
+      recordUserAudit(next ? "Activated" : "Deactivated", saved, next ? "Account activated." : "Account deactivated.");
+      toast.success(`Account ${next ? "activated" : "deactivated"}`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to update account status.");
+    } finally {
+      setSaving(false);
     }
   };
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="flex items-center gap-2"><Users className="h-6 w-6 text-emerald-700" />User Management</h1>
-          <p className="text-muted-foreground">Manage system user accounts and access.</p>
-        </div>
-        <Button className="w-full bg-emerald-600 hover:bg-emerald-700 sm:w-auto" onClick={() => setOpenAdd(true)}>
-          <Plus className="h-4 w-4 mr-1" />Add User
-        </Button>
+      <div>
+        <h1 className="flex items-center gap-2"><Users className="h-6 w-6 text-emerald-700" />User Management</h1>
+        <p className="text-muted-foreground">Create and maintain system user accounts.</p>
       </div>
 
       <Card>
-        <CardContent className="p-4">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base"><Plus className="h-4 w-4 text-emerald-700" />Add User Account</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <div className="space-y-1"><Label>Full Name</Label><Input autoComplete="name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
+            <div className="space-y-1"><Label>Email Address</Label><Input type="email" autoComplete="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></div>
+            <div className="space-y-1"><Label>Username</Label><Input autoComplete="username" value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} /></div>
+            <div className="space-y-1"><Label>Temporary Password</Label><Input type="password" autoComplete="new-password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} /></div>
+            <div className="space-y-1">
+              <Label>Role</Label>
+              <Select value={form.role} onValueChange={(value) => setForm({ ...form, role: normalizeRole(value) })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {Object.entries(ROLE_LABELS).map(([role, label]) => <SelectItem key={role} value={role}>{label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1"><Label>Contact Number</Label><Input autoComplete="tel" value={form.contact} onChange={(e) => setForm({ ...form, contact: e.target.value })} /></div>
+            <div className="space-y-1">
+              <Label>Status</Label>
+              <Select value={form.active ? "active" : "inactive"} onValueChange={(value) => setForm({ ...form, active: value === "active" })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent><SelectItem value="active">Active</SelectItem><SelectItem value="inactive">Inactive</SelectItem></SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1"><Label>Remarks</Label><Input autoComplete="off" value={form.remarks} onChange={(e) => setForm({ ...form, remarks: e.target.value })} /></div>
+            <div className="md:col-span-2 xl:col-span-4 flex justify-end">
+              <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={submitNewUser} disabled={saving}>
+                {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}Save User
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardContent className="space-y-3 p-4">
+          <div className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_180px_150px]">
+            <Input placeholder="Search users..." value={search} onChange={(e) => setSearch(e.target.value)} />
+            <Select value={roleFilter} onValueChange={setRoleFilter}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Roles</SelectItem>
+                {Object.entries(ROLE_LABELS).map(([role, label]) => <SelectItem key={role} value={role}>{label}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <Select value={statusFilter} onValueChange={setStatusFilter}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent><SelectItem value="all">All Status</SelectItem><SelectItem value="true">Active</SelectItem><SelectItem value="false">Inactive</SelectItem></SelectContent>
+            </Select>
+          </div>
+
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>User</TableHead><TableHead>Role</TableHead>
-                <TableHead>Status</TableHead><TableHead>Last Login</TableHead><TableHead>Action</TableHead>
+                <TableHead>User</TableHead><TableHead>Username</TableHead><TableHead>Role</TableHead>
+                <TableHead>Contact</TableHead><TableHead>Status</TableHead><TableHead>Last Login</TableHead><TableHead className="text-right">Action</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredUsers.map((u) => (
-                <TableRow key={u.id}>
-                  <TableCell>
-                    <div>{u.name}</div>
-                    <div className="text-xs text-muted-foreground">{u.email}</div>
-                  </TableCell>
-                  <TableCell>{ROLE_LABELS[u.role]}</TableCell>
-                  <TableCell><Badge className={u.active ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-700"}>{u.active ? "Active" : "Inactive"}</Badge></TableCell>
-                  <TableCell className="text-xs">{u.lastLogin}</TableCell>
-                  <TableCell>
-                    <div className="flex gap-1">
-                      <button className="p-1.5 rounded bg-slate-100 text-slate-700 hover:bg-slate-200" onClick={() => setView(u)} title="View">
-                        <Eye className="h-3.5 w-3.5" />
-                      </button>
-                      <button className="p-1.5 rounded bg-sky-100 text-sky-700 hover:bg-sky-200" onClick={() => setEditing(u)} title="Edit">
-                        <Edit className="h-3.5 w-3.5" />
-                      </button>
-                      <button
-                        className={`p-1.5 rounded ${u.active ? "bg-red-100 text-red-700 hover:bg-red-200" : "bg-emerald-100 text-emerald-700 hover:bg-emerald-200"}`}
-                        onClick={() => setDeactivating(u)}
-                        title={u.active ? "Deactivate" : "Activate"}
-                      >
+              {filteredUsers.map((account) => (
+                <TableRow key={account.id}>
+                  <TableCell><div className="font-medium">{account.name}</div><div className="text-xs text-muted-foreground">{account.email}</div></TableCell>
+                  <TableCell>{account.username || "-"}</TableCell>
+                  <TableCell>{roleLabel(account.role)}</TableCell>
+                  <TableCell>{account.contact || "-"}</TableCell>
+                  <TableCell><Badge className={account.active ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-700"}>{account.active ? "Active" : "Inactive"}</Badge></TableCell>
+                  <TableCell className="text-xs">{account.lastLogin || "-"}</TableCell>
+                  <TableCell className="text-right">
+                    <div className="flex justify-end gap-1">
+                      <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setEditing(account)} title="Edit"><Edit className="h-3.5 w-3.5" /></Button>
+                      <Button variant="outline" size="icon" className={`h-8 w-8 ${account.active ? "border-red-200 text-red-700 hover:bg-red-50" : "border-emerald-200 text-emerald-700 hover:bg-emerald-50"}`} onClick={() => toggleStatus(account)} title={account.active ? "Deactivate" : "Activate"}>
                         <Power className="h-3.5 w-3.5" />
-                      </button>
+                      </Button>
                     </div>
                   </TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
+          {filteredUsers.length === 0 && <div className="rounded-md border bg-slate-50 p-4 text-center text-sm text-muted-foreground">No user accounts found.</div>}
         </CardContent>
       </Card>
 
-      <Dialog open={openAdd} onOpenChange={setOpenAdd}>
-        <DialogContent className="!max-w-[calc(100vw-1rem)] w-[calc(100vw-1rem)] sm:!max-w-[640px]">
-          <DialogHeader><DialogTitle>Add User</DialogTitle></DialogHeader>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div className="space-y-1"><Label>Full Name</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
-            <div className="space-y-1"><Label>Email Address</Label><Input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></div>
-            <div className="space-y-1"><Label>Username</Label><Input value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} /></div>
-            <div className="space-y-1"><Label>Temporary Password</Label><Input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} /></div>
-            <div className="space-y-1"><Label>Confirm Password</Label><Input type="password" value={form.passwordConfirm} onChange={(e) => setForm({ ...form, passwordConfirm: e.target.value })} /></div>
-            <div className="space-y-1"><Label>Contact Information</Label><Input value={form.contact} onChange={(e) => setForm({ ...form, contact: e.target.value })} placeholder="Phone or office contact" /></div>
-            <div className="space-y-1">
-              <Label>Assigned Role</Label>
-              <Select value={form.role} onValueChange={(v) => setForm({ ...form, role: v as Role })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {Object.entries(ROLE_LABELS).map(([r, l]) => <SelectItem key={r} value={r}>{l}</SelectItem>)}
-                </SelectContent>
-              </Select>
+      <Dialog open={!!editing} onOpenChange={(open) => !open && setEditing(null)}>
+        <DialogContent className="w-[calc(100vw-1rem)] sm:!max-w-[640px]">
+          {editing && (
+            <div className="space-y-4">
+              <DialogHeader><DialogTitle className="flex items-center gap-2 text-emerald-700"><Edit className="h-5 w-5" />Edit User Account</DialogTitle></DialogHeader>
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                <div className="space-y-1"><Label>Full Name</Label><Input value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })} /></div>
+                <div className="space-y-1"><Label>Email Address</Label><Input type="email" value={editing.email} onChange={(e) => setEditing({ ...editing, email: e.target.value })} /></div>
+                <div className="space-y-1"><Label>Username</Label><Input value={editing.username} onChange={(e) => setEditing({ ...editing, username: e.target.value })} /></div>
+                <div className="space-y-1">
+                  <Label>Role</Label>
+                  <Select value={editing.role} onValueChange={(value) => setEditing({ ...editing, role: normalizeRole(value) })}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>{Object.entries(ROLE_LABELS).map(([role, label]) => <SelectItem key={role} value={role}>{label}</SelectItem>)}</SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1"><Label>Contact Number</Label><Input value={editing.contact || ""} onChange={(e) => setEditing({ ...editing, contact: e.target.value })} /></div>
+                <div className="space-y-1">
+                  <Label>Status</Label>
+                  <Select value={editing.active ? "active" : "inactive"} onValueChange={(value) => setEditing({ ...editing, active: value === "active" })}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent><SelectItem value="active">Active</SelectItem><SelectItem value="inactive">Inactive</SelectItem></SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1 md:col-span-2"><Label>Remarks</Label><Textarea value={editing.remarks || ""} onChange={(e) => setEditing({ ...editing, remarks: e.target.value })} /></div>
+              </div>
+              <div className="flex flex-col-reverse gap-2 border-t pt-3 sm:flex-row sm:justify-end">
+                <Button variant="outline" onClick={() => setEditing(null)} disabled={saving}>Cancel</Button>
+                <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={saveEdit} disabled={saving}>
+                  {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}Save Changes
+                </Button>
+              </div>
             </div>
-            <div className="space-y-1">
-              <Label>Account Status</Label>
-              <Select value={form.active ? "active" : "inactive"} onValueChange={(v) => setForm({ ...form, active: v === "active" })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="active">Active</SelectItem>
-                  <SelectItem value="inactive">Inactive</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1 md:col-span-2">
-              <Label>Remarks</Label>
-              <Textarea value={form.remarks} onChange={(e) => setForm({ ...form, remarks: e.target.value })} placeholder="Optional account notes or onboarding remarks." />
-            </div>
-          </div>
-          <div className="flex flex-col-reverse gap-2 pt-2 border-t sm:flex-row sm:justify-end [&>button]:w-full sm:[&>button]:w-auto">
-            <Button variant="outline" onClick={() => setOpenAdd(false)}>Cancel</Button>
-            <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={submit}>Create User</Button>
-          </div>
+          )}
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
 
-      <Dialog open={!!view} onOpenChange={(o) => !o && setView(null)}>
-        <DialogContent className="!max-w-[calc(100vw-1rem)] w-[calc(100vw-1rem)] sm:!max-w-[560px]">
-          {view && (
-            <>
-              <DialogHeader><DialogTitle>User Profile — {view.name}</DialogTitle></DialogHeader>
-              <div className="grid grid-cols-2 gap-3 p-3 bg-slate-50 rounded-md">
-                <Field label="Name" value={view.name} />
-                <Field label="Email" value={view.email} />
-                <Field label="Username" value={view.username} />
-                <Field label="Role" value={ROLE_LABELS[view.role]} />
-                <Field label="Contact" value={view.contact || "—"} />
-                <Field label="Date Created" value={view.createdAt || "—"} />
-                <div className="space-y-1"><div className="text-xs text-muted-foreground">Status</div><Badge className={view.active ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-700"}>{view.active ? "Active" : "Inactive"}</Badge></div>
-                <Field label="Last Login" value={view.lastLogin} />
-                <div className="col-span-2"><Field label="Remarks" value={view.remarks || "—"} /></div>
+function BeneficiaryHarvesterManagement({ beneficiaries, setBeneficiaries, users, setUsers, setAudit, adminId, adminName }: {
+  beneficiaries: MasterBeneficiary[];
+  setBeneficiaries: React.Dispatch<React.SetStateAction<MasterBeneficiary[]>>;
+  users: Account[];
+  setUsers: (u: Account[]) => void;
+  setAudit: React.Dispatch<React.SetStateAction<AuditRow[]>>;
+  adminId: string;
+  adminName: string;
+}) {
+  const [tab, setTab] = useState<"beneficiaries" | "harvesters">("beneficiaries");
+  const [search, setSearch] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [editingBeneficiary, setEditingBeneficiary] = useState<MasterBeneficiary | null>(null);
+  const [statusTarget, setStatusTarget] = useState<MasterBeneficiary | null>(null);
+  const [beneficiaryForm, setBeneficiaryForm] = useState({ code: "", name: "", contact: "", address: "", active: true, remarks: "" });
+  const [harvesterForm, setHarvesterForm] = useState({ name: "", email: "", username: "", password: "", passwordConfirm: "", contact: "", active: true, remarks: "" });
+  const harvesters = users.filter((user) => user.role === "harvester");
+
+  const recordManagementAudit = (action: AuditRow["action"], module: string, affectedRecord: string, description: string, remarks?: string) => {
+    setAudit((current) => [{
+      id: `AUD-${Date.now()}`,
+      ts: now(),
+      user: adminName,
+      role: "manager_admin",
+      action,
+      module,
+      affectedRecord,
+      description,
+      remarks,
+      status: "Completed",
+    }, ...current]);
+  };
+
+  const filteredBeneficiaries = beneficiaries.filter((beneficiary) => {
+    const query = search.toLowerCase();
+    return !query || `${beneficiary.code} ${beneficiary.name} ${beneficiary.contact} ${beneficiary.address}`.toLowerCase().includes(query);
+  });
+
+  const filteredHarvesters = harvesters.filter((harvester) => {
+    const query = search.toLowerCase();
+    return !query || `${harvester.name} ${harvester.email} ${harvester.username}`.toLowerCase().includes(query);
+  });
+
+  const submitBeneficiary = async () => {
+    if (!beneficiaryForm.name.trim()) {
+      toast.error("Beneficiary name is required");
+      return;
+    }
+    if (saving) return;
+    setSaving(true);
+
+    try {
+      const saved = mapBeneficiary(await createBeneficiary({
+        code: beneficiaryForm.code.trim(),
+        name: beneficiaryForm.name.trim(),
+        contact_number: beneficiaryForm.contact.trim(),
+        address: beneficiaryForm.address.trim(),
+        active: beneficiaryForm.active,
+        remarks: beneficiaryForm.remarks.trim(),
+        admin_id: Number(adminId) || undefined,
+        admin_name: adminName,
+      }));
+      setBeneficiaries((current) => [saved, ...current]);
+      recordManagementAudit("Created", "Beneficiaries", saved.id, `Created beneficiary ${saved.name}`, beneficiaryForm.remarks || "New beneficiary added.");
+      setBeneficiaryForm({ code: "", name: "", contact: "", address: "", active: true, remarks: "" });
+      toast.success("Beneficiary added");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to create beneficiary.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const saveBeneficiaryEdit = async () => {
+    if (!editingBeneficiary?.name.trim()) {
+      toast.error("Beneficiary name is required");
+      return;
+    }
+    if (saving || !editingBeneficiary) return;
+    setSaving(true);
+
+    try {
+      const saved = mapBeneficiary(await updateBeneficiary(editingBeneficiary.id, {
+        code: editingBeneficiary.code.trim(),
+        name: editingBeneficiary.name.trim(),
+        contact_number: editingBeneficiary.contact.trim(),
+        address: editingBeneficiary.address.trim(),
+        active: editingBeneficiary.active,
+        remarks: "Beneficiary master record updated.",
+        admin_id: Number(adminId) || undefined,
+        admin_name: adminName,
+      }));
+      setBeneficiaries((current) => current.map((beneficiary) => beneficiary.id === saved.id ? saved : beneficiary));
+      recordManagementAudit("Updated", "Beneficiaries", saved.id, `Updated beneficiary ${saved.name}`, "Beneficiary master record updated.");
+      setEditingBeneficiary(null);
+      toast.success("Beneficiary updated");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to update beneficiary.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const confirmBeneficiaryStatus = async () => {
+    if (!statusTarget || saving) return;
+    const next = !statusTarget.active;
+    setSaving(true);
+
+    try {
+      const saved = mapBeneficiary(await updateBeneficiaryStatus(statusTarget.id, {
+        active: next,
+        admin_id: Number(adminId) || undefined,
+        admin_name: adminName,
+        remarks: next ? "Beneficiary restored for selection." : "Beneficiary hidden from new transaction selection.",
+      }));
+      setBeneficiaries((current) => current.map((beneficiary) => beneficiary.id === saved.id ? saved : beneficiary));
+      recordManagementAudit(next ? "Activated" : "Deactivated", "Beneficiaries", saved.id, `${next ? "Activated" : "Deactivated"} beneficiary ${saved.name}`);
+      setStatusTarget(null);
+      toast.success(`Beneficiary ${next ? "activated" : "deactivated"}`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to update beneficiary status.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const submitHarvester = async () => {
+    if (!harvesterForm.name.trim() || !harvesterForm.email.trim() || !harvesterForm.username.trim() || !harvesterForm.password || !harvesterForm.passwordConfirm) {
+      toast.error("Harvester name, email, username, and temporary password are required");
+      return;
+    }
+    if (harvesterForm.password !== harvesterForm.passwordConfirm) {
+      toast.error("Temporary password and confirmation must match");
+      return;
+    }
+    if (saving) return;
+    setSaving(true);
+
+    try {
+      const harvester = mapAccount(await createUserAccount({
+        name: harvesterForm.name.trim(),
+        email: harvesterForm.email.trim(),
+        username: harvesterForm.username.trim(),
+        password: harvesterForm.password,
+        role: "harvester",
+        active: harvesterForm.active,
+        contact: harvesterForm.contact.trim(),
+        remarks: harvesterForm.remarks.trim(),
+        admin_id: Number(adminId) || undefined,
+        admin_name: adminName,
+      }));
+      setUsers([harvester, ...users]);
+      recordManagementAudit("Created", "Harvesters", harvester.id, `Created harvester ${harvester.name}`, harvesterForm.remarks || "New harvester added.");
+      setHarvesterForm({ name: "", email: "", username: "", password: "", passwordConfirm: "", contact: "", active: true, remarks: "" });
+      toast.success("Harvester added");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to create harvester.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const updateHarvesterStatus = async (harvester: Account) => {
+    if (saving) return;
+    const next = !harvester.active;
+    setSaving(true);
+
+    try {
+      const updated = mapAccount(await updateUserAccountStatus(harvester.id, {
+        active: next,
+        admin_id: Number(adminId) || undefined,
+        admin_name: adminName,
+        remarks: next ? "Harvester restored for production selection." : "Harvester disabled from new production selection.",
+      }));
+      setUsers(users.map((user) => user.id === updated.id ? updated : user));
+      recordManagementAudit(next ? "Activated" : "Deactivated", "Harvesters", updated.id, `${next ? "Activated" : "Deactivated"} harvester ${updated.name}`);
+      toast.success(`Harvester ${next ? "activated" : "deactivated"}`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to update harvester status.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <h1 className="flex items-center gap-2"><UserPlus className="h-6 w-6 text-emerald-700" />Beneficiary / Harvester Management</h1>
+          <p className="text-muted-foreground">Maintain selectable beneficiary and harvester master records.</p>
+        </div>
+        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+          <Button variant={tab === "beneficiaries" ? "default" : "outline"} className={tab === "beneficiaries" ? "bg-emerald-600 hover:bg-emerald-700" : ""} onClick={() => setTab("beneficiaries")}>Beneficiaries</Button>
+          <Button variant={tab === "harvesters" ? "default" : "outline"} className={tab === "harvesters" ? "bg-emerald-600 hover:bg-emerald-700" : ""} onClick={() => setTab("harvesters")}>Harvesters</Button>
+        </div>
+      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base flex items-center gap-2"><Plus className="h-4 w-4 text-emerald-700" />Add {tab === "beneficiaries" ? "Beneficiary" : "Harvester"}</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {tab === "beneficiaries" ? (
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+              <div className="space-y-1"><Label>Beneficiary Code</Label><Input name="beneficiary_code" autoComplete="off" value={beneficiaryForm.code} onChange={(e) => setBeneficiaryForm({ ...beneficiaryForm, code: e.target.value })} placeholder="Auto-generated if blank" /></div>
+              <div className="space-y-1"><Label>Complete Name</Label><Input name="beneficiary_full_name" autoComplete="name" value={beneficiaryForm.name} onChange={(e) => setBeneficiaryForm({ ...beneficiaryForm, name: e.target.value })} /></div>
+              <div className="space-y-1"><Label>Contact Number</Label><Input name="beneficiary_contact_number" autoComplete="tel" inputMode="tel" value={beneficiaryForm.contact} onChange={(e) => setBeneficiaryForm({ ...beneficiaryForm, contact: e.target.value })} /></div>
+              <div className="space-y-1">
+                <Label>Status</Label>
+                <Select value={beneficiaryForm.active ? "active" : "inactive"} onValueChange={(value) => setBeneficiaryForm({ ...beneficiaryForm, active: value === "active" })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent><SelectItem value="active">Active</SelectItem><SelectItem value="inactive">Inactive</SelectItem></SelectContent>
+                </Select>
               </div>
-              <div className="flex flex-col gap-2 sm:flex-row sm:justify-end [&>button]:w-full sm:[&>button]:w-auto"><Button variant="outline" onClick={() => setView(null)}>Close</Button></div>
+              <div className="space-y-1 md:col-span-2"><Label>Address</Label><Input name="beneficiary_address" autoComplete="street-address" value={beneficiaryForm.address} onChange={(e) => setBeneficiaryForm({ ...beneficiaryForm, address: e.target.value })} /></div>
+              <div className="space-y-1 md:col-span-2"><Label>Remarks</Label><Input name="beneficiary_notes" autoComplete="off" data-lpignore="true" data-1p-ignore="true" value={beneficiaryForm.remarks} onChange={(e) => setBeneficiaryForm({ ...beneficiaryForm, remarks: e.target.value })} /></div>
+              <div className="md:col-span-2 xl:col-span-4 flex justify-end"><Button className="bg-emerald-600 hover:bg-emerald-700" onClick={submitBeneficiary} disabled={saving}>{saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Plus className="h-4 w-4 mr-2" />}Save Beneficiary</Button></div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+              <div className="space-y-1"><Label>Harvester Name</Label><Input value={harvesterForm.name} onChange={(e) => setHarvesterForm({ ...harvesterForm, name: e.target.value })} /></div>
+              <div className="space-y-1"><Label>Email Address</Label><Input type="email" value={harvesterForm.email} onChange={(e) => setHarvesterForm({ ...harvesterForm, email: e.target.value })} /></div>
+              <div className="space-y-1"><Label>Username</Label><Input value={harvesterForm.username} onChange={(e) => setHarvesterForm({ ...harvesterForm, username: e.target.value })} /></div>
+              <div className="space-y-1"><Label>Contact Information</Label><Input value={harvesterForm.contact} onChange={(e) => setHarvesterForm({ ...harvesterForm, contact: e.target.value })} /></div>
+              <div className="space-y-1"><Label>Temporary Password</Label><Input type="password" value={harvesterForm.password} onChange={(e) => setHarvesterForm({ ...harvesterForm, password: e.target.value })} /></div>
+              <div className="space-y-1"><Label>Confirm Password</Label><Input type="password" value={harvesterForm.passwordConfirm} onChange={(e) => setHarvesterForm({ ...harvesterForm, passwordConfirm: e.target.value })} /></div>
+              <div className="space-y-1">
+                <Label>Status</Label>
+                <Select value={harvesterForm.active ? "active" : "inactive"} onValueChange={(value) => setHarvesterForm({ ...harvesterForm, active: value === "active" })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent><SelectItem value="active">Active</SelectItem><SelectItem value="inactive">Inactive</SelectItem></SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1"><Label>Remarks</Label><Input value={harvesterForm.remarks} onChange={(e) => setHarvesterForm({ ...harvesterForm, remarks: e.target.value })} /></div>
+              <div className="md:col-span-2 xl:col-span-4 flex justify-end"><Button className="bg-emerald-600 hover:bg-emerald-700" onClick={submitHarvester} disabled={saving}>{saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Plus className="h-4 w-4 mr-2" />}Save Harvester</Button></div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <CardTitle className="text-base">{tab === "beneficiaries" ? "Beneficiary Master List" : "Harvester Master List"}</CardTitle>
+          <Input className="w-full lg:w-80" placeholder={`Search ${tab === "beneficiaries" ? "beneficiaries" : "harvesters"}...`} value={search} onChange={(e) => setSearch(e.target.value)} />
+        </CardHeader>
+        <CardContent>
+          {tab === "beneficiaries" ? (
+            <Table>
+              <TableHeader>
+                <TableRow><TableHead>Code</TableHead><TableHead>Name</TableHead><TableHead>Contact</TableHead><TableHead>Status</TableHead><TableHead>Updated</TableHead><TableHead>Action</TableHead></TableRow>
+              </TableHeader>
+              <TableBody>
+                {filteredBeneficiaries.map((beneficiary) => (
+                  <TableRow key={beneficiary.id}>
+                    <TableCell className="text-xs">{beneficiary.code || "-"}</TableCell>
+                    <TableCell><div>{beneficiary.name}</div><div className="text-xs text-muted-foreground">{beneficiary.address || "-"}</div></TableCell>
+                    <TableCell>{beneficiary.contact || "-"}</TableCell>
+                    <TableCell><Badge className={beneficiary.active ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-700"}>{beneficiary.active ? "Active" : "Inactive"}</Badge></TableCell>
+                    <TableCell className="text-xs">{beneficiary.updatedAt || "-"}</TableCell>
+                    <TableCell>
+                      <div className="flex gap-1">
+                        <button className="p-1.5 rounded bg-sky-100 text-sky-700 hover:bg-sky-200" onClick={() => setEditingBeneficiary(beneficiary)} title="Edit"><Edit className="h-3.5 w-3.5" /></button>
+                        <button className={`p-1.5 rounded ${beneficiary.active ? "bg-red-100 text-red-700 hover:bg-red-200" : "bg-emerald-100 text-emerald-700 hover:bg-emerald-200"}`} onClick={() => setStatusTarget(beneficiary)} title={beneficiary.active ? "Deactivate" : "Activate"}><Power className="h-3.5 w-3.5" /></button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow><TableHead>Harvester</TableHead><TableHead>Username</TableHead><TableHead>Contact</TableHead><TableHead>Status</TableHead><TableHead>Created</TableHead><TableHead>Action</TableHead></TableRow>
+              </TableHeader>
+              <TableBody>
+                {filteredHarvesters.map((harvester) => (
+                  <TableRow key={harvester.id}>
+                    <TableCell><div>{harvester.name}</div><div className="text-xs text-muted-foreground">{harvester.email}</div></TableCell>
+                    <TableCell>{harvester.username}</TableCell>
+                    <TableCell>{harvester.contact || "-"}</TableCell>
+                    <TableCell><Badge className={harvester.active ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-700"}>{harvester.active ? "Active" : "Inactive"}</Badge></TableCell>
+                    <TableCell className="text-xs">{harvester.createdAt || "-"}</TableCell>
+                    <TableCell>
+                      <button className={`p-1.5 rounded ${harvester.active ? "bg-red-100 text-red-700 hover:bg-red-200" : "bg-emerald-100 text-emerald-700 hover:bg-emerald-200"}`} onClick={() => updateHarvesterStatus(harvester)} title={harvester.active ? "Deactivate" : "Activate"}>
+                        <Power className="h-3.5 w-3.5" />
+                      </button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+
+      <Dialog open={!!editingBeneficiary} onOpenChange={(open) => !open && setEditingBeneficiary(null)}>
+        <DialogContent className="!max-w-[calc(100vw-1rem)] w-[calc(100vw-1rem)] sm:!max-w-[640px]">
+          {editingBeneficiary && (
+            <>
+              <DialogHeader><DialogTitle className="flex items-center gap-2 text-emerald-700"><Edit className="h-5 w-5" />Edit Beneficiary</DialogTitle></DialogHeader>
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                <div className="space-y-1"><Label>Beneficiary Code</Label><Input name="edit_beneficiary_code" autoComplete="off" value={editingBeneficiary.code} onChange={(e) => setEditingBeneficiary({ ...editingBeneficiary, code: e.target.value })} /></div>
+                <div className="space-y-1"><Label>Complete Name</Label><Input name="edit_beneficiary_full_name" autoComplete="name" value={editingBeneficiary.name} onChange={(e) => setEditingBeneficiary({ ...editingBeneficiary, name: e.target.value })} /></div>
+                <div className="space-y-1"><Label>Contact Number</Label><Input name="edit_beneficiary_contact_number" autoComplete="tel" inputMode="tel" value={editingBeneficiary.contact} onChange={(e) => setEditingBeneficiary({ ...editingBeneficiary, contact: e.target.value })} /></div>
+                <div className="space-y-1">
+                  <Label>Status</Label>
+                  <Select value={editingBeneficiary.active ? "active" : "inactive"} onValueChange={(value) => setEditingBeneficiary({ ...editingBeneficiary, active: value === "active" })}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent><SelectItem value="active">Active</SelectItem><SelectItem value="inactive">Inactive</SelectItem></SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1 md:col-span-2"><Label>Address</Label><Textarea name="edit_beneficiary_address" autoComplete="street-address" value={editingBeneficiary.address} onChange={(e) => setEditingBeneficiary({ ...editingBeneficiary, address: e.target.value })} /></div>
+              </div>
+              <div className="flex flex-col-reverse gap-2 pt-2 border-t sm:flex-row sm:justify-end [&>button]:w-full sm:[&>button]:w-auto">
+                <Button variant="outline" onClick={() => setEditingBeneficiary(null)} disabled={saving}>Cancel</Button>
+                <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={saveBeneficiaryEdit} disabled={saving}>Save Changes</Button>
+              </div>
             </>
           )}
         </DialogContent>
       </Dialog>
 
-      <EditUserDialog account={editing} onClose={() => setEditing(null)} onSave={saveEdit} />
-
-      <Dialog open={!!deactivating} onOpenChange={(o) => !o && !savingUser && setDeactivating(null)}>
+      <Dialog open={!!statusTarget} onOpenChange={(open) => !open && !saving && setStatusTarget(null)}>
         <DialogContent className="!max-w-[calc(100vw-1rem)] w-[calc(100vw-1rem)] sm:!max-w-[480px]">
-          {deactivating && (
+          {statusTarget && (
             <>
-              <DialogHeader>
-                <DialogTitle className="flex items-center gap-2 text-red-700">
-                  <Power className="h-5 w-5" />{deactivating.active ? "Deactivate" : "Activate"} User
-                </DialogTitle>
-              </DialogHeader>
-              <div className="text-sm space-y-2">
-                <p>
-                  Are you sure you want to <strong>{deactivating.active ? "deactivate" : "activate"}</strong> <strong>{deactivating.name}</strong>?
-                </p>
-                {deactivating.active && (
-                  <p className="text-muted-foreground">The account will be disabled but their previous activity logs will be preserved for audit purposes.</p>
-                )}
-              </div>
+              <DialogHeader><DialogTitle>{statusTarget.active ? "Deactivate" : "Activate"} Beneficiary</DialogTitle></DialogHeader>
+              <p className="text-sm">Are you sure you want to <strong>{statusTarget.active ? "deactivate" : "activate"}</strong> <strong>{statusTarget.name}</strong>?</p>
               <div className="flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:justify-end [&>button]:w-full sm:[&>button]:w-auto">
-                <Button variant="outline" onClick={() => setDeactivating(null)} disabled={savingUser}>Cancel</Button>
-                <Button
-                  className={deactivating.active ? "bg-red-600 hover:bg-red-700 text-white" : "bg-emerald-600 hover:bg-emerald-700"}
-                  onClick={confirmDeactivate}
-                  disabled={savingUser}
-                >
-                  {savingUser ? (deactivating.active ? "Deactivating..." : "Activating...") : (deactivating.active ? "Deactivate" : "Activate")}
+                <Button variant="outline" onClick={() => setStatusTarget(null)} disabled={saving}>Cancel</Button>
+                <Button className={statusTarget.active ? "bg-red-600 hover:bg-red-700 text-white" : "bg-emerald-600 hover:bg-emerald-700"} onClick={confirmBeneficiaryStatus} disabled={saving}>
+                  {statusTarget.active ? "Deactivate" : "Activate"}
                 </Button>
               </div>
             </>
@@ -2108,55 +2655,188 @@ function UserManagement({ users, setUsers, setAudit, adminId, adminName }: { use
   );
 }
 
-function EditUserDialog({ account, onClose, onSave }: { account: Account | null; onClose: () => void; onSave: (a: Account) => void }) {
-  const [form, setForm] = useState<Account | null>(account);
-  if (account && form?.id !== account.id) setForm(account);
+function DatabaseCleanup({ adminId, adminName, adminEmail, setAudit }: {
+  adminId: string;
+  adminName: string;
+  adminEmail: string;
+  setAudit: React.Dispatch<React.SetStateAction<AuditRow[]>>;
+}) {
+  const [tables, setTables] = useState<MaintenanceTable[]>([]);
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [confirmation, setConfirmation] = useState("");
+  const [deleting, setDeleting] = useState(false);
+  const [unlocked, setUnlocked] = useState(false);
+  const [password, setPassword] = useState("");
+  const [unlocking, setUnlocking] = useState(false);
+  const [loadingTables, setLoadingTables] = useState(false);
+
+  const loadTables = async () => {
+    setLoadingTables(true);
+    try {
+      const payload = await fetchMaintenanceTables();
+      setTables(payload.tables);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to load database tables.");
+    } finally {
+      setLoadingTables(false);
+    }
+  };
+
+  const unlockModule = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!password.trim() || unlocking) return;
+
+    setUnlocking(true);
+    try {
+      await verifyAdminPassword(adminId, adminEmail, password);
+      setUnlocked(true);
+      setPassword("");
+      toast.success("Database Cleanup unlocked");
+      void loadTables();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Admin password verification failed.");
+    } finally {
+      setUnlocking(false);
+    }
+  };
+
+  const deleteAll = async () => {
+    const required = "DELETE ALL DATABASE DATA";
+    if (deleting) return;
+    if (confirmation !== required) {
+      toast.error("Type the exact confirmation text before deleting.");
+      return;
+    }
+
+    setDeleting(true);
+    try {
+      const result = await deleteAllMaintenanceTables({
+        confirmation,
+        user_id: Number(adminId) || undefined,
+        user_name: adminName,
+      });
+      setTables(result.tables);
+      setAudit((current) => [{
+        ts: now(),
+        user: adminName,
+        role: "manager_admin",
+        action: "Deleted",
+        module: "Database Maintenance",
+        affectedRecord: "All cleanup tables",
+        description: `Deleted all database cleanup data. Estimated deleted records: ${result.deleted}`,
+        remarks: "Core system accounts were preserved.",
+        status: "Completed",
+      }, ...current]);
+      toast.success(`Deleted database data across all cleanup tables`);
+      setBulkOpen(false);
+      setConfirmation("");
+      await loadTables();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to delete all database records.");
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const availableDeletes = tables.reduce((sum, table) => sum + table.deletable_records, 0);
 
   return (
-    <Dialog open={!!account} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="!max-w-[calc(100vw-1rem)] w-[calc(100vw-1rem)] sm:!max-w-[640px]">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-emerald-700">
-            <Edit className="h-5 w-5" />Edit User
-          </DialogTitle>
-        </DialogHeader>
-        {form && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div className="space-y-1"><Label>Full Name</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
-            <div className="space-y-1"><Label>Email Address</Label><Input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></div>
-            <div className="space-y-1"><Label>Username</Label><Input value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} /></div>
-            <div className="space-y-1"><Label>Contact Information</Label><Input value={form.contact || ""} onChange={(e) => setForm({ ...form, contact: e.target.value })} /></div>
-            <div className="space-y-1">
-              <Label>Assigned Role</Label>
-              <Select value={form.role} onValueChange={(v) => setForm({ ...form, role: v as Role })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {Object.entries(ROLE_LABELS).map(([r, l]) => <SelectItem key={r} value={r}>{l}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1">
-              <Label>Account Status</Label>
-              <Select value={form.active ? "active" : "inactive"} onValueChange={(v) => setForm({ ...form, active: v === "active" })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="active">Active</SelectItem>
-                  <SelectItem value="inactive">Inactive</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1 md:col-span-2">
-              <Label>Remarks</Label>
-              <Textarea value={form.remarks || ""} onChange={(e) => setForm({ ...form, remarks: e.target.value })} />
-            </div>
+    <div className="space-y-4">
+      <div className="flex flex-col gap-1">
+        <div>
+          <h1 className="flex items-center gap-2"><Database className="h-6 w-6 text-emerald-700" />Database Cleanup</h1>
+          <p className="text-muted-foreground">Clear system data while keeping the five core accounts active.</p>
+        </div>
+      </div>
+
+      <div className="relative min-h-[280px]">
+        <div className={unlocked ? "space-y-4" : "pointer-events-none select-none space-y-4 blur-sm"}>
+          <Card>
+            <CardContent className="p-5">
+            <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+              <div className="space-y-3">
+                <div>
+                  <h2 className="text-lg font-semibold">Delete All Database Data</h2>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {loadingTables ? "Loading cleanup details..." : "This removes all eligible records in one operation."}
+                  </p>
+                </div>
+                  <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                    <span>Permanent action. The five core accounts and role access are preserved.</span>
+                  </div>
+                </div>
+                <div className="flex flex-col gap-2 sm:flex-row lg:flex-col">
+                  <Button className="h-11 bg-red-600 px-5 text-white hover:bg-red-700" onClick={() => { setBulkOpen(true); setConfirmation(""); }}>
+                    <Trash2 className="mr-2 h-4 w-4" />Delete All Data
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Dialog open={bulkOpen} onOpenChange={(open) => { if (!open && !deleting) { setBulkOpen(false); setConfirmation(""); } }}>
+            <DialogContent className="w-[calc(100vw-1rem)] sm:!max-w-[600px]">
+              <div className="space-y-4">
+                <DialogHeader>
+                  <DialogTitle className="flex items-center gap-2 text-red-700"><Trash2 className="h-5 w-5" />Delete All Database Data</DialogTitle>
+                </DialogHeader>
+                <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-900">
+                  This permanently deletes all eligible data. Core accounts and role access remain protected.
+                </div>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  <AuditDetail label="Tables Included" value={String(tables.filter((table) => table.name !== "users").length)} />
+                  <AuditDetail label="Deletable Records" value={availableDeletes.toLocaleString()} />
+                  <AuditDetail label="Protected Users" value="5 accounts" />
+                </div>
+                <div className="space-y-2">
+                  <Label>Type this confirmation text</Label>
+                  <code className="block rounded bg-slate-100 px-3 py-2 text-sm">DELETE ALL DATABASE DATA</code>
+                  <Input value={confirmation} onChange={(e) => setConfirmation(e.target.value)} placeholder="DELETE ALL DATABASE DATA" />
+                </div>
+                <div className="flex flex-col-reverse gap-2 border-t pt-3 sm:flex-row sm:justify-end">
+                  <Button variant="outline" onClick={() => { setBulkOpen(false); setConfirmation(""); }} disabled={deleting}>Cancel</Button>
+                  <Button className="bg-red-600 text-white hover:bg-red-700" onClick={deleteAll} disabled={deleting || confirmation !== "DELETE ALL DATABASE DATA"}>
+                    {deleting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}Delete All Data
+                  </Button>
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
+        </div>
+
+        {!unlocked && (
+          <div className="absolute inset-0 z-10 flex items-start justify-center pt-4 sm:pt-8">
+            <Card className="w-full max-w-md border-emerald-200 bg-white/95 shadow-lg backdrop-blur">
+              <CardHeader className="pb-3">
+                <CardTitle className="flex items-center gap-2 text-base text-emerald-800">
+                  <LockKeyhole className="h-5 w-5" />Admin Password Required
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <form className="space-y-4" onSubmit={unlockModule}>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="database-cleanup-password">Password</Label>
+                    <Input
+                      id="database-cleanup-password"
+                      type="password"
+                      value={password}
+                      onChange={(event) => setPassword(event.target.value)}
+                      autoComplete="current-password"
+                      placeholder="Enter admin password"
+                    />
+                  </div>
+                  <Button type="submit" className="w-full bg-emerald-600 hover:bg-emerald-700" disabled={unlocking || !password.trim()}>
+                    {unlocking ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <LockKeyhole className="mr-2 h-4 w-4" />}
+                    Unlock Module
+                  </Button>
+                </form>
+              </CardContent>
+            </Card>
           </div>
         )}
-        <div className="flex flex-col-reverse gap-2 pt-2 border-t sm:flex-row sm:justify-end [&>button]:w-full sm:[&>button]:w-auto">
-          <Button variant="outline" onClick={onClose}>Cancel</Button>
-          <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={() => form && onSave(form)}>Save Changes</Button>
-        </div>
-      </DialogContent>
-    </Dialog>
+      </div>
+    </div>
   );
 }
 
@@ -2184,6 +2864,10 @@ const ROLE_DESCRIPTIONS: Record<Role, { description: string; permissions: string
   production_clerk: {
     description: "Encodes daily production data from harvested boxes.",
     permissions: ["Encode harvest logs", "Encode boxes per group", "Encode harvest parameters", "View production records"],
+  },
+  harvester: {
+    description: "Listed harvester account used for accurate production encoding.",
+    permissions: ["Available for harvest record selection"],
   },
 };
 

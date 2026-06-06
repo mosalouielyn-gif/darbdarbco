@@ -7,9 +7,10 @@ interface DateInputProps {
   defaultValue?: string;
   onChange?: (event: React.ChangeEvent<HTMLInputElement>) => void;
   className?: string;
+  disabled?: boolean;
 }
 
-export function DateInput({ value, defaultValue, onChange, className = "" }: DateInputProps) {
+export function DateInput({ value, defaultValue, onChange, className = "", disabled = false }: DateInputProps) {
   return (
     <div className={`relative ${className}`}>
       <Input
@@ -17,6 +18,7 @@ export function DateInput({ value, defaultValue, onChange, className = "" }: Dat
         value={value}
         defaultValue={defaultValue}
         onChange={onChange}
+        disabled={disabled}
         className="h-9 w-full cursor-pointer bg-muted/50 px-3 pr-10 [color-scheme:light] [&::-webkit-calendar-picker-indicator]:absolute [&::-webkit-calendar-picker-indicator]:inset-0 [&::-webkit-calendar-picker-indicator]:h-full [&::-webkit-calendar-picker-indicator]:w-full [&::-webkit-calendar-picker-indicator]:cursor-pointer [&::-webkit-calendar-picker-indicator]:opacity-0"
       />
       <Calendar className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-700" />

@@ -3,7 +3,8 @@ export type Role =
   | "inventory_bookkeeper"
   | "payroll_personnel"
   | "finance_officer"
-  | "manager_admin";
+  | "manager_admin"
+  | "harvester";
 
 export interface User {
   id: string;
@@ -18,6 +19,7 @@ export const ROLE_LABELS: Record<Role, string> = {
   payroll_personnel: "Payroll Personnel",
   finance_officer: "Finance Officer",
   manager_admin: "Manager / Admin",
+  harvester: "Harvester",
 };
 
 

@@ -2,8 +2,10 @@
 
 use App\Http\Controllers\Api\AppDataController;
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\BeneficiaryController;
 use App\Http\Controllers\Api\BorrowedMaterialController;
 use App\Http\Controllers\Api\CreditTransactionController;
+use App\Http\Controllers\Api\DatabaseMaintenanceController;
 use App\Http\Controllers\Api\HarvestRecordController;
 use App\Http\Controllers\Api\InventoryItemController;
 use App\Http\Controllers\Api\PayrollSlipController;
@@ -14,7 +16,11 @@ use App\Http\Controllers\Api\UserAccountController;
 use Illuminate\Support\Facades\Route;
 
 Route::post('/login', [AuthController::class, 'login']);
+Route::post('/admin/verify-password', [AuthController::class, 'verifyAdminPassword']);
 Route::get('/app-data', AppDataController::class);
+Route::get('/database-maintenance/tables', [DatabaseMaintenanceController::class, 'index']);
+Route::delete('/database-maintenance/tables', [DatabaseMaintenanceController::class, 'destroyAll']);
+Route::delete('/database-maintenance/tables/{table}', [DatabaseMaintenanceController::class, 'destroy']);
 Route::get('/harvest-records', [HarvestRecordController::class, 'index']);
 Route::post('/harvest-records', [HarvestRecordController::class, 'store']);
 Route::put('/harvest-records/{id}', [HarvestRecordController::class, 'update']);
@@ -26,6 +32,9 @@ Route::delete('/production-box-records/{id}', [ProductionBoxRecordController::cl
 Route::post('/users', [UserAccountController::class, 'store']);
 Route::put('/users/{id}', [UserAccountController::class, 'update']);
 Route::put('/users/{id}/status', [UserAccountController::class, 'status']);
+Route::post('/beneficiaries', [BeneficiaryController::class, 'store']);
+Route::put('/beneficiaries/{id}', [BeneficiaryController::class, 'update']);
+Route::put('/beneficiaries/{id}/status', [BeneficiaryController::class, 'status']);
 Route::post('/inventory-items', [InventoryItemController::class, 'store']);
 Route::put('/inventory-items/{id}', [InventoryItemController::class, 'update']);
 Route::put('/inventory-items/{id}/status', [InventoryItemController::class, 'status']);

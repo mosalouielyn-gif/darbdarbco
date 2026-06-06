@@ -325,6 +325,12 @@ class PayrollSlipController extends Controller
 
         $userId = $this->resolveUserId($userId, $userName);
         $values = ['module' => 'Payroll', 'action' => $action];
+
+        if (Schema::hasColumn('audit_logs', 'id')) {
+            $maxId = (int) DB::table('audit_logs')->max('id');
+            $values['id'] = $maxId + 1;
+        }
+
         if (Schema::hasColumn('audit_logs', 'user_id')) $values['user_id'] = $userId;
         if (Schema::hasColumn('audit_logs', 'user_name')) $values['user_name'] = $userName;
         if (Schema::hasColumn('audit_logs', 'details')) $values['details'] = $description;
@@ -334,13 +340,20 @@ class PayrollSlipController extends Controller
         if (Schema::hasColumn('audit_logs', 'updated_at')) $values['updated_at'] = now();
         if (Schema::hasColumn('audit_logs', 'logged_at')) $values['logged_at'] = now();
 
-        DB::table('audit_logs')->insert($values);
+        try {
+            DB::table('audit_logs')->insert($values);
+        } catch (\Throwable) {
+            // Audit logging should never block payroll saves or submissions.
+        }
     }
 
     private function resolveUserId(?int $userId, ?string $userName): ?int
     {
-        if ($userId) return $userId;
         if (! Schema::hasTable('users')) return null;
+
+        if ($userId && DB::table('users')->where('id', $userId)->exists()) {
+            return $userId;
+        }
 
         if ($userName) {
             $nameColumn = Schema::hasColumn('users', 'full_name') ? 'full_name' : (Schema::hasColumn('users', 'name') ? 'name' : null);

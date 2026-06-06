@@ -6,7 +6,7 @@ import { InventoryBookkeeperDashboard } from "./components/dashboards/inventory-
 import { PayrollPersonnelDashboard } from "./components/dashboards/payroll-personnel";
 import { FinanceOfficerDashboard } from "./components/dashboards/finance-officer";
 import { ManagerAdminDashboard } from "./components/dashboards/manager-admin";
-import { User } from "./components/types";
+import { ROLE_LABELS, Role, User } from "./components/types";
 import { AppData, fetchAppData } from "./lib/api";
 import { AppDataProvider } from "./lib/app-data-context";
 import { usePersistentState } from "./lib/use-persistent-state";
@@ -26,7 +26,7 @@ export default function App() {
 
     let active = true;
     setLoadingData(true);
-    fetchAppData(user.role)
+    fetchAppData(normalizeRole(user.role))
       .then((nextData) => {
         if (active) {
           setData(nextData);
@@ -50,19 +50,33 @@ export default function App() {
     setData(null);
   };
 
+  const normalizedUser = user ? { ...user, role: normalizeRole(user.role) } : null;
+
   return (
     <>
       <Toaster position="top-right" richColors />
-      {!user && <Login onLogin={setUser} />}
-      {user && (
+      {!normalizedUser && <Login onLogin={setUser} />}
+      {normalizedUser && (
         <AppDataProvider value={{ data, loading: loadingData, error: dataError }}>
-          {user.role === "production_clerk" && <ProductionClerkDashboard user={user} onLogout={handleLogout} />}
-          {user.role === "inventory_bookkeeper" && <InventoryBookkeeperDashboard user={user} onLogout={handleLogout} />}
-          {user.role === "payroll_personnel" && <PayrollPersonnelDashboard user={user} onLogout={handleLogout} />}
-          {user.role === "finance_officer" && <FinanceOfficerDashboard user={user} onLogout={handleLogout} />}
-          {user.role === "manager_admin" && <ManagerAdminDashboard user={user} onLogout={handleLogout} />}
+          {normalizedUser.role === "production_clerk" && <ProductionClerkDashboard user={normalizedUser} onLogout={handleLogout} />}
+          {normalizedUser.role === "inventory_bookkeeper" && <InventoryBookkeeperDashboard user={normalizedUser} onLogout={handleLogout} />}
+          {normalizedUser.role === "payroll_personnel" && <PayrollPersonnelDashboard user={normalizedUser} onLogout={handleLogout} />}
+          {normalizedUser.role === "finance_officer" && <FinanceOfficerDashboard user={normalizedUser} onLogout={handleLogout} />}
+          {normalizedUser.role === "manager_admin" && <ManagerAdminDashboard user={normalizedUser} onLogout={handleLogout} />}
         </AppDataProvider>
       )}
     </>
   );
+}
+
+function normalizeRole(value: unknown): Role {
+  if (typeof value !== "string") return "production_clerk";
+
+  const code = value.trim().toLowerCase().replace(/[\s/-]+/g, "_");
+  if (Object.prototype.hasOwnProperty.call(ROLE_LABELS, code)) {
+    return code as Role;
+  }
+
+  const matched = Object.entries(ROLE_LABELS).find(([, label]) => label.toLowerCase() === value.trim().toLowerCase());
+  return matched ? matched[0] as Role : "production_clerk";
 }

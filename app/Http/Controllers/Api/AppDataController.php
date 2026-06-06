@@ -18,6 +18,7 @@ class AppDataController extends Controller
         switch ($role) {
             case 'production_clerk':
                 $payload['beneficiaries'] = $this->beneficiaries();
+                $payload['harvesters'] = $this->harvesters();
                 $payload['harvestRecords'] = $this->harvestRecords();
                 $payload['productionRecords'] = $this->productionRecords();
                 break;
@@ -46,6 +47,8 @@ class AppDataController extends Controller
                 break;
 
             case 'manager_admin':
+                $payload['beneficiaries'] = $this->beneficiaries();
+                $payload['harvesters'] = $this->harvesters();
                 $payload['inventoryItems'] = $this->inventoryItems();
                 $payload['productionRecords'] = $this->productionRecords();
                 $payload['restockRequests'] = $this->restockRequests();
@@ -69,6 +72,7 @@ class AppDataController extends Controller
                     'payrollSlips' => $this->payrollSlips(),
                     'auditLogs' => $this->auditLogs(),
                     'users' => $this->users(),
+                    'harvesters' => $this->harvesters(),
                     'rolePermissions' => $this->rolePermissions(),
                 ];
                 break;
@@ -92,6 +96,7 @@ class AppDataController extends Controller
             'payrollSlips' => [],
             'auditLogs' => [],
             'users' => [],
+            'harvesters' => [],
             'rolePermissions' => [],
         ];
     }
@@ -133,9 +138,42 @@ class AppDataController extends Controller
 
         $nameColumn = Schema::hasColumn('beneficiaries', 'full_name') ? 'full_name' : 'name';
         $codeColumn = Schema::hasColumn('beneficiaries', 'code') ? 'code' : 'beneficiary_code';
+        $columns = [
+            'id',
+            DB::raw("$codeColumn as code"),
+            DB::raw("$nameColumn as name"),
+        ];
+
+        if (Schema::hasColumn('beneficiaries', 'created_at')) {
+            $columns[] = 'created_at';
+        } else {
+            $columns[] = DB::raw('null as created_at');
+        }
+
+        if (Schema::hasColumn('beneficiaries', 'updated_at')) {
+            $columns[] = 'updated_at';
+        } else {
+            $columns[] = DB::raw('null as updated_at');
+        }
+
+        if (Schema::hasColumn('beneficiaries', 'is_active')) {
+            $columns[] = DB::raw('is_active as active');
+        } elseif (Schema::hasColumn('beneficiaries', 'active')) {
+            $columns[] = 'active';
+        } else {
+            $columns[] = DB::raw('1 as active');
+        }
+
+        $contactColumn = $this->beneficiaryContactColumn();
+        if ($contactColumn) {
+            $columns[] = DB::raw("$contactColumn as contact_number");
+        }
+        if (Schema::hasColumn('beneficiaries', 'address')) {
+            $columns[] = 'address';
+        }
 
         return DB::table('beneficiaries')
-            ->select(['id', DB::raw("$codeColumn as code"), DB::raw("$nameColumn as name")])
+            ->select($columns)
             ->orderBy($nameColumn)
             ->limit(200)
             ->get()
@@ -170,6 +208,17 @@ class AppDataController extends Controller
             ->all();
     }
 
+    private function beneficiaryContactColumn(): ?string
+    {
+        foreach (['contact_number', 'contact_no', 'contact', 'phone', 'mobile_number'] as $column) {
+            if (Schema::hasColumn('beneficiaries', $column)) {
+                return $column;
+            }
+        }
+
+        return null;
+    }
+
     private function dailyBoxes(): array
     {
         if (! Schema::hasTable('daily_boxes')) {
@@ -190,9 +239,13 @@ class AppDataController extends Controller
         }
 
         if (Schema::hasColumn('inventory_items', 'item_name')) {
+            $minimumStockSelect = Schema::hasColumn('inventory_items', 'minimum_stock')
+                ? 'inventory_items.minimum_stock'
+                : '0 as minimum_stock';
+
             return DB::table('inventory_items')
                 ->leftJoin('inventory_categories', 'inventory_categories.id', '=', 'inventory_items.category_id')
-                ->selectRaw('inventory_items.id, inventory_items.material_id as code, inventory_items.item_name as name, inventory_categories.label as category, inventory_items.unit, inventory_items.on_hand, inventory_items.unit_cost, inventory_items.supplier, inventory_items.expiry_date, inventory_items.stock_date, inventory_items.is_active as active, inventory_items.created_at, inventory_items.updated_at')
+                ->selectRaw("inventory_items.id, inventory_items.material_id as code, inventory_items.item_name as name, inventory_categories.label as category, inventory_items.unit, inventory_items.on_hand, $minimumStockSelect, inventory_items.unit_cost, inventory_items.supplier, inventory_items.expiry_date, inventory_items.stock_date, inventory_items.is_active as active, inventory_items.created_at, inventory_items.updated_at")
                 ->orderBy('inventory_items.item_name')
                 ->limit(200)
                 ->get()
@@ -233,10 +286,17 @@ class AppDataController extends Controller
     private function stockTransactions(): array
     {
         if (Schema::hasTable('stock_transactions')) {
+            $categorySelect = Schema::hasTable('inventory_categories') && Schema::hasColumn('inventory_items', 'category_id')
+                ? 'inventory_categories.label'
+                : 'null';
+
             return DB::table('stock_transactions')
                 ->leftJoin('inventory_items', 'inventory_items.id', '=', 'stock_transactions.item_id')
                 ->leftJoin('beneficiaries', 'beneficiaries.id', '=', 'stock_transactions.beneficiary_id')
-                ->selectRaw('stock_transactions.id, stock_transactions.reference_no, stock_transactions.txn_type as type, inventory_items.item_name as material, stock_transactions.quantity, inventory_items.unit, stock_transactions.reason, beneficiaries.full_name as beneficiary_name, stock_transactions.txn_at')
+                ->when(Schema::hasTable('inventory_categories') && Schema::hasColumn('inventory_items', 'category_id'), function ($query) {
+                    $query->leftJoin('inventory_categories', 'inventory_categories.id', '=', 'inventory_items.category_id');
+                })
+                ->selectRaw("stock_transactions.id, stock_transactions.reference_no, stock_transactions.txn_type as type, inventory_items.item_name as material, stock_transactions.quantity, stock_transactions.unit_cost, inventory_items.unit, stock_transactions.reason, beneficiaries.full_name as beneficiary_name, $categorySelect as category, stock_transactions.txn_at")
                 ->orderByDesc('stock_transactions.txn_at')
                 ->limit(150)
                 ->get()
@@ -249,7 +309,7 @@ class AppDataController extends Controller
 
         return DB::table('inventory_transactions')
             ->leftJoin('inventory_items', 'inventory_items.id', '=', 'inventory_transactions.inventory_item_id')
-            ->selectRaw('inventory_transactions.id, inventory_transactions.reference_no, inventory_transactions.transaction_type as type, inventory_transactions.quantity, inventory_transactions.unit_cost, inventory_transactions.reason, inventory_transactions.transaction_at, inventory_items.name as material, inventory_items.unit')
+            ->selectRaw('inventory_transactions.id, inventory_transactions.reference_no, inventory_transactions.transaction_type as type, inventory_transactions.quantity, inventory_transactions.unit_cost, inventory_transactions.beneficiary_name, inventory_transactions.reason, inventory_transactions.transaction_at, inventory_items.name as material, inventory_items.category, inventory_items.unit')
             ->orderByDesc('inventory_transactions.transaction_at')
             ->limit(150)
             ->get()
@@ -454,6 +514,63 @@ class AppDataController extends Controller
             ->orderBy('name')
             ->limit(100)
             ->get()
+            ->all();
+    }
+
+    private function harvesters(): array
+    {
+        $harvesters = collect();
+
+        if (Schema::hasTable('users')) {
+            $nameColumn = Schema::hasColumn('users', 'full_name') ? 'full_name' : (Schema::hasColumn('users', 'name') ? 'name' : null);
+            $activeColumn = Schema::hasColumn('users', 'is_active') ? 'is_active' : (Schema::hasColumn('users', 'active') ? 'active' : null);
+
+            if ($nameColumn && Schema::hasColumn('users', 'role')) {
+                $query = DB::table('users')
+                    ->selectRaw("id, $nameColumn as name, email, role")
+                    ->where('role', 'harvester');
+
+                if ($activeColumn) {
+                    $query->where($activeColumn, true);
+                }
+
+                $harvesters = $harvesters->merge($query->orderBy($nameColumn)->get());
+            } elseif ($nameColumn && Schema::hasColumn('users', 'role_id') && Schema::hasTable('roles')) {
+                $query = DB::table('users')
+                    ->leftJoin('roles', 'roles.id', '=', 'users.role_id')
+                    ->selectRaw("users.id, users.$nameColumn as name, users.email, roles.code as role")
+                    ->where('roles.code', 'harvester');
+
+                if ($activeColumn) {
+                    $query->where("users.$activeColumn", true);
+                }
+
+                $harvesters = $harvesters->merge($query->orderBy("users.$nameColumn")->get());
+            }
+        }
+
+        if (Schema::hasTable('harvest_records') && Schema::hasColumn('harvest_records', 'harvester_name')) {
+            $existingNames = DB::table('harvest_records')
+                ->select('harvester_name')
+                ->whereNotNull('harvester_name')
+                ->distinct()
+                ->orderBy('harvester_name')
+                ->limit(200)
+                ->get()
+                ->map(fn ($row) => (object) [
+                    'id' => null,
+                    'name' => $row->harvester_name,
+                    'email' => null,
+                    'role' => 'harvester',
+                ]);
+
+            $harvesters = $harvesters->merge($existingNames);
+        }
+
+        return $harvesters
+            ->filter(fn ($row) => trim((string) ($row->name ?? '')) !== '')
+            ->unique(fn ($row) => strtolower(trim((string) $row->name)))
+            ->values()
             ->all();
     }
 
