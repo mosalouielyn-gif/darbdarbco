@@ -289,6 +289,9 @@ class AppDataController extends Controller
             $categorySelect = Schema::hasTable('inventory_categories') && Schema::hasColumn('inventory_items', 'category_id')
                 ? 'inventory_categories.label'
                 : 'null';
+            $beneficiarySelect = Schema::hasColumn('stock_transactions', 'beneficiary_name')
+                ? 'coalesce(stock_transactions.beneficiary_name, beneficiaries.full_name)'
+                : 'beneficiaries.full_name';
 
             return DB::table('stock_transactions')
                 ->leftJoin('inventory_items', 'inventory_items.id', '=', 'stock_transactions.item_id')
@@ -296,7 +299,7 @@ class AppDataController extends Controller
                 ->when(Schema::hasTable('inventory_categories') && Schema::hasColumn('inventory_items', 'category_id'), function ($query) {
                     $query->leftJoin('inventory_categories', 'inventory_categories.id', '=', 'inventory_items.category_id');
                 })
-                ->selectRaw("stock_transactions.id, stock_transactions.reference_no, stock_transactions.txn_type as type, inventory_items.item_name as material, stock_transactions.quantity, stock_transactions.unit_cost, inventory_items.unit, stock_transactions.reason, beneficiaries.full_name as beneficiary_name, $categorySelect as category, stock_transactions.txn_at")
+                ->selectRaw("stock_transactions.id, stock_transactions.reference_no, stock_transactions.txn_type as type, inventory_items.item_name as material, stock_transactions.quantity, stock_transactions.unit_cost, inventory_items.unit, stock_transactions.reason, $beneficiarySelect as beneficiary_name, $categorySelect as category, stock_transactions.txn_at")
                 ->orderByDesc('stock_transactions.txn_at')
                 ->limit(150)
                 ->get()

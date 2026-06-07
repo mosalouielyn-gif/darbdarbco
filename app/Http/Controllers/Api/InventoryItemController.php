@@ -434,6 +434,10 @@ class InventoryItemController extends Controller
                 $values['beneficiary_id'] = $payload['beneficiary_id'] ?? null;
             }
 
+            if (Schema::hasColumn('stock_transactions', 'beneficiary_name')) {
+                $values['beneficiary_name'] = $payload['beneficiary'] ?? null;
+            }
+
             DB::table('stock_transactions')->insert($values);
             return;
         }
