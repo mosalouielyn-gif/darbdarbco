@@ -34,7 +34,7 @@ export function PayrollPersonnelDashboard({ user, onLogout }: Props) {
   const [active, setActive] = usePersistentState("darbco.payrollPersonnel.active", "dashboard");
   const [prepareSignal, setPrepareSignal] = useState(0);
   const [payrollRecords, setPayrollRecords] = useState<PayrollRecord[]>([]);
-  const beneficiaries = (data?.beneficiaries ?? []).map(mapBeneficiary);
+  const beneficiaries = uniqueBeneficiaries((data?.beneficiaries ?? []).map(mapBeneficiary));
   const productionRecords = (data?.productionRecords ?? []).map(mapProductionRecord);
   const creditTransactions = (data?.creditTransactions ?? []).map(mapCreditTransaction);
 
@@ -230,8 +230,39 @@ function mapBeneficiary(row: any): BeneficiaryOption {
     id: String(row.id),
     dbId: Number(row.id),
     code: String(row.code ?? row.beneficiary_code ?? row.id),
-    name: row.name ?? row.full_name ?? "",
+    name: formatBeneficiaryDisplayName(row.name ?? row.full_name ?? ""),
   };
+}
+
+function uniqueBeneficiaries(rows: BeneficiaryOption[]) {
+  const byName = new Map<string, BeneficiaryOption>();
+  rows.forEach((row) => {
+    const key = row.name.trim().toLowerCase();
+    if (!key) return;
+    byName.set(key, row);
+  });
+  return Array.from(byName.values()).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function formatBeneficiaryDisplayName(name: string) {
+  const cleanName = String(name ?? "").trim().replace(/\s+/g, " ");
+  if (!cleanName || cleanName.includes(",")) return cleanName;
+
+  const parts = cleanName.split(" ");
+  if (parts.length < 2) return cleanName;
+
+  const firstName = parts[0];
+  const middleParts = parts.slice(1, -1);
+  let lastNameParts = [parts[parts.length - 1]];
+  const surnamePrefixes = ["de", "del", "dela", "de la", "van", "von", "san", "santa"];
+  const possiblePrefix = middleParts[middleParts.length - 1]?.toLowerCase();
+
+  if (possiblePrefix && surnamePrefixes.includes(possiblePrefix)) {
+    lastNameParts = [middleParts.pop() as string, ...lastNameParts];
+  }
+
+  const middleInitial = middleParts.length > 0 ? `${middleParts[0].replace(".", "").charAt(0).toUpperCase()}.` : "";
+  return `${lastNameParts.join(" ")}, ${[firstName, middleInitial].filter(Boolean).join(" ")}`;
 }
 
 function mapPayrollSlip(row: any): PayrollRecord {
@@ -721,7 +752,7 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, beneficiar
   const matchedProductionRecords = productionRecords.filter((record) => {
     if (!selectedBeneficiaryId) return false;
     if (record.beneficiaryId && record.beneficiaryId !== selectedBeneficiaryId) return false;
-    if (!record.beneficiaryId && selectedBeneficiaryOption && record.beneficiaryName !== selectedBeneficiaryOption.name) return false;
+    if (!record.beneficiaryId && selectedBeneficiaryOption && formatBeneficiaryDisplayName(record.beneficiaryName) !== selectedBeneficiaryOption.name) return false;
     if (!periodRange || !record.harvestDate) return true;
     const harvestDate = new Date(`${record.harvestDate}T00:00:00`);
     if (Number.isNaN(harvestDate.getTime())) return true;
@@ -732,7 +763,7 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, beneficiar
   const creditMaterials = creditTransactions.filter((credit) => {
     if (!selectedBeneficiaryOption) return false;
 
-    const creditName = credit.beneficiaryName.trim().toLowerCase();
+    const creditName = formatBeneficiaryDisplayName(credit.beneficiaryName).trim().toLowerCase();
     const selectedName = selectedBeneficiaryOption.name.trim().toLowerCase();
     const creditAccount = credit.beneficiaryAccountId.trim().toUpperCase();
     const selectedCode = selectedBeneficiaryOption.code.trim().toUpperCase();
@@ -1165,7 +1196,7 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, beneficiar
                         <TableCell>{credit.materialName}</TableCell>
                         <TableCell className="text-right">{credit.quantity}</TableCell>
                         <TableCell>{credit.unit}</TableCell>
-                        <TableCell className="text-right">â‚±{credit.remaining.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
+                        <TableCell className="text-right">₱{credit.remaining.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
                         <TableCell className="text-right">₱{credit.amountCharged.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
                       </TableRow>
                     ))

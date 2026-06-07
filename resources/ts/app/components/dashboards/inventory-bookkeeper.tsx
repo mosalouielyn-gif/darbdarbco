@@ -921,7 +921,7 @@ function SalesPos({ items, setItems, setCredits, setHistory, history, user, bene
                           ? "bg-amber-100 text-amber-800"
                           : "bg-emerald-100 text-emerald-800"
                       }>
-                        {remainingStock} {item.unit}
+                        Quantity: {remainingStock} {item.unit}
                       </Badge>
                     </div>
                   </div>
@@ -3422,7 +3422,7 @@ function formatDateTime(value: string) {
   return Number.isNaN(date.getTime()) ? formatSystemDateTime() : formatSystemDateTime(date);
 }
 
-const TXN_TYPES = ["Stock In", "Direct Release", "Credit Issued", "Borrowed Material", "Internal Use", "Adjustment", "Stock Out — Expired", "Returned Material"];
+const TXN_TYPES = ["Stock In", "Direct Release", "Credit Issued"];
 
 function StockHistory({ history }: { history: StockHistoryRow[] }) {
   const [from, setFrom] = useState("");
