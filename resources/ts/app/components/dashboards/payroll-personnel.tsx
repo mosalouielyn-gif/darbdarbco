@@ -150,7 +150,7 @@ function KpiCard({ label, value, subtext, color, onClick }: any) {
 function CurrencyInput({ value, onChange, label }: { value: string; onChange: (value: string) => void; label: string }) {
   return (
     <div className="relative ml-auto w-32">
-      <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">₱</span>
+      <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">&#8369;</span>
       <Input
         aria-label={label}
         type="number"
@@ -263,6 +263,19 @@ function formatBeneficiaryDisplayName(name: string) {
 
   const middleInitial = middleParts.length > 0 ? `${middleParts[0].replace(".", "").charAt(0).toUpperCase()}.` : "";
   return `${lastNameParts.join(" ")}, ${[firstName, middleInitial].filter(Boolean).join(" ")}`;
+}
+
+function beneficiaryNameKey(name: string) {
+  return formatBeneficiaryDisplayName(name)
+    .toLowerCase()
+    .replace(/[.,]/g, " ")
+    .split(/\s+/)
+    .filter((part) => part && part.length > 1)
+    .join(" ");
+}
+
+function sameBeneficiaryName(left: string, right: string) {
+  return beneficiaryNameKey(left) === beneficiaryNameKey(right);
 }
 
 function mapPayrollSlip(row: any): PayrollRecord {
@@ -608,9 +621,9 @@ function BeneficiaryPayroll({ mode, user, beneficiaries, productionRecords, cred
                     <TableCell>{record.beneficiary}</TableCell>
                     <TableCell>{record.harvestDate}</TableCell>
                     <TableCell className="text-right">{record.totalBoxes}</TableCell>
-                    <TableCell className="text-right">₱{record.grossIncome.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
-                    <TableCell className="text-right">₱{record.totalDeductions.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
-                    <TableCell className="text-right font-semibold text-emerald-700">₱{record.netIncome.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
+                    <TableCell className="text-right">&#8369;{record.grossIncome.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
+                    <TableCell className="text-right">&#8369;{record.totalDeductions.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
+                    <TableCell className="text-right font-semibold text-emerald-700">&#8369;{record.netIncome.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
                     {mode === "work" && <TableCell>{getValidationBadge(record.validationStatus)}</TableCell>}
                     <TableCell>{getApprovalBadge(record.approvalStatus)}</TableCell>
                     <TableCell className={mode === "work" ? "w-[96px]" : "w-[64px]"}>
@@ -750,9 +763,10 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, beneficiar
   const selectedBeneficiaryOption = beneficiaries.find((item) => item.id === selectedBeneficiary);
   const periodRange = payrollPeriodRange(payrollPeriod);
   const matchedProductionRecords = productionRecords.filter((record) => {
-    if (!selectedBeneficiaryId) return false;
-    if (record.beneficiaryId && record.beneficiaryId !== selectedBeneficiaryId) return false;
-    if (!record.beneficiaryId && selectedBeneficiaryOption && formatBeneficiaryDisplayName(record.beneficiaryName) !== selectedBeneficiaryOption.name) return false;
+    if (!selectedBeneficiaryOption) return false;
+    const idMatches = !!selectedBeneficiaryId && !!record.beneficiaryId && record.beneficiaryId === selectedBeneficiaryId;
+    const nameMatches = sameBeneficiaryName(record.beneficiaryName, selectedBeneficiaryOption.name);
+    if (!idMatches && !nameMatches) return false;
     if (!periodRange || !record.harvestDate) return true;
     const harvestDate = new Date(`${record.harvestDate}T00:00:00`);
     if (Number.isNaN(harvestDate.getTime())) return true;
@@ -1083,78 +1097,78 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, beneficiar
                 <TableBody>
                   <TableRow>
                     <TableCell>Class A - Big Hands</TableCell>
-                    <TableCell className="text-right">{classABigBoxes || "—"}</TableCell>
+                    <TableCell className="text-right">{classABigBoxes || "-"}</TableCell>
                     <TableCell className="text-right">
                       <CurrencyInput value={priceClassABig} onChange={setPriceClassABig} label="Class A Big Hands price" />
                     </TableCell>
-                    <TableCell className="text-right">₱{subtotalClassABig.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
+                    <TableCell className="text-right">&#8369;{subtotalClassABig.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
                   </TableRow>
                   <TableRow>
                     <TableCell>Class A - Small Hands</TableCell>
-                    <TableCell className="text-right">{classASmallBoxes || "—"}</TableCell>
+                    <TableCell className="text-right">{classASmallBoxes || "-"}</TableCell>
                     <TableCell className="text-right">
                       <CurrencyInput value={priceClassASmall} onChange={setPriceClassASmall} label="Class A Small Hands price" />
                     </TableCell>
-                    <TableCell className="text-right">₱{subtotalClassASmall.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
+                    <TableCell className="text-right">&#8369;{subtotalClassASmall.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
                   </TableRow>
                   <TableRow>
                     <TableCell>Class A - CPs</TableCell>
-                    <TableCell className="text-right">{classACpBoxes || "—"}</TableCell>
+                    <TableCell className="text-right">{classACpBoxes || "-"}</TableCell>
                     <TableCell className="text-right">
                       <CurrencyInput value={priceClassACp} onChange={setPriceClassACp} label="Class A CPs price" />
                     </TableCell>
-                    <TableCell className="text-right">₱{subtotalClassACp.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
+                    <TableCell className="text-right">&#8369;{subtotalClassACp.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
                   </TableRow>
                   <TableRow>
                     <TableCell>Class B - Big Hands</TableCell>
-                    <TableCell className="text-right">{classBBigBoxes || "—"}</TableCell>
+                    <TableCell className="text-right">{classBBigBoxes || "-"}</TableCell>
                     <TableCell className="text-right">
                       <CurrencyInput value={priceClassBBig} onChange={setPriceClassBBig} label="Class B Big Hands price" />
                     </TableCell>
-                    <TableCell className="text-right">₱{subtotalClassBBig.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
+                    <TableCell className="text-right">&#8369;{subtotalClassBBig.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
                   </TableRow>
                   <TableRow>
                     <TableCell>Class B - Small Hands</TableCell>
-                    <TableCell className="text-right">{classBSmallBoxes || "—"}</TableCell>
+                    <TableCell className="text-right">{classBSmallBoxes || "-"}</TableCell>
                     <TableCell className="text-right">
                       <CurrencyInput value={priceClassBSmall} onChange={setPriceClassBSmall} label="Class B Small Hands price" />
                     </TableCell>
-                    <TableCell className="text-right">₱{subtotalClassBSmall.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
+                    <TableCell className="text-right">&#8369;{subtotalClassBSmall.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
                   </TableRow>
                   <TableRow>
                     <TableCell>Class B - CPs</TableCell>
-                    <TableCell className="text-right">{classBCpBoxes || "—"}</TableCell>
+                    <TableCell className="text-right">{classBCpBoxes || "-"}</TableCell>
                     <TableCell className="text-right">
                       <CurrencyInput value={priceClassBCp} onChange={setPriceClassBCp} label="Class B CPs price" />
                     </TableCell>
-                    <TableCell className="text-right">₱{subtotalClassBCp.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
+                    <TableCell className="text-right">&#8369;{subtotalClassBCp.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
                   </TableRow>
                   <TableRow>
                     <TableCell>Special Product</TableCell>
-                    <TableCell className="text-right">{specialBoxes || "—"}</TableCell>
+                    <TableCell className="text-right">{specialBoxes || "-"}</TableCell>
                     <TableCell className="text-right">
                       <CurrencyInput value={priceSpecial} onChange={setPriceSpecial} label="Special Product price" />
                     </TableCell>
-                    <TableCell className="text-right">₱{subtotalSpecial.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
+                    <TableCell className="text-right">&#8369;{subtotalSpecial.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
                   </TableRow>
                   <TableRow className="bg-emerald-50/50">
                     <TableCell className="font-semibold">Class A Total</TableCell>
-                    <TableCell className="text-right font-semibold">{classABoxes || "—"}</TableCell>
+                    <TableCell className="text-right font-semibold">{classABoxes || "-"}</TableCell>
                     <TableCell />
-                    <TableCell className="text-right font-semibold">₱{subtotalA.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
+                    <TableCell className="text-right font-semibold">&#8369;{subtotalA.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
                   </TableRow>
                   <TableRow className="bg-amber-50/50">
                     <TableCell className="font-semibold">Class B Total</TableCell>
-                    <TableCell className="text-right font-semibold">{classBBoxes || "—"}</TableCell>
+                    <TableCell className="text-right font-semibold">{classBBoxes || "-"}</TableCell>
                     <TableCell />
-                    <TableCell className="text-right font-semibold">₱{subtotalB.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
+                    <TableCell className="text-right font-semibold">&#8369;{subtotalB.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
                   </TableRow>
                 </TableBody>
                 </Table>
               </div>
               <div className="flex justify-between items-center p-3 bg-emerald-50 rounded-md">
                 <span className="font-semibold text-emerald-700">Gross Income</span>
-                <span className="text-xl font-bold text-emerald-700">₱{grossIncome.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+                <span className="text-xl font-bold text-emerald-700">&#8369;{grossIncome.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
               </div>
             </CardContent>
           </Card>
@@ -1196,8 +1210,8 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, beneficiar
                         <TableCell>{credit.materialName}</TableCell>
                         <TableCell className="text-right">{credit.quantity}</TableCell>
                         <TableCell>{credit.unit}</TableCell>
-                        <TableCell className="text-right">₱{credit.remaining.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
-                        <TableCell className="text-right">₱{credit.amountCharged.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
+                        <TableCell className="text-right">&#8369;{credit.remaining.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
+                        <TableCell className="text-right">&#8369;{credit.amountCharged.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
                       </TableRow>
                     ))
                   )}
@@ -1206,7 +1220,7 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, beneficiar
               </div>
               <div className="flex justify-between items-center p-3 bg-amber-50 rounded-md">
                 <span className="font-semibold text-amber-700">Total Material Credit Deductions</span>
-                <span className="text-xl font-bold text-amber-700">₱{totalCreditDeductions.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+                <span className="text-xl font-bold text-amber-700">&#8369;{totalCreditDeductions.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
               </div>
             </CardContent>
           </Card>
@@ -1220,7 +1234,7 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, beneficiar
               <div className="grid grid-cols-1 gap-x-3 gap-y-1.5 lg:grid-cols-[260px_1fr]">
                 <Label htmlFor="labor-cost-amount" className="lg:col-start-1">Labor Cost Amount</Label>
                 <div className="relative lg:col-start-1 lg:row-start-2">
-                  <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">₱</span>
+                  <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">&#8369;</span>
                   <Input
                     id="labor-cost-amount"
                     type="text"
@@ -1235,7 +1249,7 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, beneficiar
                   />
                 </div>
                 <div className="flex h-9 items-center rounded-md border border-slate-200 bg-slate-50 px-3 text-sm text-muted-foreground lg:col-start-2 lg:row-start-2">
-                  Leave this as ₱0.00 when no labor charge applies to this payroll.
+                  Leave this as &#8369;0.00 when no labor charge applies to this payroll.
                 </div>
               </div>
             </CardContent>
@@ -1243,15 +1257,20 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, beneficiar
 
           {/* Section F: Other Authorized Deductions */}
           <Card>
-            <CardHeader className="p-4 pb-2 flex-row items-center justify-between">
+            <CardHeader className="p-4 pb-2 flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
               <CardTitle className="text-base">Other Authorized Deductions</CardTitle>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setOtherDeductions([...otherDeductions, { type: deductionTypes[0] ?? "", amount: "0" }])}
-              >
-                <Plus className="h-4 w-4 mr-1" />Add Authorized Deduction
-              </Button>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setOtherDeductions([...otherDeductions, { type: deductionTypes[0] ?? "", amount: "0" }])}
+                >
+                  <Plus className="h-4 w-4 mr-1" />Add Authorized Deduction
+                </Button>
+                <Button type="button" variant="outline" size="sm" onClick={() => setOpenDeductionType(true)}>
+                  <Plus className="h-4 w-4 mr-1" />Add Deduction Type
+                </Button>
+              </div>
             </CardHeader>
             <CardContent className="p-4 pt-2">
               {otherDeductions.length === 0 ? (
@@ -1262,28 +1281,23 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, beneficiar
                 <div className="space-y-3">
                   {otherDeductions.map((deduction, i) => (
                     <div key={i} className="border rounded-md p-3 bg-slate-50 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_180px_auto] gap-3 items-start">
-                      <div className="flex gap-2">
-                        <Select
-                          value={deduction.type}
-                          onValueChange={(value) => {
-                            const updated = [...otherDeductions];
-                            updated[i].type = value;
-                            setOtherDeductions(updated);
-                          }}
-                        >
-                          <SelectTrigger className="h-9 min-w-0 flex-1"><SelectValue placeholder="Select deduction type" /></SelectTrigger>
-                          <SelectContent>
-                            {deductionTypes.map((type) => (
-                              <SelectItem key={type} value={type}>{type}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <Button type="button" variant="outline" className="h-9 shrink-0" onClick={() => setOpenDeductionType(true)}>
-                          <Plus className="h-4 w-4 mr-1" />Add Deduction Type
-                        </Button>
-                      </div>
+                      <Select
+                        value={deduction.type}
+                        onValueChange={(value) => {
+                          const updated = [...otherDeductions];
+                          updated[i].type = value;
+                          setOtherDeductions(updated);
+                        }}
+                      >
+                        <SelectTrigger className="h-9 min-w-0"><SelectValue placeholder="Select deduction type" /></SelectTrigger>
+                        <SelectContent>
+                          {deductionTypes.map((type) => (
+                            <SelectItem key={type} value={type}>{type}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                       <div className="relative">
-                        <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">₱</span>
+                        <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">&#8369;</span>
                         <Input
                           type="text"
                           inputMode="decimal"
@@ -1340,23 +1354,23 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, beneficiar
             <CardContent className="p-4 pt-2 space-y-2">
               <div className="flex justify-between text-sm">
                 <span>Gross Income</span>
-                <span className="font-semibold">₱{grossIncome.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+                <span className="font-semibold">&#8369;{grossIncome.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
               </div>
               <div className="flex justify-between text-sm text-amber-700">
                 <span>Material Credit Deductions</span>
-                <span className="font-semibold">−₱{totalCreditDeductions.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+                <span className="font-semibold">-&#8369;{totalCreditDeductions.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
               </div>
               <div className="flex justify-between text-sm text-red-600">
                 <span>Previous Unpaid Balance</span>
-                <span className="font-semibold">−₱{previousBalance.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+                <span className="font-semibold">-&#8369;{previousBalance.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
               </div>
               <div className="flex justify-between text-sm text-red-600">
                 <span>Labor Cost</span>
-                <span className="font-semibold">−₱{laborCostAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+                <span className="font-semibold">-&#8369;{laborCostAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
               </div>
               <div className="flex justify-between text-sm text-red-600">
                 <span>Other Authorized Deductions</span>
-                <span className="font-semibold">−₱{otherDeductionsTotal.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+                <span className="font-semibold">-&#8369;{otherDeductionsTotal.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
               </div>
               {otherDeductions
                 .filter((deduction) => (parseFloat(deduction.amount) || 0) > 0)
@@ -1368,11 +1382,11 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, beneficiar
                 ))}
               <div className="border-t pt-2 flex justify-between text-sm">
                 <span className="font-semibold">Total Deductions</span>
-                <span className="font-semibold text-red-600">₱{totalDeductions.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+                <span className="font-semibold text-red-600">&#8369;{totalDeductions.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
               </div>
               <div className="border-t-2 border-emerald-300 pt-3 flex justify-between items-center">
                 <span className="text-lg font-bold text-emerald-700">Net Income</span>
-                <span className="text-2xl font-bold text-emerald-700">₱{netIncome.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+                <span className="text-2xl font-bold text-emerald-700">&#8369;{netIncome.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
               </div>
             </CardContent>
           </Card>
@@ -1676,9 +1690,9 @@ function ViewPayrollSlipDialog({ slip, auditEntries = [], onClose, onEdit, onSub
                 {getValidationBadge(slip.validationStatus)}
                 {getApprovalBadge(slip.approvalStatus)}
                 {isValid ? (
-                  <Badge className="bg-emerald-100 text-emerald-700">✓ Validated</Badge>
+                  <Badge className="bg-emerald-100 text-emerald-700">Validated</Badge>
                 ) : (
-                  <Badge className="bg-red-100 text-red-700">⚠ Has Errors</Badge>
+                  <Badge className="bg-red-100 text-red-700">Has Errors</Badge>
                 )}
               </div>
             </div>
@@ -1699,7 +1713,7 @@ function ViewPayrollSlipDialog({ slip, auditEntries = [], onClose, onEdit, onSub
                     <ul className="space-y-2">
                       {validationErrors.map((error, idx) => (
                         <li key={idx} className="flex items-start gap-2">
-                          <span className="text-red-600 mt-1">•</span>
+                          <span className="text-red-600 mt-1">-</span>
                           <span className="text-red-600 font-medium">{error}</span>
                         </li>
                       ))}
@@ -1750,7 +1764,7 @@ function ViewPayrollSlipDialog({ slip, auditEntries = [], onClose, onEdit, onSub
                 <CardHeader className="pb-4 pt-4 px-6 bg-gradient-to-r from-emerald-50 to-white border-b border-emerald-200">
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                     <CardTitle className="text-base font-bold text-emerald-700">Production Earnings</CardTitle>
-                    <p className="text-sm text-muted-foreground">Formula: Subtotal = Number of Boxes × Price per Box</p>
+                    <p className="text-sm text-muted-foreground">Formula: Subtotal = Number of Boxes x Price per Box</p>
                   </div>
                 </CardHeader>
                 <CardContent className="pt-5 px-6 pb-5 space-y-4">
@@ -1769,24 +1783,24 @@ function ViewPayrollSlipDialog({ slip, auditEntries = [], onClose, onEdit, onSub
                         <TableRow className="hover:bg-emerald-50/50">
                           <TableCell className="font-semibold py-3">Class A</TableCell>
                           <TableCell className="text-right py-3">{productionData.classA.total}</TableCell>
-                          <TableCell className="text-right py-3">₱{priceClassA.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
-                          <TableCell className="text-right font-bold text-emerald-700 py-3">₱{subtotalClassA.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
+                          <TableCell className="text-right py-3">&#8369;{priceClassA.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
+                          <TableCell className="text-right font-bold text-emerald-700 py-3">&#8369;{subtotalClassA.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
                         </TableRow>
                         <TableRow className="hover:bg-emerald-50/50">
                           <TableCell className="font-semibold py-3">Class B</TableCell>
                           <TableCell className="text-right py-3">{productionData.classB.total}</TableCell>
-                          <TableCell className="text-right py-3">₱{priceClassB.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
-                          <TableCell className="text-right font-bold text-emerald-700 py-3">₱{subtotalClassB.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
+                          <TableCell className="text-right py-3">&#8369;{priceClassB.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
+                          <TableCell className="text-right font-bold text-emerald-700 py-3">&#8369;{subtotalClassB.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
                         </TableRow>
                         <TableRow className="hover:bg-emerald-50/50">
                           <TableCell className="font-semibold py-3">Special Product</TableCell>
                           <TableCell className="text-right py-3">{productionData.special}</TableCell>
-                          <TableCell className="text-right py-3">₱{priceSpecial.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
-                          <TableCell className="text-right font-bold text-emerald-700 py-3">₱{subtotalSpecial.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
+                          <TableCell className="text-right py-3">&#8369;{priceSpecial.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
+                          <TableCell className="text-right font-bold text-emerald-700 py-3">&#8369;{subtotalSpecial.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
                         </TableRow>
                         <TableRow className="border-t-2 border-emerald-400 bg-emerald-50">
                           <TableCell colSpan={3} className="font-bold text-emerald-700 py-4">GROSS INCOME <span className="text-muted-foreground font-normal text-sm ml-2">({totalBoxesProduction} Boxes Total)</span></TableCell>
-                          <TableCell className="text-right font-bold text-emerald-700 text-xl py-4">₱{grossIncome.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
+                          <TableCell className="text-right font-bold text-emerald-700 text-xl py-4">&#8369;{grossIncome.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
                         </TableRow>
                       </TableBody>
                       </Table>
@@ -1853,7 +1867,7 @@ function ViewPayrollSlipDialog({ slip, auditEntries = [], onClose, onEdit, onSub
                 <CardHeader className="pb-4 pt-4 px-6 bg-gradient-to-r from-amber-50 to-white border-b border-amber-200">
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                     <CardTitle className="text-base font-bold text-amber-700">Material Credit Deductions</CardTitle>
-                    <p className="text-sm text-muted-foreground">Total Credit = Qty × Unit Price</p>
+                    <p className="text-sm text-muted-foreground">Total Credit = Qty x Unit Price</p>
                   </div>
                 </CardHeader>
                 <CardContent className="pt-5 px-6 pb-5 space-y-4">
@@ -1928,11 +1942,11 @@ function ViewPayrollSlipDialog({ slip, auditEntries = [], onClose, onEdit, onSub
                                 <TableCell className="py-3">{material.materialName}</TableCell>
                                 <TableCell className="py-3"><Badge variant="outline" className="text-xs">{material.category}</Badge></TableCell>
                                 <TableCell className="text-right py-3">{material.quantity} {material.unit}</TableCell>
-                                <TableCell className="text-right py-3">₱{material.unitPrice.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
-                                <TableCell className="text-right font-bold py-3">₱{material.totalCredit.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
+                                <TableCell className="text-right py-3">&#8369;{material.unitPrice.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
+                                <TableCell className="text-right font-bold py-3">&#8369;{material.totalCredit.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
                                 <TableCell className={`text-right font-bold py-3 ${material.deductionApplied > material.totalCredit ? 'text-red-600' : 'text-amber-700'}`}>
-                                  ₱{material.deductionApplied.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                                  {material.deductionApplied > material.totalCredit && <span className="ml-1">⚠</span>}
+                                  &#8369;{material.deductionApplied.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                                  {material.deductionApplied > material.totalCredit && <span className="ml-1"></span>}
                                 </TableCell>
                               </TableRow>
                             );
@@ -1956,7 +1970,7 @@ function ViewPayrollSlipDialog({ slip, auditEntries = [], onClose, onEdit, onSub
 
                   <div className="flex justify-between items-center p-4 bg-gradient-to-r from-amber-50 to-orange-50 rounded-lg border-2 border-amber-300">
                     <span className="font-bold text-amber-700">Total Material Deductions (All Categories)</span>
-                    <span className="font-bold text-amber-700 text-2xl">₱{totalMaterialDeductions.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+                    <span className="font-bold text-amber-700 text-2xl">&#8369;{totalMaterialDeductions.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
                   </div>
                 </CardContent>
             </Card>
@@ -1970,7 +1984,7 @@ function ViewPayrollSlipDialog({ slip, auditEntries = [], onClose, onEdit, onSub
                   <p className="text-sm text-muted-foreground mt-1">Complete breakdown and final payroll computation</p>
                 </div>
                 <div className="text-sm text-muted-foreground bg-white px-4 py-2 rounded-lg border">
-                  <p className="font-semibold">Formula: <span className="text-emerald-700">Net Income = Gross Income − Total Deductions</span></p>
+                  <p className="font-semibold">Formula: <span className="text-emerald-700">Net Income = Gross Income - Total Deductions</span></p>
                 </div>
               </div>
             </CardHeader>
@@ -1986,36 +2000,36 @@ function ViewPayrollSlipDialog({ slip, auditEntries = [], onClose, onEdit, onSub
                 <TableBody>
                   <TableRow className="hover:bg-emerald-50/30">
                     <TableCell className="py-4 font-semibold">Gross Income</TableCell>
-                    <TableCell className="text-right py-4 font-bold text-emerald-700 text-lg whitespace-nowrap">₱{grossIncome.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
+                    <TableCell className="text-right py-4 font-bold text-emerald-700 text-lg whitespace-nowrap">&#8369;{grossIncome.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
                   </TableRow>
                   <TableRow className="hover:bg-amber-50/30">
                     <TableCell className="py-4 pl-8">Material Credit Deductions</TableCell>
-                    <TableCell className="text-right py-4 font-semibold text-amber-700 whitespace-nowrap">₱{totalMaterialDeductions.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
+                    <TableCell className="text-right py-4 font-semibold text-amber-700 whitespace-nowrap">&#8369;{totalMaterialDeductions.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
                   </TableRow>
                   <TableRow className="hover:bg-red-50/30">
                     <TableCell className="py-4 pl-8">Previous Unpaid Balance</TableCell>
-                    <TableCell className="text-right py-4 font-semibold text-red-600 whitespace-nowrap">₱{previousUnpaid.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
+                    <TableCell className="text-right py-4 font-semibold text-red-600 whitespace-nowrap">&#8369;{previousUnpaid.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
                   </TableRow>
                   <TableRow className="hover:bg-red-50/30">
                     <TableCell className="py-4 pl-8">Labor Cost</TableCell>
-                    <TableCell className="text-right py-4 font-semibold text-red-600 whitespace-nowrap">₱{laborCostAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
+                    <TableCell className="text-right py-4 font-semibold text-red-600 whitespace-nowrap">&#8369;{laborCostAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
                   </TableRow>
                   <TableRow className="hover:bg-red-50/30">
                     <TableCell className="py-4 pl-8">Other Adjustments</TableCell>
-                    <TableCell className="text-right py-4 font-semibold text-red-600 whitespace-nowrap">₱{otherDeductions.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
+                    <TableCell className="text-right py-4 font-semibold text-red-600 whitespace-nowrap">&#8369;{otherDeductions.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
                   </TableRow>
                   <TableRow className="border-t-2 border-red-300 bg-red-50">
                     <TableCell className="py-4 font-bold">Total Deductions</TableCell>
-                    <TableCell className="text-right py-4 font-bold text-red-600 text-lg whitespace-nowrap">₱{totalDeductions.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
+                    <TableCell className="text-right py-4 font-bold text-red-600 text-lg whitespace-nowrap">&#8369;{totalDeductions.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
                   </TableRow>
                   <TableRow className="border-t-4 border-emerald-400 bg-gradient-to-r from-emerald-100 to-emerald-50">
                     <TableCell className="py-6 font-bold text-emerald-700 text-lg">NET INCOME <span className="text-muted-foreground font-normal text-sm ml-2">(Amount to be released)</span></TableCell>
-                    <TableCell className="text-right py-6 font-bold text-emerald-700 text-2xl whitespace-nowrap sm:text-3xl">₱{netIncome.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
+                    <TableCell className="text-right py-6 font-bold text-emerald-700 text-2xl whitespace-nowrap sm:text-3xl">&#8369;{netIncome.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
                   </TableRow>
                   {Math.abs(netIncome - slip.netIncome) > 0.01 && (
                     <TableRow className="bg-red-50 border-2 border-red-400">
                       <TableCell colSpan={2} className="py-3 text-center">
-                        <span className="text-red-600 font-bold">⚠ WARNING: Net income mismatch detected. Expected: ₱{slip.netIncome.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+                        <span className="text-red-600 font-bold">WARNING: Net income mismatch detected. Expected: &#8369;{slip.netIncome.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
                       </TableCell>
                     </TableRow>
                   )}

@@ -1445,12 +1445,13 @@ function ItemDetailDialog({ item, onClose }: { item: InventoryItem | null; onClo
   );
 }
 
-function CategorySelectWithAdd({ value, onChange, categories, onAddCategory, onDeleteCategory }: {
+function CategorySelectWithAdd({ value, onChange, categories, onAddCategory, onDeleteCategory, showAddButton = true }: {
   value: string;
   onChange: (value: string) => void;
   categories: string[];
   onAddCategory: (value: string) => string;
   onDeleteCategory: (value: string) => void;
+  showAddButton?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -1533,9 +1534,11 @@ function CategorySelectWithAdd({ value, onChange, categories, onAddCategory, onD
           </div>
         )}
       </div>
-      <Button type="button" variant="outline" className="shrink-0 px-3" onClick={() => setOpen(true)} title="Add New Category">
-        <Plus className="h-4 w-4 mr-1" />Add Category
-      </Button>
+      {showAddButton && (
+        <Button type="button" variant="outline" className="shrink-0 px-3" onClick={() => setOpen(true)} title="Add New Category">
+          <Plus className="h-4 w-4 mr-1" />Add Category
+        </Button>
+      )}
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="w-[calc(100vw-1rem)] sm:!max-w-[420px]">
           <DialogHeader>
@@ -1597,6 +1600,7 @@ function EditItemDialog({ item, onClose, onSave, categories, onAddCategory, onDe
                 categories={categories}
                 onAddCategory={onAddCategory}
                 onDeleteCategory={onDeleteCategory}
+                showAddButton={false}
               />
             </div>
             <div className="space-y-1">
@@ -1651,10 +1655,6 @@ function EditItemDialog({ item, onClose, onSave, categories, onAddCategory, onDe
             <div className="space-y-1">
               <Label className="text-muted-foreground">Last Updated</Label>
               <Input value={getUpdatedAt(form)} disabled />
-            </div>
-            <div className="space-y-1 md:col-span-2">
-              <Label>Current Quantity</Label>
-              <Input type="number" min={0} value={form.onHand} onChange={(event) => setForm({ ...form, onHand: Number(event.target.value) || 0 })} />
             </div>
             <div className="space-y-1 md:col-span-2">
               <Label>Reason for Editing <span className="text-red-500">*</span></Label>
@@ -3754,31 +3754,75 @@ function RestockRequests({ user, items, requests, setRequests }: {
       <EditRestockRequestDialog request={editing} onOpenChange={(open) => !open && setEditing(null)} onUpdate={handleUpdate} />
 
       <Dialog open={!!viewing} onOpenChange={(o) => !o && setViewing(null)}>
-        <DialogContent>
+        <DialogContent className="w-[calc(100vw-1rem)] sm:!max-w-[760px]">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-emerald-700">
-              <Eye className="h-5 w-5" />Restock Request Details
+            <DialogTitle className="flex items-center gap-2 text-emerald-800">
+              <span className="flex h-9 w-9 items-center justify-center rounded-md bg-emerald-100 text-emerald-700">
+                <Eye className="h-5 w-5" />
+              </span>
+              Restock Request Details
             </DialogTitle>
             <DialogDescription>
               Review the material request information before manager approval.
             </DialogDescription>
           </DialogHeader>
           {viewing && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-              <Detail label="Request ID" value={viewing.id} />
-              <Detail label="Status" value={viewing.status} />
-              <Detail label="Date Requested" value={viewing.dateRequested} />
-              <Detail label="Requested By" value={viewing.requestedBy} />
-              <Detail label="Material" value={viewing.material} />
-              <Detail label="Category" value={viewing.category || "Not specified"} />
-              <Detail label="Current Quantity" value={String(viewing.current)} />
-              <Detail label="Minimum Stock Level" value={typeof viewing.minimumStock === "number" ? String(viewing.minimumStock) : "Not specified"} />
-              <Detail label="Requested Quantity" value={String(viewing.requested)} />
-              <Detail label="Priority" value={viewing.priority || "Normal"} />
-              <Detail className="sm:col-span-2" label="Reason" value={viewing.reason} />
-              {viewing.notes && <Detail className="sm:col-span-2" label="Notes" value={viewing.notes} />}
+            <div className="space-y-4">
+              <div className="rounded-md border border-emerald-200 bg-emerald-50/70 p-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="space-y-1">
+                    <div className="text-xs font-medium uppercase tracking-wide text-emerald-700">Request ID</div>
+                    <div className="break-words text-lg font-semibold text-slate-950">{viewing.id}</div>
+                    <div className="text-sm text-slate-600">Requested by {viewing.requestedBy} on {viewing.dateRequested}</div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Badge className={restockStatusBadgeClass(viewing.status)}>{viewing.status}</Badge>
+                    <Badge className={restockPriorityBadgeClass(viewing.priority)}>{viewing.priority || "Normal"} Priority</Badge>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1fr)_220px]">
+                <section className="rounded-md border bg-white p-4">
+                  <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-800">
+                    <Package className="h-4 w-4 text-emerald-700" />Material Information
+                  </div>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <RestockInfo label="Material" value={viewing.material} />
+                    <RestockInfo label="Category" value={viewing.category || "Not specified"} />
+                    <RestockInfo label="Current Quantity" value={String(viewing.current)} />
+                    <RestockInfo label="Minimum Stock Level" value={typeof viewing.minimumStock === "number" ? String(viewing.minimumStock) : "Not specified"} />
+                  </div>
+                </section>
+
+                <section className="rounded-md border bg-slate-50 p-4">
+                  <div className="mb-3 text-sm font-semibold text-slate-800">Request Summary</div>
+                  <div className="space-y-3">
+                    <div>
+                      <div className="text-xs text-muted-foreground">Requested Quantity</div>
+                      <div className="text-2xl font-semibold text-emerald-700">{viewing.requested}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-muted-foreground">Stock Gap</div>
+                      <div className="font-medium text-slate-900">{Math.max(0, (viewing.minimumStock ?? 0) - viewing.current)}</div>
+                    </div>
+                  </div>
+                </section>
+              </div>
+
+              <section className="rounded-md border bg-white p-4">
+                <div className="mb-2 text-sm font-semibold text-slate-800">Reason for Restock</div>
+                <p className="whitespace-pre-wrap rounded-md bg-slate-50 p-3 text-sm leading-relaxed text-slate-700">{viewing.reason || "No reason provided."}</p>
+                {viewing.notes && (
+                  <div className="mt-3">
+                    <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">Additional Notes</div>
+                    <p className="whitespace-pre-wrap rounded-md border bg-white p-3 text-sm text-slate-700">{viewing.notes}</p>
+                  </div>
+                )}
+              </section>
+
               {viewing.status !== "Pending" && (
-                <div className="sm:col-span-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+                <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
                   This request is locked because a manager has already taken action.
                 </div>
               )}
@@ -3841,6 +3885,32 @@ function Detail({ label, value, className = "" }: { label: string; value: string
       <div className="font-medium text-slate-900">{value}</div>
     </div>
   );
+}
+
+function RestockInfo({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md bg-slate-50 px-3 py-2">
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className="font-medium text-slate-900">{value}</div>
+    </div>
+  );
+}
+
+function restockStatusBadgeClass(status: RestockRequest["status"]) {
+  switch (status) {
+    case "Approved":
+    case "Completed":
+      return "bg-emerald-100 text-emerald-800";
+    case "Rejected":
+    case "Cancelled":
+      return "bg-red-100 text-red-800";
+    default:
+      return "bg-amber-100 text-amber-800";
+  }
+}
+
+function restockPriorityBadgeClass(priority?: string) {
+  return priority === "Urgent" ? "bg-red-100 text-red-800" : "bg-sky-100 text-sky-800";
 }
 
 function CreateRestockRequestDialog({ open, onOpenChange, items, onCreate }: { open: boolean; onOpenChange: (o: boolean) => void; items: InventoryItem[]; onCreate: (request: Omit<RestockRequest, "id" | "dateRequested" | "requestedBy" | "status">) => Promise<void> | void }) {
