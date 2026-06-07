@@ -31,7 +31,6 @@ type BeneficiaryOption = { id: string; dbId: number; code: string; name: string 
 const NAV = [
   { id: "dashboard", label: "Dashboard", icon: <LayoutDashboard className="h-4 w-4" /> },
   { id: "items", label: "Inventory Items", icon: <Boxes className="h-4 w-4" /> },
-  { id: "released", label: "Release Materials", icon: <Receipt className="h-4 w-4" /> },
   { id: "sales", label: "Sales", icon: <ShoppingCart className="h-4 w-4" /> },
   { id: "credit", label: "Credit Transactions", icon: <CreditCard className="h-4 w-4" /> },
   { id: "cash", label: "Cash Transactions", icon: <Banknote className="h-4 w-4" /> },
@@ -79,6 +78,12 @@ export function InventoryBookkeeperDashboard({ user, onLogout }: Props) {
     }
   }, [data?.restockRequests]);
 
+  useEffect(() => {
+    if (active === "released") {
+      setActive("sales");
+    }
+  }, [active, setActive]);
+
   return (
     <DarbcoLayout user={user} onLogout={onLogout} navItems={NAV} active={active} onChange={setActive}>
       {active === "dashboard" && (
@@ -94,15 +99,10 @@ export function InventoryBookkeeperDashboard({ user, onLogout }: Props) {
         <InventoryItems
           items={items}
           setItems={setItems}
-          setCredits={setCreditRows}
-          borrowedRows={borrowedRows}
-          setBorrowedRows={setBorrowedRows}
           setHistory={setHistoryRows}
           user={user}
-          beneficiaries={beneficiaries}
         />
       )}
-      {active === "released" && <ReleasedMaterialsHistory history={historyRows} items={items} />}
       {active === "sales" && (
         <SalesPos
           items={items}
@@ -1127,20 +1127,14 @@ function excludeDeletedCategories(categories: string[], deleted: string[]) {
   return categories.filter((item) => !deleted.includes(item));
 }
 
-function InventoryItems({ items, setItems, setCredits, borrowedRows, setBorrowedRows, setHistory, user, beneficiaries }: {
+function InventoryItems({ items, setItems, setHistory, user }: {
   items: InventoryItem[];
   setItems: React.Dispatch<React.SetStateAction<InventoryItem[]>>;
-  setCredits: React.Dispatch<React.SetStateAction<CreditRow[]>>;
-  borrowedRows: BorrowedMaterialRow[];
-  setBorrowedRows: React.Dispatch<React.SetStateAction<BorrowedMaterialRow[]>>;
   setHistory: React.Dispatch<React.SetStateAction<StockHistoryRow[]>>;
   user: User;
-  beneficiaries: BeneficiaryOption[];
 }) {
   const [showAdd, setShowAdd] = useState(false);
   const [showStockIn, setShowStockIn] = useState(false);
-  const [showRelease, setShowRelease] = useState(false);
-  const [showBorrowed, setShowBorrowed] = useState(false);
   const [showAdjustment, setShowAdjustment] = useState(false);
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("all");
@@ -1297,8 +1291,6 @@ function InventoryItems({ items, setItems, setCredits, borrowedRows, setBorrowed
               </SelectContent>
             </Select>
             <Button variant="outline" onClick={() => setShowStockIn(true)}><ArrowDownCircle className="h-4 w-4 mr-1" />Stock-In</Button>
-            <Button variant="outline" onClick={() => setShowRelease(true)}><ArrowUpCircle className="h-4 w-4 mr-1" />Release</Button>
-            <Button variant="outline" onClick={() => setShowBorrowed(true)}><History className="h-4 w-4 mr-1" />Borrowed</Button>
             <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={() => setShowAdd(true)}><Plus className="h-4 w-4 mr-1" />Add Item</Button>
           </div>
 
@@ -1368,27 +1360,6 @@ function InventoryItems({ items, setItems, setCredits, borrowedRows, setBorrowed
         open={showStockIn}
         onOpenChange={setShowStockIn}
         items={items}
-        setItems={setItems}
-        setHistory={setHistory}
-        user={user}
-      />
-      <ReleaseMaterials
-        open={showRelease}
-        onOpenChange={setShowRelease}
-        items={items}
-        setItems={setItems}
-        setCredits={setCredits}
-        setBorrowedRows={setBorrowedRows}
-        setHistory={setHistory}
-        user={user}
-        beneficiaries={beneficiaries}
-      />
-      <BorrowedMaterialsDialog
-        open={showBorrowed}
-        onOpenChange={setShowBorrowed}
-        items={items}
-        rows={borrowedRows}
-        setRows={setBorrowedRows}
         setItems={setItems}
         setHistory={setHistory}
         user={user}
@@ -2618,7 +2589,7 @@ function CashTransactions({ history, items }: { history: StockHistoryRow[]; item
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="flex items-center gap-2"><Banknote className="h-6 w-6 text-emerald-700" />Cash Transactions</h1>
-          <p className="text-muted-foreground">Completed cash payments from Sales and Release Materials.</p>
+          <p className="text-muted-foreground">Completed cash payments from Sales.</p>
         </div>
         <div className="relative w-full sm:w-72">
           <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
