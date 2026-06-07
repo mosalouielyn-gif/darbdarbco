@@ -2575,6 +2575,7 @@ function beneficiaryAccountId(name: string) {
 
 function CashTransactions({ history, items }: { history: StockHistoryRow[]; items: InventoryItem[] }) {
   const [search, setSearch] = useState("");
+  const [view, setView] = useState<StockHistoryRow | null>(null);
   const cashRows = history
     .filter((row) => row.qty < 0 && (row.paymentMethod || inferPaymentMethod(row.type, row.reason)) === "Cash")
     .filter((row) => {
@@ -2583,6 +2584,30 @@ function CashTransactions({ history, items }: { history: StockHistoryRow[]; item
       return `${row.ref} ${row.material} ${row.beneficiary ?? ""} ${row.reason}`.toLowerCase().includes(q);
     });
   const totalCollected = cashRows.reduce((sum, row) => sum + (row.totalAmount ?? Math.abs(row.qty) * (row.unitCost ?? 0)), 0);
+  const viewCustomer = view ? view.beneficiary || customerFromReason(view.reason) || "-" : "-";
+  const viewAmount = view ? view.totalAmount ?? Math.abs(view.qty) * (view.unitCost ?? 0) : 0;
+  const viewCategory = view ? view.category || getItemCategory(items, view.material) : "-";
+
+  const printReceipt = () => {
+    const node = document.getElementById("cash-receipt-print");
+    if (!node) return;
+    const win = window.open("", "_blank", "width=720,height=900");
+    if (!win) return;
+    win.document.write(`<!doctype html><html><head><title>Cash Receipt ${view?.ref ?? ""}</title>
+      <style>
+        body{font-family:ui-sans-serif,system-ui,sans-serif;padding:24px;color:#0f172a}
+        h1{margin:0 0 4px;font-size:18px}
+        .muted{color:#64748b;font-size:12px}
+        table{width:100%;border-collapse:collapse;margin-top:12px}
+        th,td{border:1px solid #e2e8f0;padding:8px;font-size:13px;text-align:left}
+        .right{text-align:right}
+        .sig{margin-top:48px;display:flex;justify-content:space-between;font-size:12px}
+        .sig div{border-top:1px solid #94a3b8;padding-top:6px;width:45%;text-align:center}
+      </style></head><body>${node.innerHTML}</body></html>`);
+    win.document.close();
+    win.focus();
+    win.print();
+  };
 
   return (
     <div className="space-y-4">
@@ -2628,12 +2653,13 @@ function CashTransactions({ history, items }: { history: StockHistoryRow[]; item
                   <TableHead className="text-right">Total Amount</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Processed By</TableHead>
+                  <TableHead>Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {cashRows.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={10} className="py-6 text-center text-muted-foreground">No completed cash transactions found.</TableCell>
+                    <TableCell colSpan={11} className="py-6 text-center text-muted-foreground">No completed cash transactions found.</TableCell>
                   </TableRow>
                 ) : cashRows.map((row) => (
                   <TableRow key={`${row.ref}-${row.material}-${row.date}`}>
@@ -2647,6 +2673,15 @@ function CashTransactions({ history, items }: { history: StockHistoryRow[]; item
                     <TableCell className="text-right">{money(row.totalAmount ?? Math.abs(row.qty) * (row.unitCost ?? 0))}</TableCell>
                     <TableCell><Badge className="bg-emerald-100 text-emerald-800">Completed</Badge></TableCell>
                     <TableCell>{row.account}</TableCell>
+                    <TableCell>
+                      <button
+                        title="View Receipt"
+                        className="p-1.5 rounded bg-sky-100 text-sky-700 hover:bg-sky-200"
+                        onClick={() => setView(row)}
+                      >
+                        <Eye className="h-3.5 w-3.5" />
+                      </button>
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -2654,6 +2689,74 @@ function CashTransactions({ history, items }: { history: StockHistoryRow[]; item
           </div>
         </CardContent>
       </Card>
+
+      <Dialog open={!!view} onOpenChange={(open) => !open && setView(null)}>
+        <DialogContent className="!max-w-[calc(100vw-1rem)] w-[calc(100vw-1rem)] sm:!max-w-[640px]">
+          {view && (
+            <>
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2 text-emerald-700">
+                  <Banknote className="h-5 w-5" />Cash Receipt
+                </DialogTitle>
+              </DialogHeader>
+              <div id="cash-receipt-print" className="space-y-4 text-sm">
+                <div className="text-center space-y-1 pb-3 border-b">
+                  <h1 className="text-emerald-700">DARBCO - Davao Abaca Banana Cooperative</h1>
+                  <div className="text-xs text-muted-foreground">Panabo City, Davao del Norte</div>
+                  <div className="text-xs text-muted-foreground">Completed Cash Transaction Receipt</div>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 p-4 bg-slate-50 rounded-md">
+                  <div><div className="text-xs text-muted-foreground mb-0.5">Transaction No.</div><div>{view.ref}</div></div>
+                  <div><div className="text-xs text-muted-foreground mb-0.5">Date</div><div>{view.date}</div></div>
+                  <div><div className="text-xs text-muted-foreground mb-0.5">Beneficiary / Customer</div><div>{viewCustomer}</div></div>
+                  <div><div className="text-xs text-muted-foreground mb-0.5">Processed By</div><div>{view.account || "-"}</div></div>
+                  <div><div className="text-xs text-muted-foreground mb-0.5">Payment Method</div><div>Cash</div></div>
+                  <div><div className="text-xs text-muted-foreground mb-0.5">Status</div><div className="text-emerald-700">Completed</div></div>
+                </div>
+                <table className="w-full border-collapse">
+                  <thead>
+                    <tr className="border-b bg-slate-50">
+                      <th className="text-left p-2">Item</th>
+                      <th className="text-left p-2">Category</th>
+                      <th className="text-right p-2">Qty</th>
+                      <th className="text-left p-2">Unit</th>
+                      <th className="text-right p-2">Unit Price</th>
+                      <th className="text-right p-2">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr className="border-b">
+                      <td className="p-2">{view.material}</td>
+                      <td className="p-2">{viewCategory}</td>
+                      <td className="text-right p-2">{Math.abs(view.qty)}</td>
+                      <td className="p-2">{view.unit}</td>
+                      <td className="text-right p-2">{money(view.unitCost ?? 0)}</td>
+                      <td className="text-right p-2">{money(viewAmount)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+                <div className="space-y-1.5 pt-2">
+                  <div className="flex justify-between"><span className="text-muted-foreground">Subtotal</span><span>{money(viewAmount)}</span></div>
+                  <div className="flex justify-between border-t pt-2"><span className="text-muted-foreground">Amount Paid</span><span className="font-semibold text-emerald-700">{money(viewAmount)}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">Balance</span><span>{money(0)}</span></div>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-8 pt-6 sm:pt-8">
+                  <div className="text-center">
+                    <div className="border-t pt-2 text-xs text-muted-foreground">Received By (Bookkeeper)</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="border-t pt-2 text-xs text-muted-foreground">Paid By (Customer)</div>
+                  </div>
+                </div>
+              </div>
+              <div className="flex flex-col-reverse gap-2 pt-2 border-t sm:flex-row sm:justify-end [&>button]:w-full sm:[&>button]:w-auto">
+                <Button variant="outline" onClick={() => setView(null)}>Close</Button>
+                <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={printReceipt}>Print Receipt</Button>
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

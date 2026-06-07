@@ -1887,30 +1887,52 @@ function AuditHistory({ audit }: { audit: AuditRow[] }) {
       </Card>
 
       <Dialog open={!!viewing} onOpenChange={(open) => !open && setViewing(null)}>
-        <DialogContent className="w-[calc(100vw-1rem)] sm:!max-w-[820px]">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-emerald-700">
-              <Eye className="h-5 w-5" />Full Audit Details
-            </DialogTitle>
-          </DialogHeader>
+        <DialogContent className="w-[calc(100vw-1rem)] overflow-hidden p-0 sm:!max-w-[900px]">
           {viewing && (
-            <div className="space-y-4 text-sm">
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <AuditDetail label="Activity ID" value={viewing.activityId} />
-                <AuditDetail label="Timestamp" value={formatAuditTimestamp(viewing.row.ts)} />
-                <AuditDetail label="User" value={viewing.row.user || "-"} />
-                <AuditDetail label="Role" value={roleLabel(viewing.row.role) || "-"} />
-                <AuditDetail label="Action" value={viewing.row.action} />
-                <AuditDetail label="Module" value={viewing.row.module} />
-                <AuditDetail label="Status" value={viewing.row.status} />
+            <div className="max-h-[88vh] overflow-y-auto bg-slate-50">
+              <div className="border-b bg-gradient-to-r from-emerald-700 via-emerald-600 to-teal-600 px-6 py-5 text-white">
+                <DialogHeader>
+                  <DialogTitle className="flex items-center gap-2 text-xl text-white">
+                    <Eye className="h-5 w-5" /> Full Audit Details
+                  </DialogTitle>
+                </DialogHeader>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <Badge className="bg-white/95 text-emerald-800 hover:bg-white">{viewing.activityId}</Badge>
+                  <Badge className="bg-white/15 text-white ring-1 ring-white/30 hover:bg-white/15">{viewing.row.action}</Badge>
+                  <Badge className="bg-white/15 text-white ring-1 ring-white/30 hover:bg-white/15">{viewing.row.module}</Badge>
+                  <Badge className={viewing.row.status === "Completed" ? "bg-emerald-100 text-emerald-800 hover:bg-emerald-100" : "bg-red-100 text-red-800 hover:bg-red-100"}>
+                    {viewing.row.status}
+                  </Badge>
+                </div>
               </div>
-              <div className="rounded-md border bg-slate-50 p-3">
-                <div className="mb-1 text-xs font-medium text-muted-foreground">Affected Record</div>
-                <AuditLongDetail value={viewing.row.affectedRecord || viewing.row.description || "-"} />
-              </div>
-              <div className="rounded-md border bg-white p-3">
-                <div className="mb-1 text-xs font-medium text-muted-foreground">Remarks</div>
-                <AuditLongDetail value={viewing.row.remarks || viewing.row.description || "-"} />
+
+              <div className="space-y-5 p-6 text-sm">
+                <div className="rounded-lg border bg-white p-4 shadow-sm">
+                  <div className="mb-3 flex items-center justify-between gap-3 border-b pb-3">
+                    <div>
+                      <div className="text-base font-semibold text-slate-900">Audit Summary</div>
+                      <div className="text-xs text-muted-foreground">Recorded system activity and responsible user.</div>
+                    </div>
+                    <div className="text-right text-xs text-muted-foreground">{formatAuditTimestamp(viewing.row.ts)}</div>
+                  </div>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                    <AuditDetail label="Activity ID" value={viewing.activityId} />
+                    <AuditDetail label="Timestamp" value={formatAuditTimestamp(viewing.row.ts)} />
+                    <AuditDetail label="User" value={viewing.row.user || "-"} />
+                    <AuditDetail label="Role" value={roleLabel(viewing.row.role) || "-"} />
+                    <AuditDetail label="Action" value={viewing.row.action} />
+                    <AuditDetail label="Module" value={viewing.row.module} />
+                    <AuditDetail label="Status" value={viewing.row.status} />
+                  </div>
+                </div>
+
+                <AuditSection title="Affected Record" subtitle="Complete record or field changes captured by the system.">
+                  <AuditLongDetail value={viewing.row.affectedRecord || viewing.row.description || "-"} />
+                </AuditSection>
+
+                <AuditSection title="Remarks" subtitle="Notes saved together with this audit event.">
+                  <AuditLongDetail value={viewing.row.remarks || viewing.row.description || "-"} />
+                </AuditSection>
               </div>
             </div>
           )}
@@ -1922,10 +1944,22 @@ function AuditHistory({ audit }: { audit: AuditRow[] }) {
 
 function AuditDetail({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-md border bg-white px-3 py-2">
-      <div className="text-xs text-muted-foreground">{label}</div>
+    <div className="rounded-md border bg-slate-50 px-3 py-2">
+      <div className="text-xs font-medium text-muted-foreground">{label}</div>
       <div className="mt-1 break-words font-medium">{value}</div>
     </div>
+  );
+}
+
+function AuditSection({ title, subtitle, children }: { title: string; subtitle: string; children: React.ReactNode }) {
+  return (
+    <section className="overflow-hidden rounded-lg border bg-white shadow-sm">
+      <div className="border-b bg-white px-4 py-3">
+        <div className="font-semibold text-emerald-700">{title}</div>
+        <div className="mt-0.5 text-xs text-muted-foreground">{subtitle}</div>
+      </div>
+      <div className="p-4">{children}</div>
+    </section>
   );
 }
 
