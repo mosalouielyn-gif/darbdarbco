@@ -143,7 +143,7 @@ function mapPayrollSlip(row: any): FoSlip {
     otherDeductions: savedOtherDeductions.length > 0
       ? savedOtherDeductions
       : otherDeductionAmount > 0
-        ? [{ type: "Deduction type not recorded", amount: otherDeductionAmount }]
+        ? [{ type: "Other Approved Deductions", amount: otherDeductionAmount }]
         : [],
     productionSource: { classA, classB, special },
   };

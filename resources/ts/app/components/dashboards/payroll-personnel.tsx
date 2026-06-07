@@ -1616,6 +1616,11 @@ function ViewPayrollSlipDialog({ slip, beneficiaries = [], productionRecords = [
   const laborCostAmount = slip.laborCost ?? 0;
   const otherAuthorizedDeductionsTotal = slip.otherDeductions ?? 0;
   const otherAuthorizedDeductionItems = slip.otherDeductionItems ?? [];
+  const displayedOtherAuthorizedDeductionItems = otherAuthorizedDeductionItems.length > 0
+    ? otherAuthorizedDeductionItems
+    : otherAuthorizedDeductionsTotal > 0
+      ? [{ type: "Other Approved Deductions", amount: otherAuthorizedDeductionsTotal }]
+      : [];
   const computedTotalDeductions = totalMaterialDeductions + previousUnpaid + laborCostAmount + otherAuthorizedDeductionsTotal;
   const totalDeductions = computedTotalDeductions > 0 ? computedTotalDeductions : slip.totalDeductions;
   const netIncome = grossIncome - totalDeductions;
@@ -1691,12 +1696,19 @@ function ViewPayrollSlipDialog({ slip, beneficiaries = [], productionRecords = [
       ["Previous Unpaid Balance", previousUnpaid],
       ["Labor Cost", laborCostAmount],
       ["Other Authorized Deductions", otherAuthorizedDeductionsTotal],
-      ["Total Deductions", totalDeductions],
     ].forEach(([label, amount]) => {
       doc.text(String(label), 18, y);
       doc.text(moneyText(Number(amount)), 150, y, { align: "right" });
       y += 6;
     });
+    displayedOtherAuthorizedDeductionItems.forEach((deduction) => {
+      doc.text(`  ${deduction.type}`, 22, y);
+      doc.text(moneyText(Number(deduction.amount)), 150, y, { align: "right" });
+      y += 6;
+    });
+    doc.text("Total Deductions", 18, y);
+    doc.text(moneyText(totalDeductions), 150, y, { align: "right" });
+    y += 6;
     y += 4;
     doc.setFontSize(13);
     doc.text("Net Income", 18, y);
@@ -2036,23 +2048,14 @@ function ViewPayrollSlipDialog({ slip, beneficiaries = [], productionRecords = [
                     <TableCell className="py-4 pl-8">Other Authorized Deductions</TableCell>
                     <TableCell className="text-right py-4 font-semibold text-red-600 whitespace-nowrap">&#8369;{otherAuthorizedDeductionsTotal.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
                   </TableRow>
-                  {otherAuthorizedDeductionItems.length > 0 ? (
-                    otherAuthorizedDeductionItems.map((deduction, index) => (
+                  {displayedOtherAuthorizedDeductionItems.map((deduction, index) => (
                       <TableRow key={`${deduction.type}-${index}`} className="hover:bg-red-50/20">
                         <TableCell className="py-2 pl-12 text-sm text-muted-foreground">{deduction.type}</TableCell>
                         <TableCell className="text-right py-2 text-sm font-medium text-red-600 whitespace-nowrap">
                           &#8369;{deduction.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                         </TableCell>
                       </TableRow>
-                    ))
-                  ) : otherAuthorizedDeductionsTotal > 0 ? (
-                    <TableRow className="hover:bg-red-50/20">
-                      <TableCell className="py-2 pl-12 text-sm text-muted-foreground">Other Authorized Deduction total</TableCell>
-                      <TableCell className="text-right py-2 text-sm font-medium text-red-600 whitespace-nowrap">
-                        &#8369;{otherAuthorizedDeductionsTotal.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                      </TableCell>
-                    </TableRow>
-                  ) : null}
+                  ))}
                   <TableRow className="border-t-2 border-red-300 bg-red-50">
                     <TableCell className="py-4 font-bold">Total Deductions</TableCell>
                     <TableCell className="text-right py-4 font-bold text-red-600 text-lg whitespace-nowrap">&#8369;{totalDeductions.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
