@@ -2328,7 +2328,7 @@ function BeneficiaryHarvesterManagement({ beneficiaries, setBeneficiaries, users
   const [editingBeneficiary, setEditingBeneficiary] = useState<MasterBeneficiary | null>(null);
   const [statusTarget, setStatusTarget] = useState<MasterBeneficiary | null>(null);
   const [beneficiaryForm, setBeneficiaryForm] = useState({ code: "", name: "", contact: "", address: "", active: true, remarks: "" });
-  const [harvesterForm, setHarvesterForm] = useState({ name: "", email: "", username: "", password: "", passwordConfirm: "", contact: "", active: true, remarks: "" });
+  const [harvesterForm, setHarvesterForm] = useState({ code: "", name: "", contact: "", address: "", active: true });
   const harvesters = users.filter((user) => user.role === "harvester");
 
   const recordManagementAudit = (action: AuditRow["action"], module: string, affectedRecord: string, description: string, remarks?: string) => {
@@ -2353,7 +2353,7 @@ function BeneficiaryHarvesterManagement({ beneficiaries, setBeneficiaries, users
 
   const filteredHarvesters = harvesters.filter((harvester) => {
     const query = search.toLowerCase();
-    return !query || `${harvester.name} ${harvester.email} ${harvester.username}`.toLowerCase().includes(query);
+    return !query || `${harvester.username} ${harvester.name} ${harvester.contact} ${harvester.remarks}`.toLowerCase().includes(query);
   });
 
   const submitBeneficiary = async () => {
@@ -2371,12 +2371,12 @@ function BeneficiaryHarvesterManagement({ beneficiaries, setBeneficiaries, users
         contact_number: beneficiaryForm.contact.trim(),
         address: beneficiaryForm.address.trim(),
         active: beneficiaryForm.active,
-        remarks: beneficiaryForm.remarks.trim(),
+        remarks: "",
         admin_id: Number(adminId) || undefined,
         admin_name: adminName,
       }));
       setBeneficiaries((current) => [saved, ...current]);
-      recordManagementAudit("Created", "Beneficiaries", saved.id, `Created beneficiary ${saved.name}`, beneficiaryForm.remarks || "New beneficiary added.");
+      recordManagementAudit("Created", "Beneficiaries", saved.id, `Created beneficiary ${saved.name}`, "New beneficiary added.");
       setBeneficiaryForm({ code: "", name: "", contact: "", address: "", active: true, remarks: "" });
       toast.success("Beneficiary added");
     } catch (error) {
@@ -2440,33 +2440,33 @@ function BeneficiaryHarvesterManagement({ beneficiaries, setBeneficiaries, users
   };
 
   const submitHarvester = async () => {
-    if (!harvesterForm.name.trim() || !harvesterForm.email.trim() || !harvesterForm.username.trim() || !harvesterForm.password || !harvesterForm.passwordConfirm) {
-      toast.error("Harvester name, email, username, and temporary password are required");
-      return;
-    }
-    if (harvesterForm.password !== harvesterForm.passwordConfirm) {
-      toast.error("Temporary password and confirmation must match");
+    if (!harvesterForm.name.trim()) {
+      toast.error("Harvester name is required");
       return;
     }
     if (saving) return;
     setSaving(true);
 
     try {
+      const uniqueSuffix = Date.now().toString().slice(-6);
+      const generatedCode = `HAR-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}${uniqueSuffix}`;
+      const harvesterCode = (harvesterForm.code.trim() || generatedCode).toUpperCase();
+      const accountKey = harvesterCode.toLowerCase().replace(/[^a-z0-9]+/g, ".").replace(/^\.+|\.+$/g, "") || `harvester.${uniqueSuffix}`;
       const harvester = mapAccount(await createUserAccount({
         name: harvesterForm.name.trim(),
-        email: harvesterForm.email.trim(),
-        username: harvesterForm.username.trim(),
-        password: harvesterForm.password,
+        email: `${accountKey}.${uniqueSuffix}@harvester.local`,
+        username: harvesterCode,
+        password: `Harvester-${uniqueSuffix}`,
         role: "harvester",
         active: harvesterForm.active,
         contact: harvesterForm.contact.trim(),
-        remarks: harvesterForm.remarks.trim(),
+        remarks: harvesterForm.address.trim(),
         admin_id: Number(adminId) || undefined,
         admin_name: adminName,
       }));
       setUsers([harvester, ...users]);
-      recordManagementAudit("Created", "Harvesters", harvester.id, `Created harvester ${harvester.name}`, harvesterForm.remarks || "New harvester added.");
-      setHarvesterForm({ name: "", email: "", username: "", password: "", passwordConfirm: "", contact: "", active: true, remarks: "" });
+      recordManagementAudit("Created", "Harvesters", harvester.id, `Created harvester ${harvester.name}`, "New harvester added.");
+      setHarvesterForm({ code: "", name: "", contact: "", address: "", active: true });
       toast.success("Harvester added");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Unable to create harvester.");
@@ -2528,17 +2528,13 @@ function BeneficiaryHarvesterManagement({ beneficiaries, setBeneficiaries, users
                 </Select>
               </div>
               <div className="space-y-1 md:col-span-2"><Label>Address</Label><Input name="beneficiary_address" autoComplete="street-address" value={beneficiaryForm.address} onChange={(e) => setBeneficiaryForm({ ...beneficiaryForm, address: e.target.value })} /></div>
-              <div className="space-y-1 md:col-span-2"><Label>Remarks</Label><Input name="beneficiary_notes" autoComplete="off" data-lpignore="true" data-1p-ignore="true" value={beneficiaryForm.remarks} onChange={(e) => setBeneficiaryForm({ ...beneficiaryForm, remarks: e.target.value })} /></div>
               <div className="md:col-span-2 xl:col-span-4 flex justify-end"><Button className="bg-emerald-600 hover:bg-emerald-700" onClick={submitBeneficiary} disabled={saving}>{saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Plus className="h-4 w-4 mr-2" />}Save Beneficiary</Button></div>
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
-              <div className="space-y-1"><Label>Harvester Name</Label><Input value={harvesterForm.name} onChange={(e) => setHarvesterForm({ ...harvesterForm, name: e.target.value })} /></div>
-              <div className="space-y-1"><Label>Email Address</Label><Input type="email" value={harvesterForm.email} onChange={(e) => setHarvesterForm({ ...harvesterForm, email: e.target.value })} /></div>
-              <div className="space-y-1"><Label>Username</Label><Input value={harvesterForm.username} onChange={(e) => setHarvesterForm({ ...harvesterForm, username: e.target.value })} /></div>
-              <div className="space-y-1"><Label>Contact Information</Label><Input value={harvesterForm.contact} onChange={(e) => setHarvesterForm({ ...harvesterForm, contact: e.target.value })} /></div>
-              <div className="space-y-1"><Label>Temporary Password</Label><Input type="password" value={harvesterForm.password} onChange={(e) => setHarvesterForm({ ...harvesterForm, password: e.target.value })} /></div>
-              <div className="space-y-1"><Label>Confirm Password</Label><Input type="password" value={harvesterForm.passwordConfirm} onChange={(e) => setHarvesterForm({ ...harvesterForm, passwordConfirm: e.target.value })} /></div>
+              <div className="space-y-1"><Label>Harvester Code</Label><Input name="harvester_code" autoComplete="off" value={harvesterForm.code} onChange={(e) => setHarvesterForm({ ...harvesterForm, code: e.target.value })} placeholder="Auto-generated if blank" /></div>
+              <div className="space-y-1"><Label>Harvester Name</Label><Input name="harvester_full_name" autoComplete="name" value={harvesterForm.name} onChange={(e) => setHarvesterForm({ ...harvesterForm, name: e.target.value })} /></div>
+              <div className="space-y-1"><Label>Contact Number</Label><Input name="harvester_contact_number" autoComplete="tel" inputMode="tel" value={harvesterForm.contact} onChange={(e) => setHarvesterForm({ ...harvesterForm, contact: e.target.value })} /></div>
               <div className="space-y-1">
                 <Label>Status</Label>
                 <Select value={harvesterForm.active ? "active" : "inactive"} onValueChange={(value) => setHarvesterForm({ ...harvesterForm, active: value === "active" })}>
@@ -2546,7 +2542,7 @@ function BeneficiaryHarvesterManagement({ beneficiaries, setBeneficiaries, users
                   <SelectContent><SelectItem value="active">Active</SelectItem><SelectItem value="inactive">Inactive</SelectItem></SelectContent>
                 </Select>
               </div>
-              <div className="space-y-1"><Label>Remarks</Label><Input value={harvesterForm.remarks} onChange={(e) => setHarvesterForm({ ...harvesterForm, remarks: e.target.value })} /></div>
+              <div className="space-y-1 md:col-span-2"><Label>Address</Label><Input name="harvester_address" autoComplete="street-address" value={harvesterForm.address} onChange={(e) => setHarvesterForm({ ...harvesterForm, address: e.target.value })} /></div>
               <div className="md:col-span-2 xl:col-span-4 flex justify-end"><Button className="bg-emerald-600 hover:bg-emerald-700" onClick={submitHarvester} disabled={saving}>{saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Plus className="h-4 w-4 mr-2" />}Save Harvester</Button></div>
             </div>
           )}
@@ -2585,16 +2581,16 @@ function BeneficiaryHarvesterManagement({ beneficiaries, setBeneficiaries, users
           ) : (
             <Table>
               <TableHeader>
-                <TableRow><TableHead>Harvester</TableHead><TableHead>Username</TableHead><TableHead>Contact</TableHead><TableHead>Status</TableHead><TableHead>Created</TableHead><TableHead>Action</TableHead></TableRow>
+                <TableRow><TableHead>Code</TableHead><TableHead>Harvester</TableHead><TableHead>Contact</TableHead><TableHead>Status</TableHead><TableHead>Updated</TableHead><TableHead>Action</TableHead></TableRow>
               </TableHeader>
               <TableBody>
                 {filteredHarvesters.map((harvester) => (
                   <TableRow key={harvester.id}>
-                    <TableCell><div>{harvester.name}</div><div className="text-xs text-muted-foreground">{harvester.email}</div></TableCell>
-                    <TableCell>{harvester.username}</TableCell>
+                    <TableCell className="text-xs">{harvester.username || "-"}</TableCell>
+                    <TableCell><div>{harvester.name}</div><div className="text-xs text-muted-foreground">{harvester.remarks || "-"}</div></TableCell>
                     <TableCell>{harvester.contact || "-"}</TableCell>
                     <TableCell><Badge className={harvester.active ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-700"}>{harvester.active ? "Active" : "Inactive"}</Badge></TableCell>
-                    <TableCell className="text-xs">{harvester.createdAt || "-"}</TableCell>
+                    <TableCell className="text-xs">{harvester.updatedAt || harvester.createdAt || "-"}</TableCell>
                     <TableCell>
                       <button className={`p-1.5 rounded ${harvester.active ? "bg-red-100 text-red-700 hover:bg-red-200" : "bg-emerald-100 text-emerald-700 hover:bg-emerald-200"}`} onClick={() => updateHarvesterStatus(harvester)} title={harvester.active ? "Deactivate" : "Activate"}>
                         <Power className="h-3.5 w-3.5" />
