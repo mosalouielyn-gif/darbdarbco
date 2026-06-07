@@ -39,7 +39,7 @@ type FoStatus = "Submitted to Finance" | "Returned for Correction" | "Validated 
 interface MaterialCredit {
   date: string; material: string; qty: number; unit: string; unitPrice: number; status: "Unpaid" | "Partially Paid";
 }
-interface OtherDeduction { type: string; description: string; amount: number; ref: string }
+interface OtherDeduction { type: string; amount: number }
 
 interface ProductionSource {
   classA: number; classB: number; special: number;
@@ -102,6 +102,12 @@ function mapPayrollSlip(row: any): FoSlip {
   const previousBalance = Number(row.previous_balance ?? 0);
   const laborAmount = Number(row.labor_cost ?? 0);
   const otherDeductionAmount = Number(row.other_deductions ?? 0);
+  const savedOtherDeductions = (Array.isArray(row.deductions) ? row.deductions : [])
+    .map((deduction: any) => ({
+      type: String(deduction.deduction_type ?? deduction.type ?? "Other Authorized Deduction"),
+      amount: Number(deduction.amount ?? 0),
+    }))
+    .filter((deduction) => deduction.amount > 0);
 
   return {
     dbId: Number(row.id) || undefined,
@@ -134,12 +140,11 @@ function mapPayrollSlip(row: any): FoSlip {
     laborEncodedBy: row.prepared_by_name ?? String(row.prepared_by ?? ""),
     laborDateEncoded: databaseDateKey(row.submitted_at ?? row.created_at),
     prevBalance: previousBalance,
-    otherDeductions: otherDeductionAmount > 0 ? [{
-      type: "Other Deduction",
-      description: "Other authorized deductions",
-      amount: otherDeductionAmount,
-      ref: row.slip_no ?? "",
-    }] : [],
+    otherDeductions: savedOtherDeductions.length > 0
+      ? savedOtherDeductions
+      : otherDeductionAmount > 0
+        ? [{ type: "Deduction type not recorded", amount: otherDeductionAmount }]
+        : [],
     productionSource: { classA, classB, special },
   };
 }
@@ -231,6 +236,7 @@ export function FinanceOfficerDashboard({ user, onLogout }: Props) {
   const [active, setActive] = usePersistentState("darbco.financeOfficer.active", "dashboard");
   const [slips, setSlips] = useState<FoSlip[]>((data?.payrollSlips ?? []).map(mapPayrollSlip));
   const [reviewSlip, setReviewSlip] = useState<FoSlip | null>(null);
+  const [reviewReadOnly, setReviewReadOnly] = useState(false);
   const [validationActivities, setValidationActivities] = useState<ValidationActivity[]>((data?.auditLogs ?? []).map(mapValidationActivity).filter(Boolean) as ValidationActivity[]);
 
   useEffect(() => {
@@ -238,8 +244,14 @@ export function FinanceOfficerDashboard({ user, onLogout }: Props) {
     setValidationActivities((data?.auditLogs ?? []).map(mapValidationActivity).filter(Boolean) as ValidationActivity[]);
   }, [data?.payrollSlips, data?.auditLogs]);
 
-  const openReview = (slip: FoSlip) => setReviewSlip(slip);
-  const closeReview = () => setReviewSlip(null);
+  const openReview = (slip: FoSlip, readOnly = false) => {
+    setReviewReadOnly(readOnly);
+    setReviewSlip(slip);
+  };
+  const closeReview = () => {
+    setReviewSlip(null);
+    setReviewReadOnly(false);
+  };
 
   const validate = async (slipNo: string) => {
     const slip = slips.find((item) => item.slipNo === slipNo);
@@ -308,15 +320,16 @@ export function FinanceOfficerDashboard({ user, onLogout }: Props) {
 
   return (
     <DarbcoLayout user={user} onLogout={onLogout} navItems={NAV} active={active} onChange={setActive}>
-      {active === "dashboard" && <Dashboard slips={slips} activities={validationActivities} goTo={setActive} onReview={openReview} />}
-      {active === "pending" && <SlipList title="Pending Validation" slips={slips} filter={(s) => s.status === "Submitted to Finance"} onReview={openReview} />}
-      {active === "validated" && <SlipList title="Validated Payrolls" slips={slips} filter={(s) => s.status === "Validated by Finance" || s.status === "Pending Manager Approval"} onReview={openReview} />}
-      {active === "returned" && <SlipList title="Returned Payrolls" slips={slips} filter={(s) => s.status === "Returned for Correction"} onReview={openReview} />}
-      {active === "history" && <SlipList title="Payroll History" slips={slips} filter={() => true} onReview={openReview} />}
+      {active === "dashboard" && <Dashboard slips={slips} activities={validationActivities} goTo={setActive} onReview={(slip) => openReview(slip)} />}
+      {active === "pending" && <SlipList title="Pending Validation" slips={slips} filter={(s) => s.status === "Submitted to Finance"} onReview={(slip) => openReview(slip)} />}
+      {active === "validated" && <SlipList title="Validated Payrolls" slips={slips} filter={(s) => s.status === "Validated by Finance" || s.status === "Pending Manager Approval"} onReview={(slip) => openReview(slip)} />}
+      {active === "returned" && <SlipList title="Returned Payrolls" slips={slips} filter={(s) => s.status === "Returned for Correction"} onReview={(slip) => openReview(slip)} />}
+      {active === "history" && <SlipList title="Payroll History" slips={slips} filter={() => true} onReview={(slip) => openReview(slip, true)} actionLabel="View Payroll" description="View payroll records for history and reference." />}
       {active === "reports" && <Reports slips={slips} activities={validationActivities} />}
 
       <ValidationDetailsDialog
         slip={reviewSlip}
+        readOnly={reviewReadOnly}
         onClose={closeReview}
         onValidate={validate}
         onReturn={returnSlip}
@@ -448,7 +461,14 @@ function Kpi({ color, label, value, sub, onClick }: { color: string; label: stri
   );
 }
 
-function SlipList({ title, slips, filter, onReview }: { title: string; slips: FoSlip[]; filter: (s: FoSlip) => boolean; onReview: (s: FoSlip) => void }) {
+function SlipList({ title, slips, filter, onReview, actionLabel = "Review Payroll", description = "Review beneficiary payroll slips submitted by the Payroll Personnel." }: {
+  title: string;
+  slips: FoSlip[];
+  filter: (s: FoSlip) => boolean;
+  onReview: (s: FoSlip) => void;
+  actionLabel?: string;
+  description?: string;
+}) {
   const [searchName, setSearchName] = useState("");
   const [slipNo, setSlipNo] = useState("");
   const [harvestDate, setHarvestDate] = useState("");
@@ -469,7 +489,7 @@ function SlipList({ title, slips, filter, onReview }: { title: string; slips: Fo
     <div className="space-y-4">
       <div>
         <h1 className="flex items-center gap-2"><ClipboardList className="h-6 w-6 text-emerald-700" />{title}</h1>
-        <p className="text-muted-foreground">Review beneficiary payroll slips submitted by the Payroll Personnel.</p>
+        <p className="text-muted-foreground">{description}</p>
       </div>
 
       <Card>
@@ -503,7 +523,7 @@ function SlipList({ title, slips, filter, onReview }: { title: string; slips: Fo
             </Select>
           </div>
 
-          <SlipTable slips={filtered} onReview={onReview} />
+          <SlipTable slips={filtered} onReview={onReview} actionLabel={actionLabel} />
 
           <div className="flex flex-col gap-2 pt-2 sm:flex-row sm:items-center sm:justify-between">
             <span className="text-sm text-muted-foreground">Showing {filtered.length} of {slips.filter(filter).length} slips</span>
@@ -519,7 +539,7 @@ function SlipList({ title, slips, filter, onReview }: { title: string; slips: Fo
   );
 }
 
-function SlipTable({ slips, onReview }: { slips: FoSlip[]; onReview: (s: FoSlip) => void }) {
+function SlipTable({ slips, onReview, actionLabel = "Review Payroll" }: { slips: FoSlip[]; onReview: (s: FoSlip) => void; actionLabel?: string }) {
   return (
     <Table>
       <TableHeader>
@@ -548,7 +568,7 @@ function SlipTable({ slips, onReview }: { slips: FoSlip[]; onReview: (s: FoSlip)
               <TableCell><StatusBadge s={s.status} /></TableCell>
               <TableCell>
                 <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 h-8" onClick={() => onReview(s)}>
-                  <Eye className="h-3.5 w-3.5 mr-1" />Review Payroll
+                  <Eye className="h-3.5 w-3.5 mr-1" />{actionLabel}
                 </Button>
               </TableCell>
             </TableRow>
@@ -559,8 +579,9 @@ function SlipTable({ slips, onReview }: { slips: FoSlip[]; onReview: (s: FoSlip)
   );
 }
 
-function ValidationDetailsDialog({ slip, onClose, onValidate, onReturn }: {
+function ValidationDetailsDialog({ slip, readOnly = false, onClose, onValidate, onReturn }: {
   slip: FoSlip | null;
+  readOnly?: boolean;
   onClose: () => void;
   onValidate: (slipNo: string) => void | Promise<void>;
   onReturn: (slipNo: string, payload: { category: string; reason: string; remarks?: string }) => void | Promise<void>;
@@ -591,7 +612,7 @@ function ValidationDetailsDialog({ slip, onClose, onValidate, onReturn }: {
   }, [slip?.slipNo]);
 
   if (!slip || !c) return null;
-  const financeCanAct = canFinanceAct(slip.status);
+  const financeCanAct = !readOnly && canFinanceAct(slip.status);
 
   const closeAndReset = () => {
     if (returning || validating) return;
@@ -773,29 +794,18 @@ function ValidationDetailsDialog({ slip, onClose, onValidate, onReturn }: {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Deduction Type</TableHead><TableHead>Description</TableHead>
-                  <TableHead className="text-right">Amount</TableHead><TableHead>Reference</TableHead>
+                  <TableHead>Deduction Type</TableHead>
+                  <TableHead className="text-right">Amount</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {slip.prevBalance > 0 && (
-                  <TableRow>
-                    <TableCell>Previous Unpaid Balance</TableCell>
-                    <TableCell>Carried over from prior payroll period</TableCell>
-                    <TableCell className="text-right text-red-600">−₱{slip.prevBalance.toLocaleString()}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">—</TableCell>
-                    
-                  </TableRow>
-                )}
-                {slip.otherDeductions.length === 0 && slip.prevBalance === 0 && (
-                  <TableRow><TableCell colSpan={4} className="text-muted-foreground text-center">No other authorized deductions.</TableCell></TableRow>
+                {slip.otherDeductions.length === 0 && (
+                  <TableRow><TableCell colSpan={2} className="text-muted-foreground text-center">No other authorized deductions.</TableCell></TableRow>
                 )}
                 {slip.otherDeductions.map((d, i) => (
                   <TableRow key={i}>
                     <TableCell>{d.type}</TableCell>
-                    <TableCell>{d.description}</TableCell>
                     <TableCell className="text-right text-red-600">−₱{d.amount.toLocaleString()}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{d.ref || "—"}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -811,13 +821,20 @@ function ValidationDetailsDialog({ slip, onClose, onValidate, onReturn }: {
                 <TableRow><TableCell>Labor Cost</TableCell><TableCell className="text-right text-red-600">−₱{slip.laborAmount.toLocaleString()}</TableCell></TableRow>
                 <TableRow><TableCell>Previous Unpaid Balance</TableCell><TableCell className="text-right text-red-600">−₱{slip.prevBalance.toLocaleString()}</TableCell></TableRow>
                 <TableRow><TableCell>Other Authorized Deductions</TableCell><TableCell className="text-right text-red-600">−₱{c.otherTotal.toLocaleString()}</TableCell></TableRow>
+                {slip.otherDeductions.map((d, i) => (
+                  <TableRow key={`${d.type}-${i}`} className="text-sm">
+                    <TableCell className="pl-8 text-muted-foreground">{d.type}</TableCell>
+                    <TableCell className="text-right text-red-600">−₱{d.amount.toLocaleString()}</TableCell>
+                  </TableRow>
+                ))}
                 <TableRow className="border-t-2"><TableCell><strong>Total Deductions</strong></TableCell><TableCell className="text-right"><strong className="text-red-600">−₱{c.totalDed.toLocaleString()}</strong></TableCell></TableRow>
                 <TableRow className="bg-emerald-50"><TableCell><strong>Net Income</strong></TableCell><TableCell className="text-right"><strong className="text-emerald-800">₱{c.net.toLocaleString()}</strong></TableCell></TableRow>
               </TableBody>
             </Table>
           </SectionCard>
 
-          <SectionCard title="Manual Assessment" tone="violet">
+          {!readOnly && (
+            <SectionCard title="Manual Assessment" tone="violet">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -850,7 +867,8 @@ function ValidationDetailsDialog({ slip, onClose, onValidate, onReturn }: {
             </Table>
             {hasIncompleteAssessment && <div className="text-xs text-amber-700">Complete every manual assessment item before validating payroll.</div>}
             {!hasIncompleteAssessment && !allManuallyMatched && <div className="text-xs text-red-700">Payrolls with Not Matched items should be returned for correction.</div>}
-          </SectionCard>
+            </SectionCard>
+          )}
 
           {slip.status === "Returned for Correction" && slip.returnReason && (
             <div className="p-3 border border-red-200 bg-red-50 rounded-md text-red-800 text-sm">
@@ -862,24 +880,30 @@ function ValidationDetailsDialog({ slip, onClose, onValidate, onReturn }: {
           )}
 
           {/* Actions */}
-          <div className="flex flex-wrap justify-end gap-2 pt-2 border-t">
-            <Button variant="outline" onClick={() => toast.success("Slip sent to printer")}><Printer className="h-4 w-4 mr-1" />Print</Button>
-            <Button variant="outline" className="border-red-300 text-red-700 hover:bg-red-50"
-              disabled={!financeCanAct || returning || validating}
-              onClick={() => setShowReturn(true)}>
-              {returning ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Undo2 className="h-4 w-4 mr-1" />}Return for Correction
-            </Button>
-            <Button className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50"
-              disabled={!allManuallyMatched || !financeCanAct || validating || returning}
-              onClick={submitValidation}>
-              {validating ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <CheckCircle2 className="h-4 w-4 mr-1" />}Validate Payroll
-            </Button>
-            <Button variant="outline" disabled={returning || validating} onClick={closeAndReset}>Cancel</Button>
-          </div>
+          {readOnly ? (
+            <div className="flex justify-end gap-2 pt-2 border-t">
+              <Button variant="outline" onClick={closeAndReset}>Close</Button>
+            </div>
+          ) : (
+            <div className="flex flex-wrap justify-end gap-2 pt-2 border-t">
+              <Button variant="outline" onClick={() => toast.success("Slip sent to printer")}><Printer className="h-4 w-4 mr-1" />Print</Button>
+              <Button variant="outline" className="border-red-300 text-red-700 hover:bg-red-50"
+                disabled={!financeCanAct || returning || validating}
+                onClick={() => setShowReturn(true)}>
+                {returning ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Undo2 className="h-4 w-4 mr-1" />}Return for Correction
+              </Button>
+              <Button className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50"
+                disabled={!allManuallyMatched || !financeCanAct || validating || returning}
+                onClick={submitValidation}>
+                {validating ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <CheckCircle2 className="h-4 w-4 mr-1" />}Validate Payroll
+              </Button>
+              <Button variant="outline" disabled={returning || validating} onClick={closeAndReset}>Cancel</Button>
+            </div>
+          )}
         </div>
 
         {/* Return for Correction Modal */}
-        <Dialog open={showReturn} onOpenChange={(o) => !o && !returning && setShowReturn(false)}>
+        {!readOnly && <Dialog open={showReturn} onOpenChange={(o) => !o && !returning && setShowReturn(false)}>
           <DialogContent className="!max-w-[calc(100vw-1rem)] w-[calc(100vw-1rem)] sm:!max-w-[640px]">
             <DialogHeader><DialogTitle>Return for Correction — {slip.slipNo}</DialogTitle></DialogHeader>
             <div className="space-y-3">
@@ -918,9 +942,9 @@ function ValidationDetailsDialog({ slip, onClose, onValidate, onReturn }: {
               </div>
             </div>
           </DialogContent>
-        </Dialog>
+        </Dialog>}
 
-        <Dialog open={showAddCategory} onOpenChange={setShowAddCategory}>
+        {!readOnly && <Dialog open={showAddCategory} onOpenChange={setShowAddCategory}>
           <DialogContent className="!max-w-[calc(100vw-1rem)] w-[calc(100vw-1rem)] sm:!max-w-[420px]">
             <DialogHeader><DialogTitle>Add Finance Category</DialogTitle></DialogHeader>
             <div className="space-y-3">
@@ -934,7 +958,7 @@ function ValidationDetailsDialog({ slip, onClose, onValidate, onReturn }: {
               </div>
             </div>
           </DialogContent>
-        </Dialog>
+        </Dialog>}
       </DialogContent>
     </Dialog>
   );

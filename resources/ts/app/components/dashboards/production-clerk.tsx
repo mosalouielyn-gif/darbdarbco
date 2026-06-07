@@ -680,50 +680,61 @@ function ProductionBoxesPanel({ records, loading, onView, onEdit }: {
               <TableRow>
                 <TableHead rowSpan={2}>Date</TableHead>
                 <TableHead rowSpan={2}>Beneficiary Name</TableHead>
-                <TableHead colSpan={4} className="text-center border-r">Class A Boxes</TableHead>
-                <TableHead colSpan={4} className="text-center border-r">Class B Boxes</TableHead>
+                <TableHead colSpan={3} className="text-center border-r">Class A Boxes</TableHead>
+                <TableHead colSpan={3} className="text-center border-r">Class B Boxes</TableHead>
                 <TableHead rowSpan={2} className="text-center border-r">Special Product</TableHead>
-                <TableHead colSpan={5} className="text-center border-r">Defects (by age)</TableHead>
-                <TableHead colSpan={5} className="text-center border-r">Rejects (by age)</TableHead>
+                <TableHead rowSpan={2} className="text-center border-r">Total Boxes</TableHead>
+                <TableHead colSpan={4} className="text-center border-r">Defects (by age)</TableHead>
+                <TableHead colSpan={4} className="text-center border-r">Rejects (by age)</TableHead>
+                <TableHead rowSpan={2} className="text-center border-r">Total Defects / Rejects</TableHead>
                 <TableHead rowSpan={2} className="w-[88px] text-center">Actions</TableHead>
               </TableRow>
               <TableRow className="text-xs text-muted-foreground">
                 <TableHead className="text-center">Big Hands</TableHead>
                 <TableHead className="text-center">Small Hands</TableHead>
-                <TableHead className="text-center">CPs</TableHead>
-                <TableHead className="text-center border-r">Total</TableHead>
+                <TableHead className="text-center border-r">CPs</TableHead>
                 <TableHead className="text-center">Big Hands</TableHead>
                 <TableHead className="text-center">Small Hands</TableHead>
-                <TableHead className="text-center">CPs</TableHead>
-                <TableHead className="text-center border-r">Total</TableHead>
+                <TableHead className="text-center border-r">CPs</TableHead>
                 <TableHead className="text-center">11w</TableHead>
                 <TableHead className="text-center">12w</TableHead>
                 <TableHead className="text-center">13w</TableHead>
-                <TableHead className="text-center">14w</TableHead>
-                <TableHead className="text-center border-r">Total</TableHead>
+                <TableHead className="text-center border-r">14w</TableHead>
                 <TableHead className="text-center">11w</TableHead>
                 <TableHead className="text-center">12w</TableHead>
                 <TableHead className="text-center">13w</TableHead>
-                <TableHead className="text-center">14w</TableHead>
-                <TableHead className="text-center border-r">Total</TableHead>
+                <TableHead className="text-center border-r">14w</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {loading && (
                 <TableRow>
-                  <TableCell colSpan={23} className="text-center text-muted-foreground py-6">Loading production records...</TableCell>
+                  <TableCell colSpan={21} className="text-center text-muted-foreground py-6">Loading production records...</TableCell>
                 </TableRow>
               )}
               {!loading && filteredRecords.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={23} className="text-center text-muted-foreground py-6">No production records found.</TableCell>
+                  <TableCell colSpan={21} className="text-center text-muted-foreground py-6">No production records found.</TableCell>
                 </TableRow>
               )}
               {!loading && filteredRecords.map((r) => {
-                const classATotal = r.classA_big + r.classA_small + r.classA_cp;
-                const classBTotal = r.classB_big + r.classB_small + r.classB_cp;
-                const defectsTotal = r.defects_11 + r.defects_12 + r.defects_13 + r.defects_14;
-                const rejectsTotal = r.rejects_11 + r.rejects_12 + r.rejects_13 + r.rejects_14;
+                const totalBoxes =
+                  r.classA_big +
+                  r.classA_small +
+                  r.classA_cp +
+                  r.classB_big +
+                  r.classB_small +
+                  r.classB_cp +
+                  r.special;
+                const totalDefectsRejects =
+                  r.defects_11 +
+                  r.defects_12 +
+                  r.defects_13 +
+                  r.defects_14 +
+                  r.rejects_11 +
+                  r.rejects_12 +
+                  r.rejects_13 +
+                  r.rejects_14;
 
                 return (
                   <TableRow key={r.id}>
@@ -731,23 +742,21 @@ function ProductionBoxesPanel({ records, loading, onView, onEdit }: {
                     <TableCell className="font-medium">{r.beneficiary}</TableCell>
                     <TableCell className="text-center">{r.classA_big}</TableCell>
                     <TableCell className="text-center">{r.classA_small}</TableCell>
-                    <TableCell className="text-center">{r.classA_cp}</TableCell>
-                    <TableCell className="text-center font-semibold border-r">{classATotal}</TableCell>
+                    <TableCell className="text-center border-r">{r.classA_cp}</TableCell>
                     <TableCell className="text-center">{r.classB_big}</TableCell>
                     <TableCell className="text-center">{r.classB_small}</TableCell>
-                    <TableCell className="text-center">{r.classB_cp}</TableCell>
-                    <TableCell className="text-center font-semibold border-r">{classBTotal}</TableCell>
+                    <TableCell className="text-center border-r">{r.classB_cp}</TableCell>
                     <TableCell className="text-center border-r"><strong>{r.special}</strong></TableCell>
+                    <TableCell className="text-center border-r font-semibold text-emerald-700">{totalBoxes}</TableCell>
                     <TableCell className="text-center text-amber-600">{r.defects_11}</TableCell>
                     <TableCell className="text-center text-amber-600">{r.defects_12}</TableCell>
                     <TableCell className="text-center text-amber-600">{r.defects_13}</TableCell>
-                    <TableCell className="text-center text-amber-600">{r.defects_14}</TableCell>
-                    <TableCell className="text-center font-semibold text-amber-700 border-r">{defectsTotal}</TableCell>
+                    <TableCell className="text-center text-amber-600 border-r">{r.defects_14}</TableCell>
                     <TableCell className="text-center text-red-600">{r.rejects_11}</TableCell>
                     <TableCell className="text-center text-red-600">{r.rejects_12}</TableCell>
                     <TableCell className="text-center text-red-600">{r.rejects_13}</TableCell>
-                    <TableCell className="text-center text-red-600">{r.rejects_14}</TableCell>
-                    <TableCell className="text-center font-semibold text-red-700 border-r">{rejectsTotal}</TableCell>
+                    <TableCell className="text-center text-red-600 border-r">{r.rejects_14}</TableCell>
+                    <TableCell className="text-center border-r font-semibold text-red-700">{totalDefectsRejects}</TableCell>
                     <TableCell className="w-[88px]">
                       <ProductionActionCell onView={() => onView(r)} onEdit={() => onEdit(r)} />
                     </TableCell>

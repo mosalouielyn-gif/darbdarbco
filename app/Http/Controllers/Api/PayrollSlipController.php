@@ -17,6 +17,7 @@ class PayrollSlipController extends Controller
         $values = $this->values($payload, $slipNo);
 
         $id = DB::table('payroll_slips')->insertGetId($values);
+        $this->syncOtherDeductions($id, $payload['other_deduction_items'] ?? []);
         $record = $this->findSlip($id);
 
         $this->recordAudit($payload['user_id'] ?? null, $payload['user_name'] ?? null, 'Created', "Created payroll slip {$slipNo}");
@@ -35,6 +36,7 @@ class PayrollSlipController extends Controller
 
         $payload = $this->validatedPayload($request);
         DB::table('payroll_slips')->where('id', $id)->update($this->values($payload, $current->slip_no ?? null, $current));
+        $this->syncOtherDeductions($id, $payload['other_deduction_items'] ?? []);
 
         $record = $this->findSlip($id);
         $this->recordAudit($payload['user_id'] ?? null, $payload['user_name'] ?? null, 'Updated', "Updated payroll slip {$record->slip_no}");
@@ -212,6 +214,9 @@ class PayrollSlipController extends Controller
             'previous_balance' => ['nullable', 'numeric', 'min:0'],
             'labor_cost' => ['nullable', 'numeric', 'min:0'],
             'other_deductions' => ['nullable', 'numeric', 'min:0'],
+            'other_deduction_items' => ['nullable', 'array'],
+            'other_deduction_items.*.type' => ['required_with:other_deduction_items', 'string', 'max:255'],
+            'other_deduction_items.*.amount' => ['required_with:other_deduction_items', 'numeric', 'min:0'],
             'gross_amount' => ['required', 'numeric'],
             'credit_deduction' => ['nullable', 'numeric', 'min:0'],
             'total_deductions' => ['required', 'numeric', 'min:0'],
@@ -309,7 +314,7 @@ class PayrollSlipController extends Controller
         $validatedName = "validated_user.$userNameColumn";
         $approvedName = "approved_user.$userNameColumn";
 
-        return DB::table('payroll_slips')
+        $slip = DB::table('payroll_slips')
             ->leftJoin('beneficiaries', 'beneficiaries.id', '=', 'payroll_slips.beneficiary_id')
             ->leftJoin('users as prepared_user', 'prepared_user.id', '=', 'payroll_slips.prepared_by')
             ->leftJoin('users as validated_user', 'validated_user.id', '=', 'payroll_slips.validated_by')
@@ -317,6 +322,44 @@ class PayrollSlipController extends Controller
             ->selectRaw("payroll_slips.*, $beneficiaryName as beneficiary_name, $preparedName as prepared_by_name, $validatedName as validated_by_name, $approvedName as approved_by_name")
             ->where('payroll_slips.id', $id)
             ->first();
+
+        if ($slip && Schema::hasTable('payroll_deductions')) {
+            $slip->deductions = DB::table('payroll_deductions')
+                ->where('payroll_slip_id', $id)
+                ->orderBy('id')
+                ->get()
+                ->all();
+        }
+
+        return $slip;
+    }
+
+    private function syncOtherDeductions(int $slipId, array $items): void
+    {
+        if (! Schema::hasTable('payroll_deductions')) return;
+
+        DB::table('payroll_deductions')->where('payroll_slip_id', $slipId)->delete();
+
+        $rows = collect($items)
+            ->map(function ($item) use ($slipId) {
+                $amount = (float) ($item['amount'] ?? 0);
+                if ($amount <= 0) return null;
+
+                return [
+                    'payroll_slip_id' => $slipId,
+                    'deduction_type' => trim((string) ($item['type'] ?? 'Other Authorized Deduction')) ?: 'Other Authorized Deduction',
+                    'amount' => $amount,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ];
+            })
+            ->filter()
+            ->values()
+            ->all();
+
+        if ($rows) {
+            DB::table('payroll_deductions')->insert($rows);
+        }
     }
 
     private function recordAudit(?int $userId, ?string $userName, string $action, string $description): void

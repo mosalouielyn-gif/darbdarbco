@@ -409,7 +409,7 @@ class AppDataController extends Controller
         $validatedName = "validated_user.$userNameColumn";
         $approvedName = "approved_user.$userNameColumn";
 
-        return DB::table('payroll_slips')
+        $slips = DB::table('payroll_slips')
             ->leftJoin('beneficiaries', 'beneficiaries.id', '=', 'payroll_slips.beneficiary_id')
             ->leftJoin('users as prepared_user', 'prepared_user.id', '=', 'payroll_slips.prepared_by')
             ->leftJoin('users as validated_user', 'validated_user.id', '=', 'payroll_slips.validated_by')
@@ -419,6 +419,22 @@ class AppDataController extends Controller
             ->limit(100)
             ->get()
             ->all();
+
+        if (! Schema::hasTable('payroll_deductions')) {
+            return $slips;
+        }
+
+        $deductions = DB::table('payroll_deductions')
+            ->whereIn('payroll_slip_id', collect($slips)->pluck('id')->all())
+            ->orderBy('id')
+            ->get()
+            ->groupBy('payroll_slip_id');
+
+        foreach ($slips as $slip) {
+            $slip->deductions = ($deductions[$slip->id] ?? collect())->values()->all();
+        }
+
+        return $slips;
     }
 
     private function auditLogs(): array

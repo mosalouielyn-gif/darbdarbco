@@ -188,6 +188,15 @@ type PayrollRecord = {
   previousBalance?: number;
   laborCost?: number;
   otherDeductions?: number;
+  otherDeductionItems?: OtherAuthorizedDeductionItem[];
+  preparedByName?: string;
+  validatedByName?: string;
+  approvedByName?: string;
+};
+
+type OtherAuthorizedDeductionItem = {
+  type: string;
+  amount: number;
 };
 
 type BeneficiaryOption = { id: string; dbId: number; code: string; name: string };
@@ -282,6 +291,12 @@ function mapPayrollSlip(row: any): PayrollRecord {
   const classABoxes = Number(row.class_a_boxes ?? 0);
   const classBBoxes = Number(row.class_b_boxes ?? 0);
   const specialBoxes = Number(row.special_boxes ?? row.special_product_boxes ?? 0);
+  const otherDeductionItems = (Array.isArray(row.deductions) ? row.deductions : [])
+    .map((deduction: any) => ({
+      type: String(deduction.deduction_type ?? deduction.type ?? "Other Authorized Deduction"),
+      amount: Number(deduction.amount ?? 0),
+    }))
+    .filter((deduction) => deduction.amount > 0);
 
   return {
     id: Number(row.id),
@@ -307,6 +322,10 @@ function mapPayrollSlip(row: any): PayrollRecord {
     previousBalance: Number(row.previous_balance ?? 0),
     laborCost: Number(row.labor_cost ?? 0),
     otherDeductions: Number(row.other_deductions ?? 0),
+    otherDeductionItems,
+    preparedByName: row.prepared_by_name ?? "",
+    validatedByName: row.validated_by_name ?? "",
+    approvedByName: row.approved_by_name ?? "",
   };
 }
 
@@ -395,6 +414,7 @@ function payrollPayload(record: PayrollRecord, user: User) {
     previous_balance: record.previousBalance ?? 0,
     labor_cost: record.laborCost ?? 0,
     other_deductions: record.otherDeductions ?? 0,
+    other_deduction_items: record.otherDeductionItems ?? [],
     gross_amount: record.grossIncome,
     credit_deduction: record.creditDeduction ?? 0,
     total_deductions: record.totalDeductions,
@@ -697,6 +717,9 @@ function BeneficiaryPayroll({ mode, user, beneficiaries, productionRecords, cred
       {viewSlip && (
         <ViewPayrollSlipDialog
           slip={viewSlip}
+          beneficiaries={beneficiaries}
+          productionRecords={productionRecords}
+          creditTransactions={creditTransactions}
           auditEntries={auditRecords.filter((entry) => entry.slipNo === viewSlip.slipNo)}
           onClose={() => setViewSlip(null)}
           onSubmit={handleSubmitForValidation}
@@ -903,6 +926,12 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, beneficiar
         previousBalance,
         laborCost: laborCostAmount,
         otherDeductions: otherDeductionsTotal,
+        otherDeductionItems: otherDeductions
+          .map((deduction) => ({
+            type: String(deduction.type ?? "").trim() || "Other Authorized Deduction",
+            amount: parseFloat(deduction.amount) || 0,
+          }))
+          .filter((deduction) => deduction.amount > 0),
         validationStatus,
         approvalStatus: validationStatus === "Submitted for Validation" ? "Pending Approval" : editRecord?.approvalStatus ?? "Pending Approval",
       });
@@ -1492,8 +1521,11 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, beneficiar
   );
 }
 
-function ViewPayrollSlipDialog({ slip, auditEntries = [], onClose, onEdit, onSubmit }: {
+function ViewPayrollSlipDialog({ slip, beneficiaries = [], productionRecords = [], creditTransactions = [], auditEntries = [], onClose, onEdit, onSubmit }: {
   slip: PayrollRecord;
+  beneficiaries?: BeneficiaryOption[];
+  productionRecords?: PayrollProductionRecord[];
+  creditTransactions?: PayrollCreditMaterial[];
   auditEntries?: PayrollAuditRecord[];
   onClose: () => void;
   onEdit?: (record: PayrollRecord) => void;
@@ -1502,7 +1534,6 @@ function ViewPayrollSlipDialog({ slip, auditEntries = [], onClose, onEdit, onSub
   if (!slip) return null;
 
   const [showBoxBreakdown, setShowBoxBreakdown] = useState(false);
-  const [materialCategory, setMaterialCategory] = useState("all");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const getValidationBadge = (status: string) => {
@@ -1521,13 +1552,35 @@ function ViewPayrollSlipDialog({ slip, auditEntries = [], onClose, onEdit, onSub
   const classABoxes = slip.classABoxes ?? 0;
   const classBBoxes = slip.classBBoxes ?? 0;
   const specialBoxes = slip.specialBoxes ?? 0;
+  const beneficiaryRecord =
+    beneficiaries.find((beneficiary) => slip.beneficiaryId && beneficiary.dbId === slip.beneficiaryId) ??
+    beneficiaries.find((beneficiary) => sameBeneficiaryName(beneficiary.name, slip.beneficiary));
+  const beneficiaryCode = beneficiaryRecord?.code ?? (slip.beneficiaryId ? `BEN-${String(slip.beneficiaryId).padStart(3, "0")}` : "-");
+  const preparedByName = slip.preparedByName?.trim() || "-";
+  const sourceProductionRecord =
+    productionRecords.find((record) => slip.productionRecordId && record.dbId === slip.productionRecordId) ??
+    productionRecords.find((record) =>
+      sameBeneficiaryName(record.beneficiaryName, slip.beneficiary) &&
+      (!slip.harvestDate || record.harvestDate === slip.harvestDate)
+    ) ??
+    productionRecords.find((record) => sameBeneficiaryName(record.beneficiaryName, slip.beneficiary));
 
   const productionData = {
-    refNo: slip.productionRecordId ? String(slip.productionRecordId) : "-",
-    harvestDate: slip.harvestDate,
-    classA: { total: classABoxes, bigHands: classABoxes, smallHands: 0, cps: 0 },
-    classB: { total: classBBoxes, bigHands: classBBoxes, smallHands: 0, cps: 0 },
-    special: specialBoxes
+    refNo: sourceProductionRecord?.refNo ?? (slip.productionRecordId ? String(slip.productionRecordId) : "-"),
+    harvestDate: sourceProductionRecord?.harvestDate ?? slip.harvestDate,
+    classA: {
+      total: sourceProductionRecord?.classA ?? classABoxes,
+      bigHands: sourceProductionRecord?.classA_big ?? classABoxes,
+      smallHands: sourceProductionRecord?.classA_small ?? 0,
+      cps: sourceProductionRecord?.classA_cp ?? 0,
+    },
+    classB: {
+      total: sourceProductionRecord?.classB ?? classBBoxes,
+      bigHands: sourceProductionRecord?.classB_big ?? classBBoxes,
+      smallHands: sourceProductionRecord?.classB_small ?? 0,
+      cps: sourceProductionRecord?.classB_cp ?? 0,
+    },
+    special: sourceProductionRecord?.special ?? specialBoxes
   };
 
   // Pricing
@@ -1542,18 +1595,28 @@ function ViewPayrollSlipDialog({ slip, auditEntries = [], onClose, onEdit, onSub
   const computedGrossIncome = subtotalClassA + subtotalClassB + subtotalSpecial;
   const grossIncome = computedGrossIncome > 0 ? computedGrossIncome : slip.grossIncome;
 
-  const materialDeductions: { refNo: string; dateIssued: string; category: string; materialName: string; quantity: number; unit: string; unitPrice: number; totalCredit: number; deductionApplied: number; remainingBalance: number }[] = [];
-
-  const filteredMaterials = materialCategory === "all"
-    ? materialDeductions
-    : materialDeductions.filter(m => m.category === materialCategory);
+  const materialDeductions = creditTransactions
+    .filter((credit) => sameBeneficiaryName(credit.beneficiaryName, slip.beneficiary))
+    .map((credit) => ({
+      refNo: credit.refNo,
+      dateIssued: credit.dateIssued,
+      materialName: credit.materialName || "Material credit",
+      quantity: credit.quantity,
+      unit: credit.unit,
+      unitPrice: credit.quantity > 0 ? credit.amountCharged / credit.quantity : credit.amountCharged,
+      totalCredit: credit.amountCharged,
+      deductionApplied: credit.deductionAmount > 0 ? credit.deductionAmount : credit.remaining,
+      remainingBalance: credit.remaining,
+    }));
 
   // Total material deductions (all materials, not filtered)
-  const totalMaterialDeductions = slip.creditDeduction ?? materialDeductions.reduce((sum, m) => sum + m.deductionApplied, 0);
+  const itemizedMaterialDeductionsTotal = materialDeductions.reduce((sum, m) => sum + m.deductionApplied, 0);
+  const totalMaterialDeductions = (slip.creditDeduction ?? 0) > 0 ? slip.creditDeduction ?? 0 : itemizedMaterialDeductionsTotal;
   const previousUnpaid = slip.previousBalance ?? 0;
   const laborCostAmount = slip.laborCost ?? 0;
-  const otherDeductions = slip.otherDeductions ?? 0;
-  const computedTotalDeductions = totalMaterialDeductions + previousUnpaid + laborCostAmount + otherDeductions;
+  const otherAuthorizedDeductionsTotal = slip.otherDeductions ?? 0;
+  const otherAuthorizedDeductionItems = slip.otherDeductionItems ?? [];
+  const computedTotalDeductions = totalMaterialDeductions + previousUnpaid + laborCostAmount + otherAuthorizedDeductionsTotal;
   const totalDeductions = computedTotalDeductions > 0 ? computedTotalDeductions : slip.totalDeductions;
   const netIncome = grossIncome - totalDeductions;
 
@@ -1627,7 +1690,7 @@ function ViewPayrollSlipDialog({ slip, auditEntries = [], onClose, onEdit, onSub
       ["Material Credit Deductions", totalMaterialDeductions],
       ["Previous Unpaid Balance", previousUnpaid],
       ["Labor Cost", laborCostAmount],
-      ["Other Authorized Deductions", otherDeductions],
+      ["Other Authorized Deductions", otherAuthorizedDeductionsTotal],
       ["Total Deductions", totalDeductions],
     ].forEach(([label, amount]) => {
       doc.text(String(label), 18, y);
@@ -1682,7 +1745,7 @@ function ViewPayrollSlipDialog({ slip, auditEntries = [], onClose, onEdit, onSub
                   </div>
                   <div>
                     <p className="text-xs text-muted-foreground mb-0.5">Prepared By</p>
-                    <p className="font-semibold">-</p>
+                    <p className="font-semibold">{preparedByName}</p>
                   </div>
                 </div>
               </div>
@@ -1737,7 +1800,7 @@ function ViewPayrollSlipDialog({ slip, auditEntries = [], onClose, onEdit, onSub
                     </div>
                     <div>
                       <p className="text-xs font-semibold text-muted-foreground mb-1">BENEFICIARY ID</p>
-                      <p className="font-semibold">BEN-{String(slip.id).padStart(3, '0')}</p>
+                      <p className="font-semibold">{beneficiaryCode}</p>
                     </div>
                     <div>
                       <p className="text-xs font-semibold text-muted-foreground mb-1">PAYROLL PERIOD</p>
@@ -1871,50 +1934,6 @@ function ViewPayrollSlipDialog({ slip, auditEntries = [], onClose, onEdit, onSub
                   </div>
                 </CardHeader>
                 <CardContent className="pt-5 px-6 pb-5 space-y-4">
-                  {/* Category Filters */}
-                  <div className="flex gap-2 flex-wrap p-3 bg-slate-50 rounded-lg border">
-                    <Button
-                      variant={materialCategory === "all" ? "default" : "outline"}
-                      size="sm"
-                      onClick={() => setMaterialCategory("all")}
-                      className={materialCategory === "all" ? "bg-amber-600 hover:bg-amber-700" : ""}
-                    >
-                      All ({materialDeductions.length})
-                    </Button>
-                    <Button
-                      variant={materialCategory === "Fertilizers" ? "default" : "outline"}
-                      size="sm"
-                      onClick={() => setMaterialCategory("Fertilizers")}
-                      className={materialCategory === "Fertilizers" ? "bg-amber-600 hover:bg-amber-700" : ""}
-                    >
-                      Fertilizers
-                    </Button>
-                    <Button
-                      variant={materialCategory === "Pesticides" ? "default" : "outline"}
-                      size="sm"
-                      onClick={() => setMaterialCategory("Pesticides")}
-                      className={materialCategory === "Pesticides" ? "bg-amber-600 hover:bg-amber-700" : ""}
-                    >
-                      Pesticides
-                    </Button>
-                    <Button
-                      variant={materialCategory === "Tools" ? "default" : "outline"}
-                      size="sm"
-                      onClick={() => setMaterialCategory("Tools")}
-                      className={materialCategory === "Tools" ? "bg-amber-600 hover:bg-amber-700" : ""}
-                    >
-                      Tools
-                    </Button>
-                    <Button
-                      variant={materialCategory === "Packaging" ? "default" : "outline"}
-                      size="sm"
-                      onClick={() => setMaterialCategory("Packaging")}
-                      className={materialCategory === "Packaging" ? "bg-amber-600 hover:bg-amber-700" : ""}
-                    >
-                      Packaging
-                    </Button>
-                  </div>
-
                   {/* Material Deductions Table */}
                   <div className="w-full overflow-x-auto">
                     <div className="border rounded-lg overflow-hidden">
@@ -1925,7 +1944,6 @@ function ViewPayrollSlipDialog({ slip, auditEntries = [], onClose, onEdit, onSub
                             <TableHead className="font-bold py-3">Reference No.</TableHead>
                             <TableHead className="font-bold py-3">Date Issued</TableHead>
                             <TableHead className="font-bold py-3">Material Name</TableHead>
-                            <TableHead className="font-bold py-3">Category</TableHead>
                             <TableHead className="text-right font-bold py-3">Quantity</TableHead>
                             <TableHead className="text-right font-bold py-3">Unit Price</TableHead>
                             <TableHead className="text-right font-bold py-3">Total Amount</TableHead>
@@ -1933,14 +1951,19 @@ function ViewPayrollSlipDialog({ slip, auditEntries = [], onClose, onEdit, onSub
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {filteredMaterials.map((material) => {
+                          {materialDeductions.length === 0 ? (
+                            <TableRow>
+                              <TableCell colSpan={7} className="h-16 text-center text-muted-foreground">
+                                No material credit deductions found for this payroll.
+                              </TableCell>
+                            </TableRow>
+                          ) : materialDeductions.map((material) => {
                             const hasError = material.remainingBalance < 0 || material.deductionApplied > material.totalCredit;
                             return (
                               <TableRow key={material.refNo} className={hasError ? "bg-red-50 hover:bg-red-100" : "hover:bg-amber-50/50"}>
                                 <TableCell className="font-semibold py-3">{material.refNo}</TableCell>
                                 <TableCell className="py-3">{material.dateIssued}</TableCell>
                                 <TableCell className="py-3">{material.materialName}</TableCell>
-                                <TableCell className="py-3"><Badge variant="outline" className="text-xs">{material.category}</Badge></TableCell>
                                 <TableCell className="text-right py-3">{material.quantity} {material.unit}</TableCell>
                                 <TableCell className="text-right py-3">&#8369;{material.unitPrice.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
                                 <TableCell className="text-right font-bold py-3">&#8369;{material.totalCredit.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
@@ -1959,17 +1982,12 @@ function ViewPayrollSlipDialog({ slip, auditEntries = [], onClose, onEdit, onSub
 
                   <div className="flex justify-between items-center text-sm px-2">
                     <p className="text-muted-foreground">
-                      Showing <span className="font-semibold">{filteredMaterials.length}</span> of <span className="font-semibold">{materialDeductions.length}</span> materials
+                      Showing <span className="font-semibold">{materialDeductions.length}</span> material credit {materialDeductions.length === 1 ? "record" : "records"}
                     </p>
-                    {materialCategory !== "all" && (
-                      <p className="text-muted-foreground text-xs italic">
-                        Filtered by {materialCategory}
-                      </p>
-                    )}
                   </div>
 
                   <div className="flex justify-between items-center p-4 bg-gradient-to-r from-amber-50 to-orange-50 rounded-lg border-2 border-amber-300">
-                    <span className="font-bold text-amber-700">Total Material Deductions (All Categories)</span>
+                    <span className="font-bold text-amber-700">Total Material Credit Deductions</span>
                     <span className="font-bold text-amber-700 text-2xl">&#8369;{totalMaterialDeductions.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
                   </div>
                 </CardContent>
@@ -2015,9 +2033,26 @@ function ViewPayrollSlipDialog({ slip, auditEntries = [], onClose, onEdit, onSub
                     <TableCell className="text-right py-4 font-semibold text-red-600 whitespace-nowrap">&#8369;{laborCostAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
                   </TableRow>
                   <TableRow className="hover:bg-red-50/30">
-                    <TableCell className="py-4 pl-8">Other Adjustments</TableCell>
-                    <TableCell className="text-right py-4 font-semibold text-red-600 whitespace-nowrap">&#8369;{otherDeductions.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
+                    <TableCell className="py-4 pl-8">Other Authorized Deductions</TableCell>
+                    <TableCell className="text-right py-4 font-semibold text-red-600 whitespace-nowrap">&#8369;{otherAuthorizedDeductionsTotal.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
                   </TableRow>
+                  {otherAuthorizedDeductionItems.length > 0 ? (
+                    otherAuthorizedDeductionItems.map((deduction, index) => (
+                      <TableRow key={`${deduction.type}-${index}`} className="hover:bg-red-50/20">
+                        <TableCell className="py-2 pl-12 text-sm text-muted-foreground">{deduction.type}</TableCell>
+                        <TableCell className="text-right py-2 text-sm font-medium text-red-600 whitespace-nowrap">
+                          &#8369;{deduction.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  ) : otherAuthorizedDeductionsTotal > 0 ? (
+                    <TableRow className="hover:bg-red-50/20">
+                      <TableCell className="py-2 pl-12 text-sm text-muted-foreground">Other Authorized Deduction total</TableCell>
+                      <TableCell className="text-right py-2 text-sm font-medium text-red-600 whitespace-nowrap">
+                        &#8369;{otherAuthorizedDeductionsTotal.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                      </TableCell>
+                    </TableRow>
+                  ) : null}
                   <TableRow className="border-t-2 border-red-300 bg-red-50">
                     <TableCell className="py-4 font-bold">Total Deductions</TableCell>
                     <TableCell className="text-right py-4 font-bold text-red-600 text-lg whitespace-nowrap">&#8369;{totalDeductions.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>

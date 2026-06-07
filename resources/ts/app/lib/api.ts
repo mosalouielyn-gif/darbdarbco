@@ -623,6 +623,7 @@ export interface PayrollSlipInput {
   previous_balance?: number;
   labor_cost?: number;
   other_deductions?: number;
+  other_deduction_items?: Array<{ type: string; amount: number }>;
   gross_amount: number;
   credit_deduction?: number;
   total_deductions: number;
