@@ -10,6 +10,8 @@ use Illuminate\Support\Facades\Schema;
 
 class PayrollSlipController extends Controller
 {
+    private const MIN_AUTHORIZED_DEDUCTION_AMOUNT = 1;
+
     public function store(Request $request): JsonResponse
     {
         $payload = $this->validatedPayload($request);
@@ -201,6 +203,10 @@ class PayrollSlipController extends Controller
         return $request->validate([
             'slip_no' => ['nullable', 'string', 'max:255'],
             'beneficiary_id' => ['required', 'integer'],
+            'beneficiary_name' => ['nullable', 'string', 'max:255'],
+            'beneficiary_code' => ['nullable', 'string', 'max:255'],
+            'beneficiary_contact_number' => ['nullable', 'string', 'max:255'],
+            'beneficiary_address' => ['nullable', 'string'],
             'production_record_id' => ['nullable', 'integer'],
             'payroll_period' => ['required', 'string', 'max:255'],
             'harvest_date' => ['nullable', 'date'],
@@ -216,7 +222,7 @@ class PayrollSlipController extends Controller
             'other_deductions' => ['nullable', 'numeric', 'min:0'],
             'other_deduction_items' => ['nullable', 'array'],
             'other_deduction_items.*.type' => ['required_with:other_deduction_items', 'string', 'max:255'],
-            'other_deduction_items.*.amount' => ['required_with:other_deduction_items', 'numeric', 'min:0'],
+            'other_deduction_items.*.amount' => ['required_with:other_deduction_items', 'numeric', 'min:'.self::MIN_AUTHORIZED_DEDUCTION_AMOUNT],
             'gross_amount' => ['required', 'numeric'],
             'credit_deduction' => ['nullable', 'numeric', 'min:0'],
             'total_deductions' => ['required', 'numeric', 'min:0'],
@@ -257,6 +263,13 @@ class PayrollSlipController extends Controller
             'approval_status' => $validationStatus === 'Submitted for Validation' ? 'Pending Approval' : ($payload['approval_status'] ?? 'Pending Approval'),
             'prepared_by' => $current?->prepared_by ?? $userId,
         ];
+
+        $beneficiarySnapshot = $this->beneficiarySnapshot($payload);
+        foreach ($beneficiarySnapshot as $column => $value) {
+            if (Schema::hasColumn('payroll_slips', $column)) {
+                $values[$column] = $value;
+            }
+        }
 
         if (Schema::hasColumn('payroll_slips', 'production_record_id')) {
             $values['production_record_id'] = $payload['production_record_id'] ?? null;
@@ -308,7 +321,10 @@ class PayrollSlipController extends Controller
 
     private function findSlip(int $id): object
     {
-        $beneficiaryName = Schema::hasColumn('beneficiaries', 'full_name') ? 'beneficiaries.full_name' : 'beneficiaries.name';
+        $joinedBeneficiaryName = Schema::hasColumn('beneficiaries', 'full_name') ? 'beneficiaries.full_name' : 'beneficiaries.name';
+        $beneficiaryName = Schema::hasColumn('payroll_slips', 'beneficiary_name')
+            ? "COALESCE(NULLIF(payroll_slips.beneficiary_name, ''), $joinedBeneficiaryName)"
+            : $joinedBeneficiaryName;
         $userNameColumn = Schema::hasColumn('users', 'full_name') ? 'full_name' : 'name';
         $preparedName = "prepared_user.$userNameColumn";
         $validatedName = "validated_user.$userNameColumn";
@@ -360,6 +376,49 @@ class PayrollSlipController extends Controller
         if ($rows) {
             DB::table('payroll_deductions')->insert($rows);
         }
+    }
+
+    private function beneficiarySnapshot(array $payload): array
+    {
+        if (! Schema::hasTable('beneficiaries')) {
+            return [
+                'beneficiary_name' => $payload['beneficiary_name'] ?? null,
+                'beneficiary_code' => $payload['beneficiary_code'] ?? null,
+                'beneficiary_contact_number' => $payload['beneficiary_contact_number'] ?? null,
+                'beneficiary_address' => $payload['beneficiary_address'] ?? null,
+            ];
+        }
+
+        $record = null;
+        if (! empty($payload['beneficiary_id'])) {
+            $record = DB::table('beneficiaries')->where('id', $payload['beneficiary_id'])->first();
+        }
+
+        $nameColumn = Schema::hasColumn('beneficiaries', 'full_name') ? 'full_name' : 'name';
+        $codeColumn = Schema::hasColumn('beneficiaries', 'code') ? 'code' : 'beneficiary_code';
+        $contactColumn = $this->beneficiaryContactColumn();
+
+        return [
+            'beneficiary_name' => $payload['beneficiary_name'] ?? ($record->{$nameColumn} ?? null),
+            'beneficiary_code' => $payload['beneficiary_code'] ?? ($record->{$codeColumn} ?? null),
+            'beneficiary_contact_number' => $payload['beneficiary_contact_number'] ?? ($contactColumn && $record ? ($record->{$contactColumn} ?? null) : null),
+            'beneficiary_address' => $payload['beneficiary_address'] ?? ($record->address ?? null),
+        ];
+    }
+
+    private function beneficiaryContactColumn(): ?string
+    {
+        if (! Schema::hasTable('beneficiaries')) {
+            return null;
+        }
+
+        foreach (['contact_number', 'contact_no', 'contact', 'phone', 'mobile_number'] as $column) {
+            if (Schema::hasColumn('beneficiaries', $column)) {
+                return $column;
+            }
+        }
+
+        return null;
     }
 
     private function recordAudit(?int $userId, ?string $userName, string $action, string $description): void

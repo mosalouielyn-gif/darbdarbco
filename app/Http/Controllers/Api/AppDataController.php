@@ -210,6 +210,10 @@ class AppDataController extends Controller
 
     private function beneficiaryContactColumn(): ?string
     {
+        if (! Schema::hasTable('beneficiaries')) {
+            return null;
+        }
+
         foreach (['contact_number', 'contact_no', 'contact', 'phone', 'mobile_number'] as $column) {
             if (Schema::hasColumn('beneficiaries', $column)) {
                 return $column;
@@ -217,6 +221,13 @@ class AppDataController extends Controller
         }
 
         return null;
+    }
+
+    private function beneficiaryContactSelect(): string
+    {
+        $column = $this->beneficiaryContactColumn();
+
+        return $column ? "beneficiaries.$column" : 'null';
     }
 
     private function dailyBoxes(): array
@@ -406,18 +417,30 @@ class AppDataController extends Controller
             return [];
         }
 
-        $beneficiaryName = Schema::hasColumn('beneficiaries', 'full_name') ? 'beneficiaries.full_name' : 'beneficiaries.name';
+        $joinedBeneficiaryName = Schema::hasColumn('beneficiaries', 'full_name') ? 'beneficiaries.full_name' : 'beneficiaries.name';
+        $beneficiaryName = Schema::hasColumn('payroll_slips', 'beneficiary_name')
+            ? "COALESCE(NULLIF(payroll_slips.beneficiary_name, ''), $joinedBeneficiaryName)"
+            : $joinedBeneficiaryName;
         $userNameColumn = Schema::hasColumn('users', 'full_name') ? 'full_name' : 'name';
         $preparedName = "prepared_user.$userNameColumn";
         $validatedName = "validated_user.$userNameColumn";
         $approvedName = "approved_user.$userNameColumn";
+        $beneficiaryCode = Schema::hasColumn('payroll_slips', 'beneficiary_code')
+            ? 'payroll_slips.beneficiary_code'
+            : (Schema::hasColumn('beneficiaries', 'code') ? 'beneficiaries.code' : 'beneficiaries.beneficiary_code');
+        $beneficiaryContact = Schema::hasColumn('payroll_slips', 'beneficiary_contact_number')
+            ? 'payroll_slips.beneficiary_contact_number'
+            : $this->beneficiaryContactSelect();
+        $beneficiaryAddress = Schema::hasColumn('payroll_slips', 'beneficiary_address')
+            ? 'payroll_slips.beneficiary_address'
+            : (Schema::hasColumn('beneficiaries', 'address') ? 'beneficiaries.address' : 'null');
 
         $slips = DB::table('payroll_slips')
             ->leftJoin('beneficiaries', 'beneficiaries.id', '=', 'payroll_slips.beneficiary_id')
             ->leftJoin('users as prepared_user', 'prepared_user.id', '=', 'payroll_slips.prepared_by')
             ->leftJoin('users as validated_user', 'validated_user.id', '=', 'payroll_slips.validated_by')
             ->leftJoin('users as approved_user', 'approved_user.id', '=', 'payroll_slips.approved_by')
-            ->selectRaw("payroll_slips.*, $beneficiaryName as beneficiary_name, $preparedName as prepared_by_name, $validatedName as validated_by_name, $approvedName as approved_by_name")
+            ->selectRaw("payroll_slips.*, $beneficiaryName as beneficiary_name, $beneficiaryCode as beneficiary_code, $beneficiaryContact as beneficiary_contact_number, $beneficiaryAddress as beneficiary_address, $preparedName as prepared_by_name, $validatedName as validated_by_name, $approvedName as approved_by_name")
             ->orderByDesc('payroll_slips.id')
             ->limit(100)
             ->get()

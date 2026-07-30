@@ -610,6 +610,10 @@ export async function deductCreditTransaction(
 export interface PayrollSlipInput {
   slip_no?: string;
   beneficiary_id: number;
+  beneficiary_name?: string;
+  beneficiary_code?: string;
+  beneficiary_contact_number?: string;
+  beneficiary_address?: string;
   production_record_id?: number;
   payroll_period: string;
   harvest_date?: string | null;

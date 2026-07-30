@@ -11,8 +11,8 @@ use Illuminate\Support\Facades\Schema;
 class RolePermissionController extends Controller
 {
     private const DEFAULTS = [
-        'manager_admin' => ['Dashboard (View)', 'Payroll (Approve)', 'Restock (Approve)', 'Production (View)', 'Inventory (View)', 'Reports (View)', 'Audit Logs (View)', 'User Management', 'Role Access', 'System Settings'],
-        'finance_officer' => ['Dashboard (View)', 'Payroll (Validate)', 'Payroll History (View)', 'Reports (View)', 'Audit Logs (View)'],
+        'manager_admin' => ['Dashboard (View)', 'Payroll (Approve)', 'Restock (Approve)', 'Production (View)', 'Inventory (View)', 'Reports (Generate)', 'Audit Logs (View)', 'User Management', 'Role Access', 'System Settings'],
+        'finance_officer' => ['Dashboard (View)', 'Payroll (Validate)', 'Payroll History (View)', 'Reports (Generate)', 'Audit Logs (View)'],
         'payroll_personnel' => ['Dashboard (View)', 'Payroll (Prepare)', 'Payroll History (View)', 'Production (View)', 'Credit Transactions (View)'],
         'inventory_bookkeeper' => ['Dashboard (View)', 'Inventory (Manage)', 'Stock History (View)', 'Credit Transactions (Manage)', 'Restock (Request)'],
         'production_clerk' => ['Dashboard (View)', 'Production (Encode)', 'Production Records (View)'],
@@ -38,9 +38,14 @@ class RolePermissionController extends Controller
         ]);
 
         foreach ($payload['permissions'] as $permission) {
+            $allowed = (bool) $permission['allowed'];
+            if ($permission['permission'] === 'Reports (Generate)' && ! $this->roleCanGenerateReports($payload['role'])) {
+                $allowed = false;
+            }
+
             DB::table('role_permissions')->updateOrInsert(
                 ['role' => $payload['role'], 'permission' => $permission['permission']],
-                ['allowed' => $permission['allowed'], 'updated_at' => now(), 'created_at' => now()]
+                ['allowed' => $allowed, 'updated_at' => now(), 'created_at' => now()]
             );
         }
 
@@ -63,6 +68,11 @@ class RolePermissionController extends Controller
                 );
             }
         }
+    }
+
+    private function roleCanGenerateReports(string $role): bool
+    {
+        return in_array($role, ['manager_admin', 'finance_officer'], true);
     }
 
     private function recordAudit(?int $userId, ?string $userName, string $description): void

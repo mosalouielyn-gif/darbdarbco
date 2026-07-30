@@ -170,6 +170,9 @@ type PayrollRecord = {
   period: string;
   beneficiary: string;
   beneficiaryId?: number;
+  beneficiaryCode?: string;
+  beneficiaryContactNumber?: string;
+  beneficiaryAddress?: string;
   productionRecordId?: number;
   harvestDate: string;
   totalBoxes: number;
@@ -199,7 +202,7 @@ type OtherAuthorizedDeductionItem = {
   amount: number;
 };
 
-type BeneficiaryOption = { id: string; dbId: number; code: string; name: string };
+type BeneficiaryOption = { id: string; dbId: number; code: string; name: string; contactNumber?: string; address?: string };
 type PayrollProductionRecord = {
   dbId: number;
   sourceTable: string;
@@ -233,6 +236,7 @@ type PayrollCreditMaterial = {
 };
 
 const DEFAULT_DEDUCTION_TYPES = ["SSS", "Pag-IBIG", "Other Approved Deductions"];
+const MIN_AUTHORIZED_DEDUCTION_AMOUNT = 1;
 
 function mapBeneficiary(row: any): BeneficiaryOption {
   return {
@@ -240,6 +244,8 @@ function mapBeneficiary(row: any): BeneficiaryOption {
     dbId: Number(row.id),
     code: String(row.code ?? row.beneficiary_code ?? row.id),
     name: formatBeneficiaryDisplayName(row.name ?? row.full_name ?? ""),
+    contactNumber: String(row.contact_number ?? row.contact ?? "").trim(),
+    address: String(row.address ?? "").trim(),
   };
 }
 
@@ -304,6 +310,9 @@ function mapPayrollSlip(row: any): PayrollRecord {
     period: row.payroll_period ?? row.period ?? "",
     beneficiary: row.beneficiary_name ?? row.beneficiary ?? "",
     beneficiaryId: Number(row.beneficiary_id) || undefined,
+    beneficiaryCode: row.beneficiary_code ?? "",
+    beneficiaryContactNumber: row.beneficiary_contact_number ?? row.contact_number ?? "",
+    beneficiaryAddress: row.beneficiary_address ?? row.address ?? "",
     productionRecordId: Number(row.production_record_id ?? row.production_box_record_id) || undefined,
     harvestDate: row.harvest_date ? String(row.harvest_date).slice(0, 10) : databaseDateKey(row.created_at ?? todaySystemDate()),
     totalBoxes: Number(row.total_boxes ?? classABoxes + classBBoxes + specialBoxes),
@@ -401,6 +410,10 @@ function payrollPayload(record: PayrollRecord, user: User) {
   return {
     slip_no: record.slipNo,
     beneficiary_id: record.beneficiaryId ?? 0,
+    beneficiary_name: record.beneficiary,
+    beneficiary_code: record.beneficiaryCode,
+    beneficiary_contact_number: record.beneficiaryContactNumber,
+    beneficiary_address: record.beneficiaryAddress,
     production_record_id: record.productionRecordId,
     payroll_period: record.period,
     harvest_date: record.harvestDate,
@@ -857,6 +870,7 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, beneficiar
   const previousBalance = 0;
   const laborCostAmount = Math.max(0, parseFloat(laborCost) || 0);
   const otherDeductionsTotal = otherDeductions.reduce((sum, d) => sum + (parseFloat(d.amount) || 0), 0);
+  const invalidAuthorizedDeduction = otherDeductions.find((deduction) => (parseFloat(deduction.amount) || 0) < MIN_AUTHORIZED_DEDUCTION_AMOUNT);
   const totalDeductions = totalCreditDeductions + previousBalance + laborCostAmount + otherDeductionsTotal;
   const netIncome = grossIncome - totalDeductions;
 
@@ -901,6 +915,11 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, beneficiar
       return;
     }
 
+    if (invalidAuthorizedDeduction) {
+      toast.error(`Each authorized deduction must be at least ₱${MIN_AUTHORIZED_DEDUCTION_AMOUNT.toLocaleString("en-US", { minimumFractionDigits: 2 })}.`);
+      return;
+    }
+
     setSavingAction(validationStatus === "Submitted for Validation" ? "submit" : "draft");
 
     try {
@@ -910,6 +929,9 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, beneficiar
         period: payrollPeriod,
         beneficiary: beneficiary.name,
         beneficiaryId: beneficiary.dbId,
+        beneficiaryCode: beneficiary.code,
+        beneficiaryContactNumber: beneficiary.contactNumber,
+        beneficiaryAddress: beneficiary.address,
         productionRecordId: matchedProductionRecords[0]?.sourceTable === "production_records" ? matchedProductionRecords[0]?.dbId : undefined,
         harvestDate: matchedProductionRecords[0]?.harvestDate ?? today,
         totalBoxes,
@@ -1013,6 +1035,14 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, beneficiar
                     <div className="space-y-1">
                       <Label>Harvest Date / Production Period</Label>
                       <DateInput defaultValue={today} />
+                    </div>
+                    <div className="space-y-1">
+                      <Label>Contact Number</Label>
+                      <Input value={selectedBeneficiaryOption?.contactNumber || ""} placeholder="Auto-filled" disabled className="bg-slate-50" />
+                    </div>
+                    <div className="space-y-1">
+                      <Label>Address</Label>
+                      <Input value={selectedBeneficiaryOption?.address || ""} placeholder="Auto-filled" disabled className="bg-slate-50" />
                     </div>
                     <div className="space-y-1">
                       <Label>Date Created</Label>
@@ -1325,23 +1355,28 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, beneficiar
                           ))}
                         </SelectContent>
                       </Select>
-                      <div className="relative">
-                        <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">&#8369;</span>
-                        <Input
-                          type="text"
-                          inputMode="decimal"
-                          placeholder="0.00"
-                          className="h-9 pl-7 text-right"
-                          value={deduction.amount}
-                          onFocus={(event) => event.currentTarget.select()}
-                          onChange={(e) => {
-                            const value = e.target.value;
-                            if (!/^\d*\.?\d{0,2}$/.test(value)) return;
-                            const updated = [...otherDeductions];
-                            updated[i].amount = value;
-                            setOtherDeductions(updated);
-                          }}
-                        />
+                      <div>
+                        <div className="relative">
+                          <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-sm text-muted-foreground">&#8369;</span>
+                          <Input
+                            type="text"
+                            inputMode="decimal"
+                            placeholder="0.00"
+                            className={`h-9 pl-7 text-right ${(parseFloat(deduction.amount) || 0) < MIN_AUTHORIZED_DEDUCTION_AMOUNT ? "border-red-300 focus-visible:ring-red-200" : ""}`}
+                            value={deduction.amount}
+                            onFocus={(event) => event.currentTarget.select()}
+                            onChange={(e) => {
+                              const value = e.target.value;
+                              if (!/^\d*\.?\d{0,2}$/.test(value)) return;
+                              const updated = [...otherDeductions];
+                              updated[i].amount = value;
+                              setOtherDeductions(updated);
+                            }}
+                          />
+                        </div>
+                        <div className="mt-1 text-right text-[11px] text-muted-foreground">
+                          Minimum: &#8369;{MIN_AUTHORIZED_DEDUCTION_AMOUNT.toLocaleString("en-US", { minimumFractionDigits: 2 })}
+                        </div>
                       </div>
                       <Button
                         variant="ghost"
@@ -1555,7 +1590,9 @@ function ViewPayrollSlipDialog({ slip, beneficiaries = [], productionRecords = [
   const beneficiaryRecord =
     beneficiaries.find((beneficiary) => slip.beneficiaryId && beneficiary.dbId === slip.beneficiaryId) ??
     beneficiaries.find((beneficiary) => sameBeneficiaryName(beneficiary.name, slip.beneficiary));
-  const beneficiaryCode = beneficiaryRecord?.code ?? (slip.beneficiaryId ? `BEN-${String(slip.beneficiaryId).padStart(3, "0")}` : "-");
+  const beneficiaryCode = slip.beneficiaryCode || beneficiaryRecord?.code || "-";
+  const beneficiaryContactNumber = slip.beneficiaryContactNumber || beneficiaryRecord?.contactNumber || "-";
+  const beneficiaryAddress = slip.beneficiaryAddress || beneficiaryRecord?.address || "-";
   const preparedByName = slip.preparedByName?.trim() || "-";
   const sourceProductionRecord =
     productionRecords.find((record) => slip.productionRecordId && record.dbId === slip.productionRecordId) ??
@@ -1821,6 +1858,14 @@ function ViewPayrollSlipDialog({ slip, beneficiaries = [], productionRecords = [
                     <div>
                       <p className="text-xs font-semibold text-muted-foreground mb-1">HARVEST DATE</p>
                       <p className="font-semibold">{slip.harvestDate}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs font-semibold text-muted-foreground mb-1">CONTACT NUMBER</p>
+                      <p className="font-semibold">{beneficiaryContactNumber}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs font-semibold text-muted-foreground mb-1">ADDRESS</p>
+                      <p className="font-semibold">{beneficiaryAddress}</p>
                     </div>
                     <div>
                       <p className="text-xs font-semibold text-muted-foreground mb-1">PRODUCTION REFERENCE</p>

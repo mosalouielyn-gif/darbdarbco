@@ -12,7 +12,7 @@ import { Textarea } from "../ui/textarea";
 import { DateInput } from "../ui/date-input";
 import {
   LayoutDashboard, ClipboardCheck, PackagePlus, Activity, FileBarChart2, History, Users, Settings,
-  TrendingUp, AlertTriangle, Wallet, CheckCircle2, Eye, Undo2, Plus, ArrowRight, Edit, Power, Loader2, UserPlus,
+  TrendingUp, AlertTriangle, Wallet, CheckCircle2, Eye, Undo2, Plus, Edit, Power, Loader2, UserPlus,
   Database, Trash2, LockKeyhole,
 } from "lucide-react";
 import {
@@ -240,7 +240,7 @@ export function ManagerAdminDashboard({ user, onLogout }: Props) {
       {active === "payroll" && <PayrollApprovals payroll={payroll} onApprove={approvePayroll} onReturn={returnPayroll} />}
       {active === "payroll-history" && <PayrollHistory payroll={payroll} />}
       {active === "restock" && <RestockRequests restock={restock} onApprove={approveRestock} onReturn={returnRestock} />}
-      {active === "reports" && <Reports payroll={payroll} restock={restock} users={users} audit={audit} inventoryItems={data?.inventoryItems || []} productionRecords={data?.productionRecords || []} />}
+      {active === "reports" && <Reports user={user} payroll={payroll} restock={restock} users={users} audit={audit} inventoryItems={data?.inventoryItems || []} productionRecords={data?.productionRecords || []} />}
       {active === "audit" && <AuditHistory audit={audit} />}
       {active === "users" && <UserManagement users={users} setUsers={setUsers} setAudit={setAudit} adminId={user.id} adminName={user.name} />}
       {active === "beneficiary-harvester" && <BeneficiaryHarvesterManagement beneficiaries={beneficiaries} setBeneficiaries={setBeneficiaries} users={users} setUsers={setUsers} setAudit={setAudit} adminId={user.id} adminName={user.name} />}
@@ -1267,67 +1267,63 @@ function OperationsMonitor() {
   );
 }
 
-function Reports({ payroll, restock, users, audit, inventoryItems, productionRecords }: { payroll: PayrollRow[]; restock: RestockRow[]; users: Account[]; audit: AuditRow[]; inventoryItems: any[]; productionRecords: any[] }) {
+function canGenerateReports(role: Role) {
+  return role === "manager_admin" || role === "finance_officer";
+}
+
+function Reports({ user, payroll, restock, users, audit, inventoryItems, productionRecords }: { user: User; payroll: PayrollRow[]; restock: RestockRow[]; users: Account[]; audit: AuditRow[]; inventoryItems: any[]; productionRecords: any[] }) {
   const [selected, setSelected] = useState<{ title: string; desc: string } | null>(null);
-  const [dateFrom, setDateFrom] = useState("2026-05-01");
-  const [dateTo, setDateTo] = useState("2026-06-30");
-  const [beneficiaryFilter, setBeneficiaryFilter] = useState("all");
-  const [classificationFilter, setClassificationFilter] = useState("all");
-  const [inventoryStatusFilter, setInventoryStatusFilter] = useState("all");
-  const [payrollStatusFilter, setPayrollStatusFilter] = useState("all");
-  const [transactionTypeFilter, setTransactionTypeFilter] = useState("all");
+  const allowReportGeneration = canGenerateReports(user.role);
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [reportTypeFilter, setReportTypeFilter] = useState("all");
+  const [reportSort, setReportSort] = useState("newest");
   const approvedPayroll = payroll.filter((row) => row.status === "Approved");
   const approvedPayrollTotal = approvedPayroll.reduce((sum, row) => sum + row.net, 0);
   const activeUsers = users.filter((user) => user.active).length;
   const inactiveUsers = users.length - activeUsers;
   const inventoryCounts = inventoryStatusCounts(inventoryItems, restock);
-  const beneficiaries = Array.from(new Set(payroll.map((row) => row.name)));
   const validationRecords = audit.filter((row) => row.module === "Payroll" && row.action === "Validated");
   const approvalRecords = audit.filter((row) => row.action === "Approved");
   const materialCreditRecords: { id: string; type: string; beneficiary: string; date: string; amount: number; status: string }[] = [];
   const selectedReport = selected ? buildManagerReport(selected.title, selected.desc, { payroll, restock, users, audit, inventoryItems, productionRecords, materialCreditRecords }) : null;
-  const generatedDocuments: { title: string; type: string; records: number; date: string; status: string; coverage: string }[] = [];
-  const filteredDocuments = generatedDocuments.filter((doc) => {
-    if (dateFrom && doc.date < dateFrom) return false;
-    if (dateTo && doc.date > dateTo) return false;
-    if (transactionTypeFilter !== "all" && doc.type !== transactionTypeFilter) return false;
-    if (beneficiaryFilter !== "all" && !["Production", "Payroll", "Credits", "Validation", "Approval"].includes(doc.type)) return false;
-    if (classificationFilter !== "all" && doc.type !== "Production") return false;
-    if (inventoryStatusFilter !== "all") {
-      if (doc.type !== "Inventory") return false;
-      if (doc.status !== inventoryStatusFilter) return false;
-    }
-    if (payrollStatusFilter !== "all") {
-      const payrollReportTypes = payrollStatusFilter === "Approved" ? ["Payroll", "Approval"] : payrollStatusFilter === "Validated" ? ["Payroll", "Validation"] : ["Payroll"];
-      if (!payrollReportTypes.includes(doc.type)) return false;
-      if (doc.type === "Payroll" && !payroll.some((row) => row.status === payrollStatusFilter)) return false;
-      if (doc.type === "Validation" && validationRecords.length === 0) return false;
-      if (doc.type === "Approval" && approvalRecords.length === 0) return false;
-    }
-    return true;
-  });
-  const cards = [
-    { title: "Production Report", desc: "Harvest totals, box counts, and production classifications." },
-    { title: "Inventory Report", desc: "Stock levels, movements, low-stock, and out-of-stock items." },
-    { title: "Payroll Report", desc: "Payroll totals, deductions, net pay, and approval trends." },
-    { title: "Credits / Restock Report", desc: "Material credits, restock requests, and replenishment status." },
-    { title: "Validation / Approval Report", desc: "Finance validation records and manager approval activity." },
-    { title: "Financial Summary", desc: "Income, expenses, deductions, and operational totals." },
-    { title: "Administrative Report", desc: "Users, roles, account status, login activity, and audit records." },
+  const reportOptions = [
+    { title: "Production Report", type: "Production", date: latestDateFrom(productionRecords, ["packing_date", "production_date", "harvest_date", "created_at"]), records: productionRecords.length, status: productionRecords.length ? "Available" : "No Records", desc: "Harvest totals, box counts, and production classifications." },
+    { title: "Inventory Report", type: "Inventory", date: latestDateFrom(inventoryItems, ["updated_at", "stock_date", "created_at"]), records: inventoryItems.length, status: inventoryCounts.outOfStock > 0 || inventoryCounts.lowStock > 0 ? "Needs Attention" : "Available", desc: "Stock levels, movements, low-stock, and out-of-stock items." },
+    { title: "Payroll Report", type: "Payroll", date: latestDateFrom(payroll, ["date"]), records: payroll.length, status: approvedPayroll.length ? "Available" : "No Approved Payroll", desc: "Payroll totals, deductions, net pay, and approval trends." },
+    { title: "Credits / Restock Report", type: "Restock", date: latestDateFrom(restock, ["date"]), records: restock.length, status: restock.some((row) => row.status === "Pending Review") ? "Needs Attention" : "Available", desc: "Material credits, restock requests, and replenishment status." },
+    { title: "Validation / Approval Report", type: "Validation", date: latestDateFrom(audit, ["ts"]), records: validationRecords.length + approvalRecords.length, status: validationRecords.length + approvalRecords.length ? "Available" : "No Records", desc: "Finance validation records and manager approval activity." },
+    { title: "Financial Summary", type: "Financial", date: latestDateFrom(payroll, ["date"]), records: payroll.length, status: approvedPayrollTotal > 0 ? "Available" : "No Amounts", desc: "Income, expenses, deductions, and operational totals." },
+    { title: "Administrative Report", type: "Administrative", date: latestDateFrom([...users, ...audit], ["lastLogin", "createdAt", "ts"]), records: users.length + audit.length, status: activeUsers || inactiveUsers ? "Available" : "No Records", desc: "Users, roles, account status, login activity, and audit records." },
   ];
+  const reportTypes = Array.from(new Set(reportOptions.map((report) => report.type)));
+  const filteredReports = reportOptions
+    .filter((report) => reportTypeFilter === "all" || report.type === reportTypeFilter)
+    .filter((report) => !dateFrom || !report.date || report.date >= dateFrom)
+    .filter((report) => !dateTo || !report.date || report.date <= dateTo)
+    .sort((a, b) => sortReports(a, b, reportSort));
 
   return (
     <div className="space-y-4">
       <div>
         <h1 className="flex items-center gap-2"><FileBarChart2 className="h-6 w-6 text-emerald-700" />Reports</h1>
-        <p className="text-muted-foreground">Select a report category to view its details and relevant filters.</p>
+        <p className="text-muted-foreground">Filter reports by type and date range before previewing or downloading.</p>
       </div>
+
+      {!allowReportGeneration && (
+        <Card className="border-amber-200 bg-amber-50">
+          <CardContent className="flex items-start gap-3 p-4 text-sm text-amber-900">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            <div>Only Manager/Admin and Finance Officer accounts can generate reports.</div>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-base">Report Filters</CardTitle>
         </CardHeader>
-        <CardContent className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <CardContent className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
           <div className="space-y-1">
             <Label>Date From</Label>
             <DateInput value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} />
@@ -1337,138 +1333,75 @@ function Reports({ payroll, restock, users, audit, inventoryItems, productionRec
             <DateInput value={dateTo} onChange={(event) => setDateTo(event.target.value)} />
           </div>
           <div className="space-y-1">
-            <Label>Beneficiary</Label>
-            <Select value={beneficiaryFilter} onValueChange={setBeneficiaryFilter}>
+            <Label>Report Type</Label>
+            <Select value={reportTypeFilter} onValueChange={setReportTypeFilter}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Beneficiaries</SelectItem>
-                {beneficiaries.map((name) => <SelectItem key={name} value={name}>{name}</SelectItem>)}
+                <SelectItem value="all">All Report Types</SelectItem>
+                {reportTypes.map((type) => <SelectItem key={type} value={type}>{type}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
           <div className="space-y-1">
-            <Label>Product Classification</Label>
-            <Select value={classificationFilter} onValueChange={setClassificationFilter}>
+            <Label>Sort By</Label>
+            <Select value={reportSort} onValueChange={setReportSort}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Classifications</SelectItem>
-                <SelectItem value="Class A">Class A</SelectItem>
-                <SelectItem value="Class B">Class B</SelectItem>
-                <SelectItem value="Special Product">Special Product</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-1">
-            <Label>Inventory Status</Label>
-            <Select value={inventoryStatusFilter} onValueChange={setInventoryStatusFilter}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Inventory Statuses</SelectItem>
-                <SelectItem value="Ready">Ready</SelectItem>
-                <SelectItem value="Needs Attention">Needs Attention</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-1">
-            <Label>Payroll Status</Label>
-            <Select value={payrollStatusFilter} onValueChange={setPayrollStatusFilter}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Payroll Statuses</SelectItem>
-                <SelectItem value="Validated">Validated</SelectItem>
-                <SelectItem value="Approved">Approved</SelectItem>
-                <SelectItem value="Returned">Returned</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-1">
-            <Label>Transaction Type</Label>
-            <Select value={transactionTypeFilter} onValueChange={setTransactionTypeFilter}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Transaction Types</SelectItem>
-                <SelectItem value="Production">Production</SelectItem>
-                <SelectItem value="Inventory">Inventory</SelectItem>
-                <SelectItem value="Payroll">Payroll</SelectItem>
-                <SelectItem value="Credits">Credits</SelectItem>
-                <SelectItem value="Restock">Restock</SelectItem>
-                <SelectItem value="Validation">Validation</SelectItem>
-                <SelectItem value="Approval">Approval</SelectItem>
+                <SelectItem value="newest">Newest Date</SelectItem>
+                <SelectItem value="oldest">Oldest Date</SelectItem>
+                <SelectItem value="name">Report Name</SelectItem>
+                <SelectItem value="type">Report Type</SelectItem>
               </SelectContent>
             </Select>
           </div>
           <div className="flex items-end">
             <Button variant="outline" className="w-full" onClick={() => {
-              setDateFrom("2026-05-01");
-              setDateTo("2026-06-30");
-              setBeneficiaryFilter("all");
-              setClassificationFilter("all");
-              setInventoryStatusFilter("all");
-              setPayrollStatusFilter("all");
-              setTransactionTypeFilter("all");
+              setDateFrom("");
+              setDateTo("");
+              setReportTypeFilter("all");
+              setReportSort("newest");
             }}>Reset Filters</Button>
           </div>
         </CardContent>
       </Card>
 
-      <div className="grid grid-cols-[repeat(auto-fit,minmax(260px,1fr))] gap-3">
-        {cards.map((r) => (
-          <Card key={r.title} className="group cursor-pointer transition hover:border-emerald-400 hover:shadow-sm" onClick={() => setSelected(r)}>
-            <CardContent className="flex min-h-[138px] flex-col p-4">
-              <div className="flex items-center gap-3">
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-emerald-100 text-emerald-700">
-                  <FileBarChart2 className="h-4 w-4" />
-                </div>
-                <div className="font-medium leading-tight text-slate-950">{r.title}</div>
-              </div>
-              <p className="mt-3 min-h-[34px] text-xs leading-5 text-muted-foreground">{r.desc}</p>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="mt-auto h-8 justify-end self-end px-0 text-emerald-700 hover:bg-transparent hover:text-emerald-800"
-                onClick={(event) => { event.stopPropagation(); setSelected(r); }}
-              >
-                View Report <ArrowRight className="ml-1 h-3.5 w-3.5 transition group-hover:translate-x-0.5" />
-              </Button>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-base">Generated Reports And Documents</CardTitle>
+          <CardTitle className="text-base">Available Reports</CardTitle>
         </CardHeader>
         <CardContent>
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Document</TableHead>
+                <TableHead>Report</TableHead>
                 <TableHead>Type</TableHead>
-                <TableHead>Coverage</TableHead>
+                <TableHead>Report Date</TableHead>
                 <TableHead className="text-right">Records</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Action</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredDocuments.length === 0 ? (
+              {filteredReports.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={6} className="text-center text-muted-foreground">No reports match the selected filters.</TableCell>
                 </TableRow>
               ) : (
-                filteredDocuments.map((doc) => (
-                  <TableRow key={`${doc.title}-${doc.type}`}>
-                    <TableCell>{doc.title}</TableCell>
-                    <TableCell><Badge variant="outline">{doc.type}</Badge></TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{doc.coverage}</TableCell>
-                    <TableCell className="text-right">{doc.records}</TableCell>
+                filteredReports.map((report) => (
+                  <TableRow key={`${report.title}-${report.type}`}>
                     <TableCell>
-                      <Badge className={doc.status === "Needs Attention" ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-800"}>{doc.status}</Badge>
+                      <div className="font-medium">{report.title}</div>
+                      <div className="text-xs text-muted-foreground">{report.desc}</div>
+                    </TableCell>
+                    <TableCell><Badge variant="outline">{report.type}</Badge></TableCell>
+                    <TableCell>{formatReportDate(report.date)}</TableCell>
+                    <TableCell className="text-right">{report.records}</TableCell>
+                    <TableCell>
+                      <Badge className={report.status === "Needs Attention" ? "bg-amber-100 text-amber-800" : report.status === "Available" ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-700"}>{report.status}</Badge>
                     </TableCell>
                     <TableCell>
-                      <Button size="sm" variant="outline" onClick={() => setSelected(cards.find((card) => card.title === doc.title) ?? { title: doc.title, desc: doc.coverage })}>
-                        Generate
+                      <Button size="sm" variant="outline" disabled={!allowReportGeneration} onClick={() => allowReportGeneration && setSelected({ title: report.title, desc: report.desc })}>
+                        View Report
                       </Button>
                     </TableCell>
                   </TableRow>
@@ -1480,7 +1413,7 @@ function Reports({ payroll, restock, users, audit, inventoryItems, productionRec
       </Card>
 
       <Dialog open={!!selected} onOpenChange={(open) => !open && setSelected(null)}>
-        <DialogContent className="max-h-[88dvh] w-[calc(100vw-1rem)] max-w-5xl overflow-hidden p-0">
+        <DialogContent className="!h-[100dvh] !max-h-[100dvh] !w-screen !max-w-none overflow-hidden rounded-none p-0 sm:!max-w-none">
           {selected && selectedReport && (
             <>
               <DialogHeader className="border-b px-4 py-3 sm:px-6 sm:py-4">
@@ -1488,41 +1421,20 @@ function Reports({ payroll, restock, users, audit, inventoryItems, productionRec
                   <FileBarChart2 className="h-5 w-5 text-emerald-700" />{selectedReport.title}
                 </DialogTitle>
               </DialogHeader>
-              <div className="max-h-[calc(88dvh-76px)] overflow-y-auto px-4 py-4 sm:px-6">
-                <div className="space-y-4">
+              <div className="flex h-[calc(100dvh-73px)] flex-col overflow-hidden px-4 py-4 sm:px-6">
+                <div className="flex min-h-0 flex-1 flex-col space-y-4">
                   <p className="text-sm text-muted-foreground">{selectedReport.desc}</p>
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <ReportMetric label="Generated At" value={currentSystemDateTime()} />
                     <ReportMetric label="Records" value={String(selectedReport.rows.length)} />
                     <ReportMetric label={selectedReport.metricLabel} value={selectedReport.metricValue} />
                   </div>
-                  <div className="rounded-md border overflow-x-auto">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          {selectedReport.columns.map((column) => <TableHead key={column}>{column}</TableHead>)}
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {selectedReport.rows.length === 0 ? (
-                          <TableRow>
-                            <TableCell colSpan={selectedReport.columns.length} className="py-8 text-center text-muted-foreground">No records are available for this report.</TableCell>
-                          </TableRow>
-                        ) : (
-                          selectedReport.rows.map((row, rowIndex) => (
-                            <TableRow key={`${selectedReport.title}-${rowIndex}`}>
-                              {row.map((cell, cellIndex) => <TableCell key={`${rowIndex}-${cellIndex}`}>{cell}</TableCell>)}
-                            </TableRow>
-                          ))
-                        )}
-                      </TableBody>
-                    </Table>
-                  </div>
-                  <div className="sticky bottom-0 -mx-4 flex flex-col-reverse gap-2 border-t bg-white px-4 py-3 sm:-mx-6 sm:flex-row sm:justify-end sm:px-6 [&>button]:w-full sm:[&>button]:w-auto">
+                  <ManagerReportPdfPreview report={selectedReport} />
+                  <div className="-mx-4 flex flex-col-reverse gap-2 border-t bg-white px-4 py-3 sm:-mx-6 sm:flex-row sm:justify-end sm:px-6 [&>button]:w-full sm:[&>button]:w-auto">
                     <Button variant="outline" onClick={() => setSelected(null)}>Close</Button>
-                    <Button variant="outline" onClick={() => printManagerReport(selectedReport)}>Print</Button>
-                    <Button variant="outline" onClick={() => exportReportCsv(selectedReport)}>Export CSV</Button>
-                    <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={() => exportReportPdf(selectedReport)}>Export PDF</Button>
+                    <Button variant="outline" disabled={!allowReportGeneration} onClick={() => allowReportGeneration && printManagerReport(selectedReport)}>Print</Button>
+                    <Button variant="outline" disabled={!allowReportGeneration} onClick={() => allowReportGeneration && exportReportCsv(selectedReport)}>Export CSV</Button>
+                    <Button className="bg-emerald-600 hover:bg-emerald-700" disabled={!allowReportGeneration} onClick={() => allowReportGeneration && exportReportPdf(selectedReport)}>Download PDF</Button>
                   </div>
                 </div>
               </div>
@@ -1539,6 +1451,50 @@ function ReportMetric({ label, value }: { label: string; value: string }) {
     <div className="rounded-md border bg-slate-50 p-3">
       <div className="text-xs text-muted-foreground">{label}</div>
       <div className="font-semibold text-slate-900">{value}</div>
+    </div>
+  );
+}
+
+function latestDateFrom(records: any[], keys: string[]) {
+  const dates = records
+    .flatMap((record) => keys.map((key) => String(record?.[key] ?? "").slice(0, 10)))
+    .filter((value) => /^\d{4}-\d{2}-\d{2}$/.test(value))
+    .sort();
+  return dates.at(-1) ?? "";
+}
+
+function sortReports<T extends { title: string; type: string; date: string }>(a: T, b: T, sort: string) {
+  if (sort === "oldest") return (a.date || "9999-12-31").localeCompare(b.date || "9999-12-31");
+  if (sort === "name") return a.title.localeCompare(b.title);
+  if (sort === "type") return a.type.localeCompare(b.type) || a.title.localeCompare(b.title);
+  return (b.date || "0000-00-00").localeCompare(a.date || "0000-00-00");
+}
+
+function formatReportDate(date: string) {
+  return date ? formatSystemDate(date) : "-";
+}
+
+function ManagerReportPdfPreview({ report }: { report: ManagerReport }) {
+  const [previewUrl, setPreviewUrl] = useState("");
+
+  useEffect(() => {
+    const doc = buildManagerReportPdf(report);
+    const url = URL.createObjectURL(doc.output("blob"));
+    setPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [report]);
+
+  return (
+    <div className="min-h-0 flex-1 overflow-hidden rounded-md border bg-slate-100">
+      {previewUrl ? (
+        <iframe
+          title={`${report.title} PDF Preview`}
+          src={`${previewUrl}#toolbar=1&navpanes=0&zoom=page-width`}
+          className="h-full w-full bg-white"
+        />
+      ) : (
+        <div className="flex h-80 items-center justify-center text-sm text-muted-foreground">Preparing PDF preview...</div>
+      )}
     </div>
   );
 }
@@ -1640,7 +1596,7 @@ function exportReportCsv(report: ManagerReport) {
   URL.revokeObjectURL(url);
 }
 
-function exportReportPdf(report: ManagerReport) {
+function buildManagerReportPdf(report: ManagerReport) {
   const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
   const pageWidth = doc.internal.pageSize.getWidth();
   const margin = 36;
@@ -1700,7 +1656,11 @@ function exportReportPdf(report: ManagerReport) {
     },
   });
 
-  doc.save(`${reportFileName(report)}.pdf`);
+  return doc;
+}
+
+function exportReportPdf(report: ManagerReport) {
+  buildManagerReportPdf(report).save(`${reportFileName(report)}.pdf`);
 }
 
 function printManagerReport(report: ManagerReport) {
@@ -2875,7 +2835,7 @@ const ROLE_DESCRIPTIONS: Record<Role, { description: string; permissions: string
     description: "Full oversight and approval access across all entities.",
     permissions: [
       "Review and approve payroll", "Approve or return restock requests",
-      "View all reports and monitoring dashboards", "Manage users and role access",
+      "Generate reports and view monitoring dashboards", "Manage users and role access",
       "View audit logs and system activity",
     ],
   },
@@ -2903,7 +2863,7 @@ const ROLE_DESCRIPTIONS: Record<Role, { description: string; permissions: string
 
 const PERMISSION_MATRIX = [
   "Dashboard (View)", "Payroll (Approve)", "Restock (Approve)", "Production (View)",
-  "Inventory (View)", "Reports (View)", "Audit Logs (View)", "User Management",
+  "Inventory (View)", "Reports (Generate)", "Audit Logs (View)", "User Management",
   "Role Access", "System Settings",
 ];
 
@@ -2918,10 +2878,20 @@ function SettingsRoleAccess({ permissions, setPermissions, adminId, adminName }:
   const desc = ROLE_DESCRIPTIONS[role];
   const rolePermissions = PERMISSION_MATRIX.map((permission) => {
     const found = permissions.find((item) => item.role === role && item.permission === permission);
-    return { role, permission, allowed: found?.allowed ?? (desc.permissions.includes(permission) || role === "manager_admin") };
+    const reportGenerateRestricted = permission === "Reports (Generate)" && !canGenerateReports(role);
+    return {
+      role,
+      permission,
+      allowed: reportGenerateRestricted ? false : found?.allowed ?? (desc.permissions.includes(permission) || role === "manager_admin"),
+      locked: reportGenerateRestricted,
+    };
   });
 
   const togglePermission = (permission: string) => {
+    if (permission === "Reports (Generate)" && !canGenerateReports(role)) {
+      toast.error("Only Manager/Admin and Finance Officer roles can generate reports.");
+      return;
+    }
     setPermissions([
       ...permissions.filter((item) => !(item.role === role && item.permission === permission)),
       {
@@ -2994,10 +2964,11 @@ function SettingsRoleAccess({ permissions, setPermissions, adminId, adminName }:
                   <input
                     type="checkbox"
                     checked={p.allowed}
+                    disabled={p.locked}
                     onChange={() => togglePermission(p.permission)}
-                    className="h-4 w-4 accent-emerald-600"
+                    className="h-4 w-4 accent-emerald-600 disabled:cursor-not-allowed disabled:opacity-50"
                   />
-                  <span className={`text-xs ${p.allowed ? "text-emerald-700" : "text-muted-foreground"}`}>{p.allowed ? "Allowed" : "Disabled"}</span>
+                  <span className={`text-xs ${p.allowed ? "text-emerald-700" : "text-muted-foreground"}`}>{p.locked ? "Restricted" : p.allowed ? "Allowed" : "Disabled"}</span>
                 </div>
               </div>
             ))}

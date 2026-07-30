@@ -14,6 +14,8 @@ import {
   LayoutDashboard, ClipboardCheck, ClipboardList, Undo2, History, FileBarChart2,
   Search, CheckCircle2, AlertCircle, Eye, Printer, ChevronLeft, ChevronRight, ShieldCheck, Loader2, Plus,
 } from "lucide-react";
+import { jsPDF } from "jspdf";
+import autoTable from "jspdf-autotable";
 import { User } from "../types";
 import { toast } from "sonner";
 import { useAppData } from "../../lib/app-data-context";
@@ -325,7 +327,7 @@ export function FinanceOfficerDashboard({ user, onLogout }: Props) {
       {active === "validated" && <SlipList title="Validated Payrolls" slips={slips} filter={(s) => s.status === "Validated by Finance" || s.status === "Pending Manager Approval"} onReview={(slip) => openReview(slip)} />}
       {active === "returned" && <SlipList title="Returned Payrolls" slips={slips} filter={(s) => s.status === "Returned for Correction"} onReview={(slip) => openReview(slip)} />}
       {active === "history" && <SlipList title="Payroll History" slips={slips} filter={() => true} onReview={(slip) => openReview(slip, true)} actionLabel="View Payroll" description="View payroll records for history and reference." />}
-      {active === "reports" && <Reports slips={slips} activities={validationActivities} />}
+      {active === "reports" && <Reports user={user} slips={slips} activities={validationActivities} />}
 
       <ValidationDetailsDialog
         slip={reviewSlip}
@@ -989,8 +991,17 @@ function Field({ label, value }: { label: string; value: string }) {
   );
 }
 
-function Reports({ slips, activities }: { slips: FoSlip[]; activities: ValidationActivity[] }) {
+function canGenerateReports(role: User["role"]) {
+  return role === "manager_admin" || role === "finance_officer";
+}
+
+function Reports({ user, slips, activities }: { user: User; slips: FoSlip[]; activities: ValidationActivity[] }) {
   const [generatedReport, setGeneratedReport] = useState<ReportDefinition | null>(null);
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [reportTypeFilter, setReportTypeFilter] = useState("all");
+  const [reportSort, setReportSort] = useState("newest");
+  const allowReportGeneration = canGenerateReports(user.role);
   const validatedCount = slips.filter((slip) => isFinanceValidated(slip.status)).length;
   const returnedCount = slips.filter((slip) => slip.status === "Returned for Correction").length;
   const pendingManagerCount = slips.filter((slip) => slip.status === "Pending Manager Approval").length;
@@ -1002,6 +1013,8 @@ function Reports({ slips, activities }: { slips: FoSlip[]; activities: Validatio
   const reports: ReportDefinition[] = [
     {
       name: "Validated Payroll Register",
+      type: "Validated Payroll",
+      date: latestFinanceDate(slips.filter((slip) => isFinanceValidated(slip.status)), ["dateSubmitted", "harvestDate"]),
       desc: `${validatedCount} payroll slips validated by Finance.`,
       metric: `PHP ${validatedAmount.toLocaleString()}`,
       columns: ["Slip No.", "Beneficiary", "Period", "Net Income", "Status"],
@@ -1009,6 +1022,8 @@ function Reports({ slips, activities }: { slips: FoSlip[]; activities: Validatio
     },
     {
       name: "Returned Payroll Register",
+      type: "Returned Payroll",
+      date: latestFinanceDate(slips.filter((slip) => slip.status === "Returned for Correction"), ["dateSubmitted", "harvestDate"]),
       desc: `${returnedCount} slips currently returned for correction.`,
       metric: `${returnedActivities} return actions`,
       columns: ["Slip No.", "Beneficiary", "Category", "Reason", "Date Returned"],
@@ -1016,6 +1031,8 @@ function Reports({ slips, activities }: { slips: FoSlip[]; activities: Validatio
     },
     {
       name: "Validation Turnaround",
+      type: "Validation Activity",
+      date: latestFinanceDate(activities, ["timestamp"]),
       desc: "Average time from submission to validation.",
       metric: `${activities.length} activities`,
       columns: ["Slip No.", "Action", "Account", "Timestamp", "Remarks"],
@@ -1023,6 +1040,8 @@ function Reports({ slips, activities }: { slips: FoSlip[]; activities: Validatio
     },
     {
       name: "Material Credit Audit",
+      type: "Material Credit",
+      date: latestFinanceDate(slips, ["dateSubmitted", "harvestDate"]),
       desc: "Material credits charged in validated payrolls.",
       metric: `PHP ${materialCreditTotal.toLocaleString()}`,
       columns: ["Slip No.", "Beneficiary", "Material", "Amount", "Status"],
@@ -1036,6 +1055,8 @@ function Reports({ slips, activities }: { slips: FoSlip[]; activities: Validatio
     },
     {
       name: "Labor Cost Audit",
+      type: "Labor Cost",
+      date: latestFinanceDate(slips.filter((slip) => slip.laborAmount > 0), ["laborDateEncoded", "dateSubmitted", "harvestDate"]),
       desc: "Labor cost amounts across validated payrolls.",
       metric: `PHP ${laborCostTotal.toLocaleString()}`,
       columns: ["Slip No.", "Beneficiary", "Description", "Amount", "Encoded By"],
@@ -1043,58 +1064,170 @@ function Reports({ slips, activities }: { slips: FoSlip[]; activities: Validatio
     },
     {
       name: "Approval Pipeline Status",
+      type: "Approval Pipeline",
+      date: latestFinanceDate(slips.filter((slip) => slip.status === "Pending Manager Approval"), ["dateSubmitted", "harvestDate"]),
       desc: "Slips awaiting Manager approval.",
       metric: `${pendingManagerCount} pending`,
       columns: ["Slip No.", "Beneficiary", "Period", "Net Income", "Status"],
       rows: slips.filter((slip) => slip.status === "Pending Manager Approval").map((slip) => [slip.slipNo, slip.beneficiaryName, slip.payrollPeriod, money(compute(slip).net), slip.status]),
     },
   ];
+  const reportTypes = Array.from(new Set(reports.map((report) => report.type)));
+  const filteredReports = reports
+    .filter((report) => reportTypeFilter === "all" || report.type === reportTypeFilter)
+    .filter((report) => !dateFrom || !report.date || report.date >= dateFrom)
+    .filter((report) => !dateTo || !report.date || report.date <= dateTo)
+    .sort((a, b) => sortFinanceReports(a, b, reportSort));
 
   return (
     <div className="space-y-4">
       <div>
         <h1 className="flex items-center gap-2"><FileBarChart2 className="h-6 w-6 text-emerald-700" />Validation Reports</h1>
-        <p className="text-muted-foreground">Generate payroll validation reports for the selected period or date range.</p>
+        <p className="text-muted-foreground">Filter reports by type and date range before previewing or downloading.</p>
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {reports.map((r) => (
-          <Card key={r.name} className="hover:border-emerald-400 transition cursor-pointer">
-            <CardContent className="p-5">
-              <div className="flex items-center gap-3 mb-2">
-                <div className="h-9 w-9 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center"><FileBarChart2 className="h-4 w-4" /></div>
-                <div>{r.name}</div>
-              </div>
-              <p className="text-xs text-muted-foreground mb-3">{r.desc}</p>
-              <div className="mb-3 text-lg font-semibold text-emerald-700">{r.metric}</div>
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-9 border-emerald-200 px-3 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800"
-                onClick={() => setGeneratedReport(r)}
-              >
-                <FileBarChart2 className="mr-1.5 h-4 w-4" />Generate Report
-              </Button>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-      <GeneratedReportDialog report={generatedReport} onClose={() => setGeneratedReport(null)} />
+      {!allowReportGeneration && (
+        <Card className="border-amber-200 bg-amber-50">
+          <CardContent className="flex items-start gap-3 p-4 text-sm text-amber-900">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+            <div>Only Manager/Admin and Finance Officer accounts can generate reports.</div>
+          </CardContent>
+        </Card>
+      )}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base">Report Filters</CardTitle>
+        </CardHeader>
+        <CardContent className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
+          <div className="space-y-1">
+            <Label>Date From</Label>
+            <DateInput value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} />
+          </div>
+          <div className="space-y-1">
+            <Label>Date To</Label>
+            <DateInput value={dateTo} onChange={(event) => setDateTo(event.target.value)} />
+          </div>
+          <div className="space-y-1">
+            <Label>Report Type</Label>
+            <Select value={reportTypeFilter} onValueChange={setReportTypeFilter}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Report Types</SelectItem>
+                {reportTypes.map((type) => <SelectItem key={type} value={type}>{type}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1">
+            <Label>Sort By</Label>
+            <Select value={reportSort} onValueChange={setReportSort}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="newest">Newest Date</SelectItem>
+                <SelectItem value="oldest">Oldest Date</SelectItem>
+                <SelectItem value="name">Report Name</SelectItem>
+                <SelectItem value="type">Report Type</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex items-end">
+            <Button variant="outline" className="w-full" onClick={() => {
+              setDateFrom("");
+              setDateTo("");
+              setReportTypeFilter("all");
+              setReportSort("newest");
+            }}>Reset Filters</Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base">Available Reports</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Report</TableHead>
+                <TableHead>Type</TableHead>
+                <TableHead>Report Date</TableHead>
+                <TableHead className="text-right">Records</TableHead>
+                <TableHead>Summary</TableHead>
+                <TableHead>Action</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filteredReports.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={6} className="text-center text-muted-foreground">No reports match the selected filters.</TableCell>
+                </TableRow>
+              ) : filteredReports.map((report) => (
+                <TableRow key={report.name}>
+                  <TableCell>
+                    <div className="font-medium">{report.name}</div>
+                    <div className="text-xs text-muted-foreground">{report.desc}</div>
+                  </TableCell>
+                  <TableCell><Badge variant="outline">{report.type}</Badge></TableCell>
+                  <TableCell>{formatFinanceReportDate(report.date)}</TableCell>
+                  <TableCell className="text-right">{report.rows.length}</TableCell>
+                  <TableCell className="font-medium text-emerald-700">{report.metric}</TableCell>
+                  <TableCell>
+                    <Button size="sm" variant="outline" disabled={!allowReportGeneration} onClick={() => allowReportGeneration && setGeneratedReport(report)}>
+                      View Report
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+      <GeneratedReportDialog report={generatedReport} canGenerate={allowReportGeneration} onClose={() => setGeneratedReport(null)} />
     </div>
   );
 }
 
 interface ReportDefinition {
   name: string;
+  type: string;
+  date: string;
   desc: string;
   metric: string;
   columns: string[];
   rows: string[][];
 }
 
-function GeneratedReportDialog({ report, onClose }: { report: ReportDefinition | null; onClose: () => void }) {
+function latestFinanceDate(records: any[], keys: string[]) {
+  const dates = records
+    .flatMap((record) => keys.map((key) => financeDateKey(record?.[key])))
+    .filter(Boolean)
+    .sort();
+  return dates.at(-1) ?? "";
+}
+
+function financeDateKey(value: unknown) {
+  const raw = String(value ?? "");
+  const iso = raw.slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso;
+  const parsed = Date.parse(raw);
+  if (Number.isNaN(parsed)) return "";
+  return new Date(parsed).toISOString().slice(0, 10);
+}
+
+function sortFinanceReports<T extends { name: string; type: string; date: string }>(a: T, b: T, sort: string) {
+  if (sort === "oldest") return (a.date || "9999-12-31").localeCompare(b.date || "9999-12-31");
+  if (sort === "name") return a.name.localeCompare(b.name);
+  if (sort === "type") return a.type.localeCompare(b.type) || a.name.localeCompare(b.name);
+  return (b.date || "0000-00-00").localeCompare(a.date || "0000-00-00");
+}
+
+function formatFinanceReportDate(date: string) {
+  return date ? formatSystemDate(date) : "-";
+}
+
+function GeneratedReportDialog({ report, canGenerate, onClose }: { report: ReportDefinition | null; canGenerate: boolean; onClose: () => void }) {
   return (
     <Dialog open={!!report} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-h-[88dvh] w-[calc(100vw-1rem)] max-w-5xl overflow-hidden p-0">
+      <DialogContent className="!h-[100dvh] !max-h-[100dvh] !w-screen !max-w-none overflow-hidden rounded-none p-0 sm:!max-w-none">
         {report && (
           <>
             <DialogHeader className="border-b px-4 py-3 sm:px-6 sm:py-4">
@@ -1102,43 +1235,21 @@ function GeneratedReportDialog({ report, onClose }: { report: ReportDefinition |
                 <FileBarChart2 className="h-5 w-5" />{report.name}
               </DialogTitle>
             </DialogHeader>
-            <div className="max-h-[calc(88dvh-76px)] overflow-y-auto px-4 py-4 sm:px-6">
-            <div className="space-y-4">
+            <div className="flex h-[calc(100dvh-73px)] flex-col overflow-hidden px-4 py-4 sm:px-6">
+            <div className="flex min-h-0 flex-1 flex-col space-y-4">
               <div className="grid gap-3 rounded-md border bg-slate-50 p-3 text-sm md:grid-cols-3">
                 <Field label="Generated At" value={currentSystemDateTime()} />
                 <Field label="Summary" value={report.metric} />
                 <Field label="Record Count" value={String(report.rows.length)} />
               </div>
               <p className="text-sm text-muted-foreground">{report.desc}</p>
-              <div className="rounded-md border overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      {report.columns.map((column) => (
-                        <TableHead key={column}>{column}</TableHead>
-                      ))}
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {report.rows.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={report.columns.length} className="py-8 text-center text-muted-foreground">
-                          No records available for this report.
-                        </TableCell>
-                      </TableRow>
-                    ) : report.rows.map((row, index) => (
-                      <TableRow key={`${report.name}-${index}`}>
-                        {row.map((cell, cellIndex) => (
-                          <TableCell key={`${report.name}-${index}-${cellIndex}`}>{cell}</TableCell>
-                        ))}
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-              <div className="sticky bottom-0 -mx-4 flex flex-col-reverse gap-2 border-t bg-white px-4 py-3 sm:-mx-6 sm:flex-row sm:justify-end sm:px-6 [&>button]:w-full sm:[&>button]:w-auto">
-                <Button variant="outline" className="sm:min-w-24" onClick={() => printReport(report)}>
+              <FinanceReportPdfPreview report={report} />
+              <div className="-mx-4 flex flex-col-reverse gap-2 border-t bg-white px-4 py-3 sm:-mx-6 sm:flex-row sm:justify-end sm:px-6 [&>button]:w-full sm:[&>button]:w-auto">
+                <Button variant="outline" className="sm:min-w-24" disabled={!canGenerate} onClick={() => canGenerate && printReport(report)}>
                   <Printer className="mr-1.5 h-4 w-4" />Print
+                </Button>
+                <Button variant="outline" className="sm:min-w-28" disabled={!canGenerate} onClick={() => canGenerate && downloadReportPdf(report)}>
+                  Download PDF
                 </Button>
                 <Button className="bg-emerald-600 hover:bg-emerald-700 sm:min-w-24" onClick={onClose}>Close</Button>
               </div>
@@ -1153,6 +1264,115 @@ function GeneratedReportDialog({ report, onClose }: { report: ReportDefinition |
 
 function money(value: number) {
   return `PHP ${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function FinanceReportPdfPreview({ report }: { report: ReportDefinition }) {
+  const [previewUrl, setPreviewUrl] = useState("");
+
+  useEffect(() => {
+    const doc = buildFinanceReportPdf(report);
+    const url = URL.createObjectURL(doc.output("blob"));
+    setPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [report]);
+
+  return (
+    <div className="min-h-0 flex-1 overflow-hidden rounded-md border bg-slate-100">
+      {previewUrl ? (
+        <iframe
+          title={`${report.name} PDF Preview`}
+          src={`${previewUrl}#toolbar=1&navpanes=0&zoom=page-width`}
+          className="h-full w-full bg-white"
+        />
+      ) : (
+        <div className="flex h-80 items-center justify-center text-sm text-muted-foreground">Preparing PDF preview...</div>
+      )}
+    </div>
+  );
+}
+
+function buildFinanceReportPdf(report: ReportDefinition) {
+  const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const margin = 36;
+  const generatedAt = currentSystemDateTime();
+
+  doc.setTextColor(4, 120, 87);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(18);
+  doc.text(report.name, margin, 42);
+
+  doc.setDrawColor(5, 150, 105);
+  doc.setLineWidth(1.5);
+  doc.line(margin, 56, pageWidth - margin, 56);
+
+  doc.setTextColor(71, 85, 105);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10);
+  doc.text(doc.splitTextToSize(report.desc, pageWidth - (margin * 2)), margin, 76);
+
+  const metaTop = 98;
+  const gap = 10;
+  const boxWidth = (pageWidth - (margin * 2) - (gap * 2)) / 3;
+  drawFinancePdfMetaBox(doc, margin, metaTop, boxWidth, "Generated At", generatedAt);
+  drawFinancePdfMetaBox(doc, margin + boxWidth + gap, metaTop, boxWidth, "Summary", report.metric);
+  drawFinancePdfMetaBox(doc, margin + (boxWidth + gap) * 2, metaTop, boxWidth, "Records", String(report.rows.length));
+
+  autoTable(doc, {
+    startY: metaTop + 58,
+    head: [report.columns],
+    body: report.rows.length ? report.rows : [["No records available for this report.", ...Array(Math.max(0, report.columns.length - 1)).fill("")]],
+    styles: {
+      font: "helvetica",
+      fontSize: 8,
+      cellPadding: 6,
+      textColor: [15, 23, 42],
+      lineColor: [226, 232, 240],
+      lineWidth: 0.4,
+      valign: "top",
+    },
+    headStyles: {
+      fillColor: [248, 250, 252],
+      textColor: [15, 23, 42],
+      fontStyle: "bold",
+      lineColor: [226, 232, 240],
+    },
+    alternateRowStyles: {
+      fillColor: [252, 253, 255],
+    },
+    margin: { left: margin, right: margin },
+    didDrawPage: () => {
+      const pageNumber = doc.getNumberOfPages();
+      doc.setFontSize(8);
+      doc.setTextColor(100, 116, 139);
+      doc.text(`DARBCO Agri Workflow - ${report.name}`, margin, doc.internal.pageSize.getHeight() - 18);
+      doc.text(`Page ${pageNumber}`, pageWidth - margin - 32, doc.internal.pageSize.getHeight() - 18);
+    },
+  });
+
+  return doc;
+}
+
+function drawFinancePdfMetaBox(doc: jsPDF, x: number, y: number, width: number, label: string, value: string) {
+  doc.setDrawColor(219, 228, 238);
+  doc.setFillColor(248, 250, 252);
+  doc.roundedRect(x, y, width, 42, 5, 5, "FD");
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8);
+  doc.setTextColor(100, 116, 139);
+  doc.text(label.toUpperCase(), x + 10, y + 15);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  doc.setTextColor(15, 23, 42);
+  doc.text(doc.splitTextToSize(value, width - 20), x + 10, y + 30);
+}
+
+function downloadReportPdf(report: ReportDefinition) {
+  buildFinanceReportPdf(report).save(`${financeReportFileName(report)}.pdf`);
+}
+
+function financeReportFileName(report: ReportDefinition) {
+  return report.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 }
 
 function printReport(report: ReportDefinition) {

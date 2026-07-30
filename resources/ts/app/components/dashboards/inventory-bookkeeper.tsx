@@ -46,6 +46,7 @@ export function InventoryBookkeeperDashboard({ user, onLogout }: Props) {
   const [borrowedRows, setBorrowedRows] = useState<BorrowedMaterialRow[]>(borrowedMaterials);
   const [historyRows, setHistoryRows] = useState<StockHistoryRow[]>(stockHistory);
   const [restockRows, setRestockRows] = useState<RestockRequest[]>(initialRestockRequests(user.name));
+  const [suggestedRestockItemId, setSuggestedRestockItemId] = useState<string | null>(null);
   const beneficiaries = buildProductionBeneficiaryOptions(data);
 
   useEffect(() => {
@@ -93,6 +94,10 @@ export function InventoryBookkeeperDashboard({ user, onLogout }: Props) {
           credits={creditRows}
           history={historyRows}
           restockRequests={restockRows}
+          onRestockSuggestion={(itemId) => {
+            setSuggestedRestockItemId(itemId);
+            setActive("restock");
+          }}
         />
       )}
       {active === "items" && (
@@ -117,7 +122,16 @@ export function InventoryBookkeeperDashboard({ user, onLogout }: Props) {
       {active === "credit" && <CreditTransactions credits={creditRows} setCredits={setCreditRows} user={user} />}
       {active === "cash" && <CashTransactions history={historyRows} items={items} />}
       {active === "history" && <StockHistory history={historyRows} />}
-      {active === "restock" && <RestockRequests user={user} items={items} requests={restockRows} setRequests={setRestockRows} />}
+      {active === "restock" && (
+        <RestockRequests
+          user={user}
+          items={items}
+          requests={restockRows}
+          setRequests={setRestockRows}
+          suggestedItemId={suggestedRestockItemId}
+          onSuggestionHandled={() => setSuggestedRestockItemId(null)}
+        />
+      )}
     </DarbcoLayout>
   );
 }
@@ -145,15 +159,18 @@ const recentActivity = [
   { date: "May 17, 2025 08:51 AM", activity: "Release", material: "Insecticide", reference: "RS-2025-0006", account: "Bookkeeper" },
 ];
 
-function Dashboard({ goTo, items, credits, history, restockRequests }: {
+function Dashboard({ goTo, items, credits, history, restockRequests, onRestockSuggestion }: {
   goTo: (page: string) => void;
   items: InventoryItem[];
   credits: CreditRow[];
   history: StockHistoryRow[];
   restockRequests: RestockRequest[];
+  onRestockSuggestion: (itemId: string) => void;
 }) {
   const activeItems = items.filter((item) => item.active !== false);
-  const dashboardLowStockItems = activeItems.filter((item) => deriveStatus(item) === "Low Stock");
+  const dashboardLowStockItems = activeItems
+    .filter((item) => deriveStatus(item) === "Low Stock" || deriveStatus(item) === "Out of Stock")
+    .sort((a, b) => getStockLevelRatio(a) - getStockLevelRatio(b));
   const outOfStockItems = activeItems.filter((item) => deriveStatus(item) === "Out of Stock");
   const pendingCredits = credits.filter((credit) => credit.status === "Pending" || credit.remaining > 0);
   const pendingRestockRequests = restockRequests.filter((request) => request.status === "Pending");
@@ -191,17 +208,31 @@ function Dashboard({ goTo, items, credits, history, restockRequests }: {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card>
           <CardHeader className="flex !flex-row items-center justify-between gap-3 pb-2">
-            <CardTitle className="text-base flex items-center gap-2"><AlertTriangle className="h-4 w-4 text-amber-600" />Low Stock Alerts</CardTitle>
-            <Button variant="link" className="ml-auto h-auto shrink-0 px-0 py-0 text-emerald-700" onClick={() => goTo("items")}>View all →</Button>
+            <CardTitle className="text-base flex items-center gap-2"><AlertTriangle className="h-4 w-4 text-amber-600" />Automatic Low-Stock Suggestions</CardTitle>
+            <Button variant="link" className="ml-auto h-auto shrink-0 px-0 py-0 text-emerald-700" onClick={() => goTo("restock")}>View requests</Button>
           </CardHeader>
           <CardContent className="space-y-3">
             {dashboardLowStockItems.slice(0, 4).map((i) => (
-              <div key={i.name} className="flex items-center justify-between p-3 bg-amber-50 border border-amber-200 rounded-md">
-                <div>
-                  <div>{i.name}</div>
-                  <div className="text-xs text-muted-foreground">Status: {deriveStatus(i)}</div>
+              <div key={i.id} className="rounded-md border border-amber-200 bg-amber-50 p-3">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
+                    <div className="font-medium">{i.name}</div>
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      Current: {i.onHand} {i.unit} | Minimum: {getMinimumStock(i)} {i.unit}
+                    </div>
+                    <div className="mt-2 h-2 overflow-hidden rounded-full bg-amber-100">
+                      <div className="h-full bg-amber-500" style={{ width: `${getStockLevelPercent(i)}%` }} />
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 flex-col gap-2 sm:items-end">
+                    <Badge className={deriveStatus(i) === "Out of Stock" ? "bg-red-100 text-red-800" : "bg-amber-100 text-amber-800"}>
+                      Suggest: {getSuggestedRestockQuantity(i)} {i.unit}
+                    </Badge>
+                    <Button size="sm" className="h-8 bg-emerald-600 hover:bg-emerald-700" onClick={() => onRestockSuggestion(i.id)}>
+                      Create Request
+                    </Button>
+                  </div>
                 </div>
-                <Badge className="bg-amber-100 text-amber-800">{i.onHand} {i.unit}</Badge>
               </div>
             ))}
             {dashboardLowStockItems.length === 0 && (
@@ -588,6 +619,23 @@ function getMinimumStock(item: InventoryItem) {
   return item.minimumStock ?? 20;
 }
 
+function getStockLevelRatio(item: InventoryItem) {
+  const minimum = Math.max(1, getMinimumStock(item));
+
+  return item.onHand / minimum;
+}
+
+function getStockLevelPercent(item: InventoryItem) {
+  return Math.max(0, Math.min(100, Math.round(getStockLevelRatio(item) * 100)));
+}
+
+function getSuggestedRestockQuantity(item: InventoryItem) {
+  const minimum = Math.max(0, getMinimumStock(item));
+  if (minimum <= 0) return 1;
+
+  return Math.max(1, Math.ceil((minimum * 2) - item.onHand));
+}
+
 function getSupplier(item: InventoryItem) {
   return item.supplier?.trim() || "Not specified";
 }
@@ -725,6 +773,7 @@ function SalesPos({ items, setItems, setCredits, setHistory, history, user, bene
 }) {
   const [search, setSearch] = useState("");
   const [cart, setCart] = useState<PosCartItem[]>([]);
+  const [customerType, setCustomerType] = useState<"registered" | "walk-in">("registered");
   const [customer, setCustomer] = useState("");
   const [manualCustomer, setManualCustomer] = useState("");
   const [paymentMethod, setPaymentMethod] = useState<"Cash" | "Beneficiary Credit">("Cash");
@@ -736,7 +785,8 @@ function SalesPos({ items, setItems, setCredits, setHistory, history, user, bene
     !query || `${item.name} ${item.id} ${item.category}`.toLowerCase().includes(query)
   );
   const selectedBeneficiary = beneficiaries.find((item) => item.id === customer);
-  const customerName = selectedBeneficiary?.name || manualCustomer.trim();
+  const isWalkInCustomer = customerType === "walk-in";
+  const customerName = isWalkInCustomer ? manualCustomer.trim() : selectedBeneficiary?.name || "";
   const totalAmount = cart.reduce((sum, line) => sum + line.quantity * line.item.cost, 0);
   const salesTransactions = history
     .filter(isSalesHistoryRow)
@@ -778,7 +828,7 @@ function SalesPos({ items, setItems, setCredits, setHistory, history, user, bene
       toast.error("Beneficiary or customer name is required");
       return;
     }
-    if (paymentMethod === "Beneficiary Credit" && !selectedBeneficiary) {
+    if (paymentMethod === "Beneficiary Credit" && (isWalkInCustomer || !selectedBeneficiary)) {
       toast.error("Select a beneficiary account for Beneficiary Credit");
       return;
     }
@@ -861,6 +911,7 @@ function SalesPos({ items, setItems, setCredits, setHistory, history, user, bene
       setSearch("");
       setCustomer("");
       setManualCustomer("");
+      setCustomerType("registered");
       setPaymentMethod("Cash");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Unable to save POS transaction.");
@@ -973,9 +1024,52 @@ function SalesPos({ items, setItems, setCredits, setHistory, history, user, bene
             </div>
 
             <div className="space-y-2 border-t pt-3">
+              <div className="grid gap-2 sm:grid-cols-2">
+                <div className="space-y-1">
+                  <Label>Customer Type</Label>
+                  <Select
+                    value={customerType}
+                    onValueChange={(value) => {
+                      const nextType = value as "registered" | "walk-in";
+                      setCustomerType(nextType);
+                      if (nextType === "walk-in") {
+                        setCustomer("");
+                        setPaymentMethod("Cash");
+                      } else {
+                        setManualCustomer("");
+                      }
+                    }}
+                  >
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="registered">Registered Beneficiary</SelectItem>
+                      <SelectItem value="walk-in">Walk-in Customer</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label>Payment Method</Label>
+                  <Select
+                    value={paymentMethod}
+                    onValueChange={(value) => {
+                      if (value === "Beneficiary Credit" && isWalkInCustomer) {
+                        toast.error("Beneficiary Credit is only for registered beneficiaries");
+                        return;
+                      }
+                      setPaymentMethod(value as "Cash" | "Beneficiary Credit");
+                    }}
+                  >
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Cash">Cash</SelectItem>
+                      <SelectItem value="Beneficiary Credit" disabled={isWalkInCustomer}>Beneficiary Credit</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
               <div className="space-y-1">
-                <Label>Beneficiary or Customer Name</Label>
-                <Select value={customer} onValueChange={(value) => { setCustomer(value); setManualCustomer(""); }}>
+                <Label>Beneficiary Name</Label>
+                <Select value={customer} onValueChange={(value) => { setCustomer(value); setManualCustomer(""); }} disabled={isWalkInCustomer}>
                   <SelectTrigger><SelectValue placeholder="Select beneficiary account" /></SelectTrigger>
                   <SelectContent>
                     {beneficiaries.map((beneficiary) => (
@@ -983,17 +1077,15 @@ function SalesPos({ items, setItems, setCredits, setHistory, history, user, bene
                     ))}
                   </SelectContent>
                 </Select>
-                <Input value={manualCustomer} onChange={(event) => { setManualCustomer(event.target.value); setCustomer(""); }} placeholder="Or type walk-in customer name" />
               </div>
               <div className="space-y-1">
-                <Label>Payment Method</Label>
-                <Select value={paymentMethod} onValueChange={(value) => setPaymentMethod(value as "Cash" | "Beneficiary Credit")}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="Cash">Cash</SelectItem>
-                    <SelectItem value="Beneficiary Credit">Beneficiary Credit</SelectItem>
-                  </SelectContent>
-                </Select>
+                <Label>Walk-in Customer Name</Label>
+                <Input
+                  value={manualCustomer}
+                  onChange={(event) => { setManualCustomer(event.target.value); setCustomer(""); }}
+                  placeholder="Type walk-in customer name"
+                  disabled={!isWalkInCustomer}
+                />
               </div>
               <div className="rounded-md bg-emerald-50 p-3">
                 <div className="flex items-center justify-between">
@@ -3635,11 +3727,13 @@ function StockHistory({ history }: { history: StockHistoryRow[] }) {
   );
 }
 
-function RestockRequests({ user, items, requests, setRequests }: {
+function RestockRequests({ user, items, requests, setRequests, suggestedItemId, onSuggestionHandled }: {
   user: User;
   items: InventoryItem[];
   requests: RestockRequest[];
   setRequests: React.Dispatch<React.SetStateAction<RestockRequest[]>>;
+  suggestedItemId?: string | null;
+  onSuggestionHandled?: () => void;
 }) {
   const [openCreate, setOpenCreate] = useState(false);
   const [search, setSearch] = useState("");
@@ -3648,6 +3742,11 @@ function RestockRequests({ user, items, requests, setRequests }: {
   const [editing, setEditing] = useState<RestockRequest | null>(null);
   const [cancelling, setCancelling] = useState<RestockRequest | null>(null);
   const [savingCancel, setSavingCancel] = useState(false);
+
+  useEffect(() => {
+    if (!suggestedItemId) return;
+    setOpenCreate(true);
+  }, [suggestedItemId]);
 
   const filtered = requests.filter((r) => {
     const q = search.toLowerCase();
@@ -3853,7 +3952,16 @@ function RestockRequests({ user, items, requests, setRequests }: {
         </CardContent>
       </Card>
 
-      <CreateRestockRequestDialog open={openCreate} onOpenChange={setOpenCreate} items={items} onCreate={handleCreate} />
+      <CreateRestockRequestDialog
+        open={openCreate}
+        onOpenChange={(open) => {
+          setOpenCreate(open);
+          if (!open) onSuggestionHandled?.();
+        }}
+        items={items}
+        suggestedItemId={suggestedItemId}
+        onCreate={handleCreate}
+      />
       <EditRestockRequestDialog request={editing} onOpenChange={(open) => !open && setEditing(null)} onUpdate={handleUpdate} />
 
       <Dialog open={!!viewing} onOpenChange={(o) => !o && setViewing(null)}>
@@ -4016,7 +4124,7 @@ function restockPriorityBadgeClass(priority?: string) {
   return priority === "Urgent" ? "bg-red-100 text-red-800" : "bg-sky-100 text-sky-800";
 }
 
-function CreateRestockRequestDialog({ open, onOpenChange, items, onCreate }: { open: boolean; onOpenChange: (o: boolean) => void; items: InventoryItem[]; onCreate: (request: Omit<RestockRequest, "id" | "dateRequested" | "requestedBy" | "status">) => Promise<void> | void }) {
+function CreateRestockRequestDialog({ open, onOpenChange, items, suggestedItemId, onCreate }: { open: boolean; onOpenChange: (o: boolean) => void; items: InventoryItem[]; suggestedItemId?: string | null; onCreate: (request: Omit<RestockRequest, "id" | "dateRequested" | "requestedBy" | "status">) => Promise<void> | void }) {
   const [material, setMaterial] = useState("");
   const [category, setCategory] = useState("");
   const [currentQty, setCurrentQty] = useState("");
@@ -4033,12 +4141,35 @@ function CreateRestockRequestDialog({ open, onOpenChange, items, onCreate }: { o
   const selectedMinimum = Number(minStock) || 0;
   const canRequestRestock = !!selectedItem && selectedCurrent <= selectedMinimum;
 
+  const applyItemSuggestion = (item?: InventoryItem) => {
+    if (!item) return;
+    setMaterial(item.id);
+    setCategory(item.category ?? "");
+    setCurrentQty(String(item.onHand));
+    setMinStock(String(getMinimumStock(item)));
+    setRequestedQty(String(getSuggestedRestockQuantity(item)));
+    setReason(`Automatic low-stock suggestion: current stock is ${item.onHand} ${item.unit}, minimum stock is ${getMinimumStock(item)} ${item.unit}.`);
+    setPriority(deriveStatus(item) === "Out of Stock" ? "urgent" : "normal");
+  };
+
+  useEffect(() => {
+    if (!open || !suggestedItemId) return;
+    applyItemSuggestion(eligibleItems.find((item) => item.id === suggestedItemId));
+  }, [open, suggestedItemId, items]);
+
   const handleMaterialChange = (itemId: string) => {
     const item = eligibleItems.find((option) => option.id === itemId);
     setMaterial(itemId);
-    setCategory(item?.category ?? "");
-    setCurrentQty(item ? String(item.onHand) : "");
-    setMinStock(item?.minimumStock ? String(item.minimumStock) : "");
+    if (item) {
+      applyItemSuggestion(item);
+      return;
+    }
+    setCategory("");
+    setCurrentQty("");
+    setMinStock("");
+    setRequestedQty("");
+    setReason("");
+    setPriority("normal");
   };
 
   const handleSubmit = async () => {
