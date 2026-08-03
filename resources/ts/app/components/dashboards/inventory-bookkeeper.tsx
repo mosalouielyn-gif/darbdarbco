@@ -801,6 +801,10 @@ function SalesPos({ items, setItems, setCredits, setHistory, history, user, bene
     setCart((current) => {
       const existing = current.find((line) => line.item.id === item.id);
       if (existing) {
+        if (existing.quantity >= item.onHand) {
+          toast.error(`Only ${item.onHand} ${item.unit} available for ${item.name}`);
+          return current;
+        }
         return current.map((line) => line.item.id === item.id ? { ...line, quantity: Math.min(line.quantity + 1, item.onHand) } : line);
       }
       return [...current, { item, quantity: 1 }];
@@ -810,7 +814,11 @@ function SalesPos({ items, setItems, setCredits, setHistory, history, user, bene
   const updateQuantity = (itemId: string, quantity: number) => {
     setCart((current) => current.map((line) => {
       if (line.item.id !== itemId) return line;
-      return { ...line, quantity: Math.max(1, Math.min(quantity, line.item.onHand)) };
+      if (quantity > line.item.onHand) {
+        toast.error(`Only ${line.item.onHand} ${line.item.unit} available for ${line.item.name}`);
+        return line;
+      }
+      return { ...line, quantity: Math.max(1, quantity) };
     }));
   };
 
@@ -830,6 +838,17 @@ function SalesPos({ items, setItems, setCredits, setHistory, history, user, bene
     }
     if (paymentMethod === "Beneficiary Credit" && (isWalkInCustomer || !selectedBeneficiary)) {
       toast.error("Select a beneficiary account for Beneficiary Credit");
+      return;
+    }
+    const overStockLine = cart.find((line) => {
+      const latestItem = items.find((item) => item.id === line.item.id);
+      const availableStock = latestItem?.onHand ?? line.item.onHand;
+      return line.quantity > availableStock;
+    });
+    if (overStockLine) {
+      const latestItem = items.find((item) => item.id === overStockLine.item.id);
+      const availableStock = latestItem?.onHand ?? overStockLine.item.onHand;
+      toast.error(`Only ${availableStock} ${overStockLine.item.unit} available for ${overStockLine.item.name}`);
       return;
     }
 
@@ -3526,9 +3545,9 @@ function CreditTransactions({ credits, setCredits, user }: { credits: CreditRow[
                   </tbody>
                 </table>
                 <div className="space-y-1.5 pt-2">
-                  <div className="flex justify-between"><span className="text-muted-foreground">Total Charged</span><span>₱{view.amount.toLocaleString()}.00</span></div>
-                  <div className="flex justify-between"><span className="text-muted-foreground">Remaining Balance</span><span>₱{view.remaining.toLocaleString()}.00</span></div>
-                  <div className="flex justify-between border-t pt-2"><span className="text-muted-foreground">Status</span><span className="text-emerald-700">{view.status}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">Total Charged: </span><span>₱{view.amount.toLocaleString()}.00</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">Remaining Balance: </span><span>₱{view.remaining.toLocaleString()}.00</span></div>
+                  <div className="flex justify-between border-t pt-2"><span className="text-muted-foreground">Status: </span><span className="text-emerald-700">{view.status}</span></div>
                 </div>
                 <div className="space-y-2">
                   <div className="font-medium">Deduction History</div>
