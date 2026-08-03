@@ -583,6 +583,22 @@ function inventoryRecordId(item: InventoryItem) {
   return item.dbId ?? item.id;
 }
 
+function findPendingRestockRequest(
+  requests: RestockRequest[],
+  item: Pick<InventoryItem, "dbId" | "id" | "name"> | Pick<RestockRequest, "itemDbId" | "material"> | undefined,
+) {
+  if (!item) return null;
+  const itemDbId = "itemDbId" in item ? item.itemDbId : Number(inventoryRecordId(item));
+  const itemName = "material" in item ? item.material : item.name;
+  const normalizedName = itemName.trim().toLowerCase();
+
+  return requests.find((request) => {
+    if (request.status !== "Pending") return false;
+    if (typeof itemDbId === "number" && Number.isFinite(itemDbId) && request.itemDbId === itemDbId) return true;
+    return !!normalizedName && request.material.trim().toLowerCase() === normalizedName;
+  }) ?? null;
+}
+
 function currentUserId(user: User) {
   const id = Number(user.id);
   return Number.isFinite(id) ? id : undefined;
@@ -3760,12 +3776,22 @@ function RestockRequests({ user, items, requests, setRequests, suggestedItemId, 
   const [viewing, setViewing] = useState<RestockRequest | null>(null);
   const [editing, setEditing] = useState<RestockRequest | null>(null);
   const [cancelling, setCancelling] = useState<RestockRequest | null>(null);
+  const [duplicateRequest, setDuplicateRequest] = useState<RestockRequest | null>(null);
   const [savingCancel, setSavingCancel] = useState(false);
 
   useEffect(() => {
     if (!suggestedItemId) return;
+    const suggestedItem = items.find((item) => item.id === suggestedItemId);
+    const existingRequest = findPendingRestockRequest(requests, suggestedItem);
+    if (existingRequest) {
+      setDuplicateRequest(existingRequest);
+      setOpenCreate(false);
+      onSuggestionHandled?.();
+      return;
+    }
+    setDuplicateRequest(null);
     setOpenCreate(true);
-  }, [suggestedItemId]);
+  }, [suggestedItemId, items, requests, onSuggestionHandled]);
 
   const filtered = requests.filter((r) => {
     const q = search.toLowerCase();
@@ -3786,6 +3812,14 @@ function RestockRequests({ user, items, requests, setRequests, suggestedItemId, 
   };
 
   const handleCreate = async (request: Omit<RestockRequest, "id" | "dateRequested" | "requestedBy" | "status">) => {
+    const existingRequest = findPendingRestockRequest(requests, request);
+    if (existingRequest) {
+      setDuplicateRequest(existingRequest);
+      setOpenCreate(false);
+      toast.info("You have already submitted a request for this item.");
+      return;
+    }
+
     try {
       const saved = await createRestockRequest({
         item_id: request.itemDbId,
@@ -3830,6 +3864,7 @@ function RestockRequests({ user, items, requests, setRequests, suggestedItemId, 
       });
       const mapped = mapRestockRequest(saved);
       setRequests((current) => current.map((request) => request.id === updatedRequest.id ? mapped : request));
+      setDuplicateRequest((current) => current?.id === updatedRequest.id ? mapped : current);
       toast.success(`${updatedRequest.id} updated`);
       setEditing(null);
     } catch (error) {
@@ -3855,6 +3890,7 @@ function RestockRequests({ user, items, requests, setRequests, suggestedItemId, 
       });
       const mapped = mapRestockRequest(saved);
       setRequests((current) => current.map((r) => r.id === cancelling.id ? mapped : r));
+      setDuplicateRequest((current) => current?.id === cancelling.id ? null : current);
       toast.success("Restock request cancelled");
       setCancelling(null);
     } catch (error) {
@@ -3875,6 +3911,42 @@ function RestockRequests({ user, items, requests, setRequests, suggestedItemId, 
           <Plus className="h-4 w-4 mr-1" />Create Restock Request
         </Button>
       </div>
+
+      {duplicateRequest && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-amber-950">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div className="flex gap-3">
+              <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-amber-100 text-amber-700">
+                <AlertTriangle className="h-4 w-4" />
+              </span>
+              <div>
+                <div className="font-semibold">You have already submitted a request.</div>
+                <div className="mt-1 text-sm text-amber-900">
+                  Request {duplicateRequest.id} for {duplicateRequest.material} is still pending. Would you like to edit your request?
+                </div>
+              </div>
+            </div>
+            <div className="flex shrink-0 gap-2 md:justify-end">
+              <Button
+                variant="outline"
+                className="border-amber-300 bg-white text-amber-900 hover:bg-amber-100"
+                onClick={() => setDuplicateRequest(null)}
+              >
+                Dismiss
+              </Button>
+              <Button
+                className="bg-emerald-600 hover:bg-emerald-700"
+                onClick={() => {
+                  setEditing(duplicateRequest);
+                  setDuplicateRequest(null);
+                }}
+              >
+                <Edit className="mr-1 h-4 w-4" />Edit Request
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <Card>
         <CardContent className="p-4 space-y-3">
@@ -3978,8 +4050,15 @@ function RestockRequests({ user, items, requests, setRequests, suggestedItemId, 
           if (!open) onSuggestionHandled?.();
         }}
         items={items}
+        requests={requests}
         suggestedItemId={suggestedItemId}
         onCreate={handleCreate}
+        onEditExisting={(request) => {
+          setOpenCreate(false);
+          setDuplicateRequest(null);
+          setEditing(request);
+          onSuggestionHandled?.();
+        }}
       />
       <EditRestockRequestDialog request={editing} onOpenChange={(open) => !open && setEditing(null)} onUpdate={handleUpdate} />
 
@@ -4143,7 +4222,15 @@ function restockPriorityBadgeClass(priority?: string) {
   return priority === "Urgent" ? "bg-red-100 text-red-800" : "bg-sky-100 text-sky-800";
 }
 
-function CreateRestockRequestDialog({ open, onOpenChange, items, suggestedItemId, onCreate }: { open: boolean; onOpenChange: (o: boolean) => void; items: InventoryItem[]; suggestedItemId?: string | null; onCreate: (request: Omit<RestockRequest, "id" | "dateRequested" | "requestedBy" | "status">) => Promise<void> | void }) {
+function CreateRestockRequestDialog({ open, onOpenChange, items, requests, suggestedItemId, onCreate, onEditExisting }: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  items: InventoryItem[];
+  requests: RestockRequest[];
+  suggestedItemId?: string | null;
+  onCreate: (request: Omit<RestockRequest, "id" | "dateRequested" | "requestedBy" | "status">) => Promise<void> | void;
+  onEditExisting: (request: RestockRequest) => void;
+}) {
   const [material, setMaterial] = useState("");
   const [category, setCategory] = useState("");
   const [currentQty, setCurrentQty] = useState("");
@@ -4156,6 +4243,7 @@ function CreateRestockRequestDialog({ open, onOpenChange, items, suggestedItemId
   const activeItems = items.filter((item) => item.active !== false);
   const eligibleItems = activeItems.filter((item) => item.onHand <= getMinimumStock(item));
   const selectedItem = eligibleItems.find((item) => item.id === material);
+  const existingPendingRequest = findPendingRestockRequest(requests, selectedItem);
   const selectedCurrent = Number(currentQty) || 0;
   const selectedMinimum = Number(minStock) || 0;
   const canRequestRestock = !!selectedItem && selectedCurrent <= selectedMinimum;
@@ -4199,6 +4287,10 @@ function CreateRestockRequestDialog({ open, onOpenChange, items, suggestedItemId
     }
     if (!canRequestRestock) {
       toast.error("Restock requests are allowed only when current stock is at or below the minimum stock level.");
+      return;
+    }
+    if (existingPendingRequest) {
+      toast.info("You have already submitted a request for this item.");
       return;
     }
     if ((Number(requestedQty) || 0) <= 0) {
@@ -4261,6 +4353,22 @@ function CreateRestockRequestDialog({ open, onOpenChange, items, suggestedItemId
               {eligibleItems.length === 0 && (
                 <p className="text-xs text-muted-foreground">No inventory items are currently at or below minimum stock.</p>
               )}
+              {existingPendingRequest && (
+                <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+                  <div className="font-semibold">You have already submitted a request.</div>
+                  <div className="mt-1 text-amber-900">
+                    Request {existingPendingRequest.id} for {existingPendingRequest.material} is still pending. Would you like to edit your request?
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="mt-3 bg-emerald-600 hover:bg-emerald-700"
+                    onClick={() => onEditExisting(existingPendingRequest)}
+                  >
+                    <Edit className="mr-1 h-4 w-4" />Edit Request
+                  </Button>
+                </div>
+              )}
             </div>
             <div className="space-y-1">
               <Label>Category</Label>
@@ -4306,7 +4414,7 @@ function CreateRestockRequestDialog({ open, onOpenChange, items, suggestedItemId
 
           <DialogFooter>
             <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Cancel</Button>
-            <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={handleSubmit} disabled={saving || !canRequestRestock}>
+            <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={handleSubmit} disabled={saving || !canRequestRestock || !!existingPendingRequest}>
               {saving ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <FileBarChart2 className="h-4 w-4 mr-1" />}
               {saving ? "Submitting..." : "Submit Request"}
             </Button>
