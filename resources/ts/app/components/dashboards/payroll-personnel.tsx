@@ -19,7 +19,7 @@ import { toast } from "sonner";
 import { jsPDF } from "jspdf";
 import { useAppData } from "../../lib/app-data-context";
 import { createPayrollSlip, submitPayrollSlip, updatePayrollSlip } from "../../lib/api";
-import { currentPayrollPeriodLabel, databaseDateKey, formatSystemDate, formatSystemDateTime, todaySystemDate } from "../../lib/date-time";
+import { currentPayrollPeriodLabel, databaseDateKey, formatDatabaseDateTime, formatSystemDate, formatSystemDateTime, todaySystemDate } from "../../lib/date-time";
 import { usePersistentState } from "../../lib/use-persistent-state";
 
 interface Props { user: User; onLogout: () => void }
@@ -195,6 +195,13 @@ type PayrollRecord = {
   preparedByName?: string;
   validatedByName?: string;
   approvedByName?: string;
+  returnCategory?: string;
+  returnReason?: string;
+  returnRemarks?: string;
+  returnedByName?: string;
+  returnedAt?: string;
+  resubmittedAt?: string;
+  resubmissionCount?: number;
 };
 
 type OtherAuthorizedDeductionItem = {
@@ -335,6 +342,13 @@ function mapPayrollSlip(row: any): PayrollRecord {
     preparedByName: row.prepared_by_name ?? "",
     validatedByName: row.validated_by_name ?? "",
     approvedByName: row.approved_by_name ?? "",
+    returnCategory: row.return_category ?? "",
+    returnReason: row.return_reason ?? "",
+    returnRemarks: row.return_remarks ?? "",
+    returnedByName: row.returned_by_name ?? "",
+    returnedAt: row.returned_at ? formatDatabaseDateTime(row.returned_at) : "",
+    resubmittedAt: row.resubmitted_at ? formatDatabaseDateTime(row.resubmitted_at) : "",
+    resubmissionCount: Number(row.resubmission_count ?? 0),
   };
 }
 
@@ -481,6 +495,19 @@ function BeneficiaryPayroll({ mode, user, beneficiaries, productionRecords, cred
     if (status === "Submitted for Validation") return <Badge className="bg-violet-100 text-violet-700">Submitted</Badge>;
     if (status === "Validated") return <Badge className="bg-emerald-100 text-emerald-700">Validated</Badge>;
     return <Badge className="bg-amber-100 text-amber-700">Returned</Badge>;
+  };
+
+  const getValidationCell = (record: PayrollRecord) => {
+    if (record.validationStatus === "Submitted for Validation" && (record.resubmissionCount ?? 0) > 0) {
+      return (
+        <div className="space-y-1">
+          <Badge className="bg-violet-100 text-violet-700">Resubmitted</Badge>
+          {record.resubmittedAt && <div className="text-[11px] text-muted-foreground">{record.resubmittedAt}</div>}
+        </div>
+      );
+    }
+
+    return getValidationBadge(record.validationStatus);
   };
 
   const getApprovalBadge = (status: string) => {
@@ -657,7 +684,7 @@ function BeneficiaryPayroll({ mode, user, beneficiaries, productionRecords, cred
                     <TableCell className="text-right">&#8369;{record.grossIncome.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
                     <TableCell className="text-right">&#8369;{record.totalDeductions.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
                     <TableCell className="text-right font-semibold text-emerald-700">&#8369;{record.netIncome.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
-                    {mode === "work" && <TableCell>{getValidationBadge(record.validationStatus)}</TableCell>}
+                    {mode === "work" && <TableCell>{getValidationCell(record)}</TableCell>}
                     <TableCell>{getApprovalBadge(record.approvalStatus)}</TableCell>
                     <TableCell className={mode === "work" ? "w-[96px]" : "w-[64px]"}>
                       <div className="flex items-center justify-center gap-1 whitespace-nowrap">
@@ -786,9 +813,18 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, beneficiar
       setSelectedBeneficiary(beneficiary?.id || "");
       setPayrollPeriod(editRecord.period);
       setLaborCost(String(editRecord.laborCost ?? 0));
-      setOtherDeductions([]);
+      setOtherDeductions((editRecord.otherDeductionItems ?? []).map((deduction) => ({
+        type: deduction.type,
+        amount: String(deduction.amount),
+      })));
       setShowProductionDetails(false);
-      resetPayrollPrices();
+      setPriceClassABig(String(editRecord.classAPrice ?? 400));
+      setPriceClassASmall(String(editRecord.classAPrice ?? 400));
+      setPriceClassACp(String(editRecord.classAPrice ?? 400));
+      setPriceClassBBig(String(editRecord.classBPrice ?? 350));
+      setPriceClassBSmall(String(editRecord.classBPrice ?? 350));
+      setPriceClassBCp(String(editRecord.classBPrice ?? 350));
+      setPriceSpecial(String(editRecord.specialPrice ?? 300));
     } else if (!open) {
       // Reset form when closing
       setSelectedBeneficiary("");
@@ -921,7 +957,7 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, beneficiar
     }
 
     if (invalidAuthorizedDeduction) {
-      toast.error(`Each authorized deduction must be at least ₱${MIN_AUTHORIZED_DEDUCTION_AMOUNT.toLocaleString("en-US", { minimumFractionDigits: 2 })}.`);
+      toast.error(`Each authorized deduction must be at least PHP ${MIN_AUTHORIZED_DEDUCTION_AMOUNT.toLocaleString("en-US", { minimumFractionDigits: 2 })}.`);
       return;
     }
 
@@ -993,7 +1029,9 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, beneficiar
             </DialogTitle>
             <DialogDescription className="text-sm">
               {editRecord
-                ? "Update the payroll slip details for the selected beneficiary"
+                ? (editRecord.validationStatus === "Returned for Correction"
+                  ? "Apply the requested corrections, then resubmit this payroll slip for Finance validation."
+                  : "Update the payroll slip details for the selected beneficiary")
                 : "Create a new payroll slip for beneficiary earnings and deductions"
               }
             </DialogDescription>
@@ -1001,6 +1039,26 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, beneficiar
         </div>
 
         <div className="px-4 py-4 space-y-4 sm:px-5">
+          {editRecord?.validationStatus === "Returned for Correction" && (
+            <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <div className="font-semibold">Returned for Correction</div>
+                  <div className="mt-1">
+                    {editRecord.returnCategory || "Correction"}: {editRecord.returnReason || "Finance or Manager requested corrections for this payroll slip."}
+                  </div>
+                  {editRecord.returnRemarks && <div className="mt-1 text-xs">Remarks: {editRecord.returnRemarks}</div>}
+                </div>
+                {(editRecord.returnedByName || editRecord.returnedAt) && (
+                  <div className="text-xs text-amber-800 sm:text-right">
+                    <div>{editRecord.returnedByName || "Returned by reviewer"}</div>
+                    <div>{editRecord.returnedAt}</div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Section A: Beneficiary Information */}
           <Card className="border-emerald-200">
             <CardHeader className="p-4 pb-2">
@@ -1822,6 +1880,28 @@ function ViewPayrollSlipDialog({ slip, beneficiaries = [], productionRecords = [
         </div>
 
         <div className="px-4 py-4 space-y-4 sm:px-8 sm:py-6 sm:space-y-6">
+          {slip.validationStatus === "Returned for Correction" && (
+            <Card className="border-amber-200 bg-amber-50">
+              <CardContent className="p-4">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <div className="font-semibold text-amber-900">Returned for Correction</div>
+                    <p className="mt-1 text-sm text-amber-900">
+                      {slip.returnCategory || "Correction"}: {slip.returnReason || "Finance or Manager requested corrections for this payroll slip."}
+                    </p>
+                    {slip.returnRemarks && <p className="mt-1 text-xs text-amber-800">Remarks: {slip.returnRemarks}</p>}
+                  </div>
+                  {(slip.returnedByName || slip.returnedAt) && (
+                    <div className="text-xs text-amber-800 sm:text-right">
+                      <div>{slip.returnedByName || "Returned by reviewer"}</div>
+                      <div>{slip.returnedAt}</div>
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
           {/* Validation Errors */}
           {!isValid && (
             <Card className="border-red-300 bg-red-50">

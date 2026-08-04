@@ -41,7 +41,16 @@ class PayrollSlipController extends Controller
         $this->syncOtherDeductions($id, $payload['other_deduction_items'] ?? []);
 
         $record = $this->findSlip($id);
-        $this->recordAudit($payload['user_id'] ?? null, $payload['user_name'] ?? null, 'Updated', "Updated payroll slip {$record->slip_no}");
+        $isResubmission = ($current->validation_status ?? '') === 'Returned for Correction'
+            && ($payload['validation_status'] ?? '') === 'Submitted for Validation';
+        $this->recordAudit(
+            $payload['user_id'] ?? null,
+            $payload['user_name'] ?? null,
+            $isResubmission ? 'Resubmitted' : 'Updated',
+            $isResubmission
+                ? "Resubmitted corrected payroll slip {$record->slip_no} for validation"
+                : "Updated payroll slip {$record->slip_no}"
+        );
 
         return response()->json($record);
     }
@@ -57,14 +66,33 @@ class PayrollSlipController extends Controller
         abort_if(! $current, 404, 'Payroll slip not found.');
         abort_if(($current->validation_status ?? '') === 'Validated' || ($current->approval_status ?? '') === 'Approved', 422, 'Validated or approved payroll slips cannot be submitted again.');
 
-        DB::table('payroll_slips')->where('id', $id)->update([
+        $isResubmission = ($current->validation_status ?? '') === 'Returned for Correction';
+        $values = [
             'validation_status' => 'Submitted for Validation',
             'approval_status' => 'Pending Approval',
             'submitted_at' => now(),
-        ]);
+        ];
+        $this->putIfColumn($values, 'validated_by', null);
+        $this->putIfColumn($values, 'validated_at', null);
+        $this->putIfColumn($values, 'approved_by', null);
+        $this->putIfColumn($values, 'approved_at', null);
+
+        if ($isResubmission) {
+            $this->putIfColumn($values, 'resubmitted_at', now());
+            $this->putIfColumn($values, 'resubmission_count', (int) ($current->resubmission_count ?? 0) + 1);
+        }
+
+        DB::table('payroll_slips')->where('id', $id)->update($values);
 
         $record = $this->findSlip($id);
-        $this->recordAudit($payload['user_id'] ?? null, $payload['user_name'] ?? null, 'Submitted', "Submitted payroll slip {$record->slip_no} for validation");
+        $this->recordAudit(
+            $payload['user_id'] ?? null,
+            $payload['user_name'] ?? null,
+            $isResubmission ? 'Resubmitted' : 'Submitted',
+            $isResubmission
+                ? "Resubmitted corrected payroll slip {$record->slip_no} for validation"
+                : "Submitted payroll slip {$record->slip_no} for validation"
+        );
 
         return response()->json($record);
     }
@@ -125,12 +153,21 @@ class PayrollSlipController extends Controller
         abort_if(! $current, 404, 'Payroll slip not found.');
         abort_if(($current->validation_status ?? '') === 'Validated' || ($current->approval_status ?? '') === 'Approved', 422, 'Validated or approved payroll slips cannot be returned.');
 
-        DB::table('payroll_slips')->where('id', $id)->update([
+        $returnValues = [
             'validation_status' => 'Returned for Correction',
             'approval_status' => 'Pending Approval',
             'validated_by' => $this->resolveUserId($payload['user_id'] ?? null, $payload['user_name'] ?? null),
             'validated_at' => now(),
-        ]);
+        ];
+
+        $returnUserId = $this->resolveUserId($payload['user_id'] ?? null, $payload['user_name'] ?? null);
+        $this->putIfColumn($returnValues, 'return_category', $payload['category']);
+        $this->putIfColumn($returnValues, 'return_reason', $payload['reason']);
+        $this->putIfColumn($returnValues, 'return_remarks', $payload['remarks'] ?? null);
+        $this->putIfColumn($returnValues, 'returned_by', $returnUserId);
+        $this->putIfColumn($returnValues, 'returned_at', now());
+
+        DB::table('payroll_slips')->where('id', $id)->update($returnValues);
 
         $record = $this->findSlip($id);
         $details = "{$payload['category']}: {$payload['reason']}";
@@ -181,12 +218,21 @@ class PayrollSlipController extends Controller
         abort_if(($current->validation_status ?? '') !== 'Validated', 422, 'Only Finance-validated payroll slips can be returned by Manager.');
         abort_if(($current->approval_status ?? '') === 'Approved', 422, 'Approved payroll slips cannot be returned.');
 
-        DB::table('payroll_slips')->where('id', $id)->update([
+        $returnUserId = $this->resolveUserId($payload['user_id'] ?? null, $payload['user_name'] ?? null);
+        $returnValues = [
             'validation_status' => 'Returned for Correction',
             'approval_status' => 'Pending Approval',
-            'approved_by' => $this->resolveUserId($payload['user_id'] ?? null, $payload['user_name'] ?? null),
+            'approved_by' => $returnUserId,
             'approved_at' => now(),
-        ]);
+        ];
+
+        $this->putIfColumn($returnValues, 'return_category', 'Manager Review');
+        $this->putIfColumn($returnValues, 'return_reason', $payload['reason']);
+        $this->putIfColumn($returnValues, 'return_remarks', $payload['remarks'] ?? null);
+        $this->putIfColumn($returnValues, 'returned_by', $returnUserId);
+        $this->putIfColumn($returnValues, 'returned_at', now());
+
+        DB::table('payroll_slips')->where('id', $id)->update($returnValues);
 
         $record = $this->findSlip($id);
         $details = $payload['reason'];
@@ -278,10 +324,26 @@ class PayrollSlipController extends Controller
         }
 
         if ($validationStatus === 'Submitted for Validation') {
-            $values['submitted_at'] = $current?->submitted_at ?? now();
+            $isResubmission = ($current?->validation_status ?? '') === 'Returned for Correction';
+            $values['submitted_at'] = now();
+            $this->putIfColumn($values, 'validated_by', null);
+            $this->putIfColumn($values, 'validated_at', null);
+            $this->putIfColumn($values, 'approved_by', null);
+            $this->putIfColumn($values, 'approved_at', null);
+            if ($isResubmission) {
+                $this->putIfColumn($values, 'resubmitted_at', now());
+                $this->putIfColumn($values, 'resubmission_count', (int) ($current?->resubmission_count ?? 0) + 1);
+            }
         }
 
         return $values;
+    }
+
+    private function putIfColumn(array &$values, string $column, mixed $value): void
+    {
+        if (Schema::hasColumn('payroll_slips', $column)) {
+            $values[$column] = $value;
+        }
     }
 
     private function batchId(string $period, ?int $userId): int
@@ -329,13 +391,20 @@ class PayrollSlipController extends Controller
         $preparedName = "prepared_user.$userNameColumn";
         $validatedName = "validated_user.$userNameColumn";
         $approvedName = "approved_user.$userNameColumn";
-
-        $slip = DB::table('payroll_slips')
+        $query = DB::table('payroll_slips')
             ->leftJoin('beneficiaries', 'beneficiaries.id', '=', 'payroll_slips.beneficiary_id')
             ->leftJoin('users as prepared_user', 'prepared_user.id', '=', 'payroll_slips.prepared_by')
             ->leftJoin('users as validated_user', 'validated_user.id', '=', 'payroll_slips.validated_by')
-            ->leftJoin('users as approved_user', 'approved_user.id', '=', 'payroll_slips.approved_by')
-            ->selectRaw("payroll_slips.*, $beneficiaryName as beneficiary_name, $preparedName as prepared_by_name, $validatedName as validated_by_name, $approvedName as approved_by_name")
+            ->leftJoin('users as approved_user', 'approved_user.id', '=', 'payroll_slips.approved_by');
+
+        $returnedName = "null";
+        if (Schema::hasColumn('payroll_slips', 'returned_by')) {
+            $query->leftJoin('users as returned_user', 'returned_user.id', '=', 'payroll_slips.returned_by');
+            $returnedName = "returned_user.$userNameColumn";
+        }
+
+        $slip = $query
+            ->selectRaw("payroll_slips.*, $beneficiaryName as beneficiary_name, $preparedName as prepared_by_name, $validatedName as validated_by_name, $approvedName as approved_by_name, $returnedName as returned_by_name")
             ->where('payroll_slips.id', $id)
             ->first();
 

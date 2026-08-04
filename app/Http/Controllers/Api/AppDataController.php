@@ -425,6 +425,7 @@ class AppDataController extends Controller
         $preparedName = "prepared_user.$userNameColumn";
         $validatedName = "validated_user.$userNameColumn";
         $approvedName = "approved_user.$userNameColumn";
+        $returnedName = 'null';
         $beneficiaryCode = Schema::hasColumn('payroll_slips', 'beneficiary_code')
             ? 'payroll_slips.beneficiary_code'
             : (Schema::hasColumn('beneficiaries', 'code') ? 'beneficiaries.code' : 'beneficiaries.beneficiary_code');
@@ -435,12 +436,19 @@ class AppDataController extends Controller
             ? 'payroll_slips.beneficiary_address'
             : (Schema::hasColumn('beneficiaries', 'address') ? 'beneficiaries.address' : 'null');
 
-        $slips = DB::table('payroll_slips')
+        $query = DB::table('payroll_slips')
             ->leftJoin('beneficiaries', 'beneficiaries.id', '=', 'payroll_slips.beneficiary_id')
             ->leftJoin('users as prepared_user', 'prepared_user.id', '=', 'payroll_slips.prepared_by')
             ->leftJoin('users as validated_user', 'validated_user.id', '=', 'payroll_slips.validated_by')
-            ->leftJoin('users as approved_user', 'approved_user.id', '=', 'payroll_slips.approved_by')
-            ->selectRaw("payroll_slips.*, $beneficiaryName as beneficiary_name, $beneficiaryCode as beneficiary_code, $beneficiaryContact as beneficiary_contact_number, $beneficiaryAddress as beneficiary_address, $preparedName as prepared_by_name, $validatedName as validated_by_name, $approvedName as approved_by_name")
+            ->leftJoin('users as approved_user', 'approved_user.id', '=', 'payroll_slips.approved_by');
+
+        if (Schema::hasColumn('payroll_slips', 'returned_by')) {
+            $query->leftJoin('users as returned_user', 'returned_user.id', '=', 'payroll_slips.returned_by');
+            $returnedName = "returned_user.$userNameColumn";
+        }
+
+        $slips = $query
+            ->selectRaw("payroll_slips.*, $beneficiaryName as beneficiary_name, $beneficiaryCode as beneficiary_code, $beneficiaryContact as beneficiary_contact_number, $beneficiaryAddress as beneficiary_address, $preparedName as prepared_by_name, $validatedName as validated_by_name, $approvedName as approved_by_name, $returnedName as returned_by_name")
             ->orderByDesc('payroll_slips.id')
             ->limit(100)
             ->get()

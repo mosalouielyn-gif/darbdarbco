@@ -148,6 +148,13 @@ function mapPayrollSlip(row: any): FoSlip {
         ? [{ type: "Other Approved Deductions", amount: otherDeductionAmount }]
         : [],
     productionSource: { classA, classB, special },
+    returnReason: row.return_reason ? {
+      category: row.return_category ?? "Correction",
+      reason: row.return_reason,
+      remarks: row.return_remarks ?? "",
+      returnedBy: row.returned_by_name ?? row.validated_by_name ?? "Finance Officer",
+      dateReturned: formatDatabaseDateTime(row.returned_at ?? row.validated_at ?? row.updated_at),
+    } : undefined,
   };
 }
 
