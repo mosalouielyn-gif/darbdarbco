@@ -735,6 +735,11 @@ function BeneficiaryPayroll({ mode, user, beneficiaries, productionRecords, cred
           creditTransactions={creditTransactions}
           auditEntries={auditRecords.filter((entry) => entry.slipNo === viewSlip.slipNo)}
           onClose={() => setViewSlip(null)}
+          onEdit={(record) => {
+            setViewSlip(null);
+            setEditRecord(record);
+            setOpenPrepare(true);
+          }}
           onSubmit={handleSubmitForValidation}
         />
       )}
@@ -1525,7 +1530,9 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, beneficiar
                   disabled={!!savingAction}
                 >
                   {savingAction === "submit" ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Send className="h-4 w-4 mr-1" />}
-                  {savingAction === "submit" ? "Submitting..." : "Update & Submit for Validation"}
+                  {savingAction === "submit"
+                    ? (editRecord.validationStatus === "Returned for Correction" ? "Resubmitting..." : "Submitting...")
+                    : (editRecord.validationStatus === "Returned for Correction" ? "Update & Resubmit for Validation" : "Update & Submit for Validation")}
                 </Button>
               </>
             ) : (
@@ -1687,6 +1694,9 @@ function ViewPayrollSlipDialog({ slip, beneficiaries = [], productionRecords = [
   }
 
   const isValid = validationErrors.length === 0;
+  const canSubmitFromView = slip.validationStatus === "Draft" || slip.validationStatus === "Returned for Correction";
+  const submitButtonLabel = slip.validationStatus === "Returned for Correction" ? "Resubmit for Validation" : "Submit for Validation";
+  const editButtonLabel = slip.validationStatus === "Returned for Correction" ? "Edit Correction" : "Edit";
 
   const downloadPdf = () => {
     const doc = new jsPDF();
@@ -2169,7 +2179,7 @@ function ViewPayrollSlipDialog({ slip, beneficiaries = [], productionRecords = [
               Back to Records
             </Button>
             <div className="flex gap-2">
-              {slip.validationStatus === "Draft" && (
+              {canSubmitFromView && (
                 <>
                   <Button
                     variant="outline"
@@ -2177,7 +2187,7 @@ function ViewPayrollSlipDialog({ slip, beneficiaries = [], productionRecords = [
                     onClick={() => onEdit?.(slip)}
                   >
                     <Edit className="h-4 w-4 mr-1" />
-                    Edit
+                    {editButtonLabel}
                   </Button>
                   <Button
                     className="bg-emerald-600 hover:bg-emerald-700"
@@ -2195,11 +2205,11 @@ function ViewPayrollSlipDialog({ slip, beneficiaries = [], productionRecords = [
                     }}
                   >
                     {isSubmitting ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Send className="h-4 w-4 mr-1" />}
-                    {isSubmitting ? "Submitting..." : "Submit for Validation"}
+                    {isSubmitting ? "Submitting..." : submitButtonLabel}
                   </Button>
                 </>
               )}
-              {slip.validationStatus !== "Draft" && (
+              {!canSubmitFromView && (
                 <>
                   <Button variant="outline" className="border-blue-600 text-blue-700 hover:bg-blue-50" onClick={() => window.print()}>
                     <Printer className="h-4 w-4 mr-1" />

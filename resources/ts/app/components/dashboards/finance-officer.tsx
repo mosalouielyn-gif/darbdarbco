@@ -199,7 +199,7 @@ function isFinanceValidated(status: FoStatus) {
 }
 
 function canFinanceAct(status: FoStatus) {
-  return status === "Submitted to Finance" || status === "Returned for Correction";
+  return status === "Submitted to Finance";
 }
 
 const ERROR_CATEGORIES = [
@@ -324,8 +324,8 @@ export function FinanceOfficerDashboard({ user, onLogout }: Props) {
     <DarbcoLayout user={user} onLogout={onLogout} navItems={NAV} active={active} onChange={setActive}>
       {active === "dashboard" && <Dashboard slips={slips} activities={validationActivities} goTo={setActive} onReview={(slip) => openReview(slip)} />}
       {active === "pending" && <SlipList title="Pending Validation" slips={slips} filter={(s) => s.status === "Submitted to Finance"} onReview={(slip) => openReview(slip)} />}
-      {active === "validated" && <SlipList title="Validated Payrolls" slips={slips} filter={(s) => s.status === "Validated by Finance" || s.status === "Pending Manager Approval"} onReview={(slip) => openReview(slip)} />}
-      {active === "returned" && <SlipList title="Returned Payrolls" slips={slips} filter={(s) => s.status === "Returned for Correction"} onReview={(slip) => openReview(slip)} />}
+      {active === "validated" && <SlipList title="Validated Payrolls" slips={slips} filter={(s) => s.status === "Validated by Finance" || s.status === "Pending Manager Approval"} onReview={(slip) => openReview(slip, true)} actionLabel="View Payroll" description="Validated payrolls forwarded for manager action." />}
+      {active === "returned" && <SlipList title="Returned Payrolls" slips={slips} filter={(s) => s.status === "Returned for Correction"} onReview={(slip) => openReview(slip, true)} actionLabel="View Payroll" description="Payroll slips returned to Payroll Personnel for correction and resubmission." />}
       {active === "history" && <SlipList title="Payroll History" slips={slips} filter={() => true} onReview={(slip) => openReview(slip, true)} actionLabel="View Payroll" description="View payroll records for history and reference." />}
       {active === "reports" && <Reports user={user} slips={slips} activities={validationActivities} />}
 
@@ -604,6 +604,7 @@ function ValidationDetailsDialog({ slip, readOnly = false, onClose, onValidate, 
 
   const allManuallyMatched = MANUAL_ASSESSMENT_ITEMS.every((item) => assessments[item.id] === "Matched");
   const hasIncompleteAssessment = MANUAL_ASSESSMENT_ITEMS.some((item) => !assessments[item.id]);
+  const hasMismatchAssessment = MANUAL_ASSESSMENT_ITEMS.some((item) => assessments[item.id] === "Not Matched");
 
   useEffect(() => {
     setAssessments({});
@@ -641,6 +642,10 @@ function ValidationDetailsDialog({ slip, readOnly = false, onClose, onValidate, 
   };
 
   const submitReturn = async () => {
+    if (!hasMismatchAssessment) {
+      toast.error("Mark at least one manual assessment item as Not Matched before returning payroll.");
+      return;
+    }
     if (!retCategory) { toast.error("Error category is required"); return; }
     if (!retReason.trim()) { toast.error("Reason for return is required"); return; }
     setReturning(true);
@@ -868,7 +873,8 @@ function ValidationDetailsDialog({ slip, readOnly = false, onClose, onValidate, 
               </TableBody>
             </Table>
             {hasIncompleteAssessment && <div className="text-xs text-amber-700">Complete every manual assessment item before validating payroll.</div>}
-            {!hasIncompleteAssessment && !allManuallyMatched && <div className="text-xs text-red-700">Payrolls with Not Matched items should be returned for correction.</div>}
+            {!hasIncompleteAssessment && !allManuallyMatched && <div className="text-xs text-red-700">A Not Matched result blocks validation and manager approval. Return the payroll for correction before it can be resubmitted.</div>}
+            {!hasMismatchAssessment && !allManuallyMatched && <div className="text-xs text-muted-foreground">Select Not Matched on the mismatched item to enable Return for Correction.</div>}
             </SectionCard>
           )}
 
@@ -890,7 +896,7 @@ function ValidationDetailsDialog({ slip, readOnly = false, onClose, onValidate, 
             <div className="flex flex-wrap justify-end gap-2 pt-2 border-t">
               <Button variant="outline" onClick={() => toast.success("Slip sent to printer")}><Printer className="h-4 w-4 mr-1" />Print</Button>
               <Button variant="outline" className="border-red-300 text-red-700 hover:bg-red-50"
-                disabled={!financeCanAct || returning || validating}
+                disabled={!financeCanAct || !hasMismatchAssessment || returning || validating}
                 onClick={() => setShowReturn(true)}>
                 {returning ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Undo2 className="h-4 w-4 mr-1" />}Return for Correction
               </Button>
@@ -930,11 +936,6 @@ function ValidationDetailsDialog({ slip, readOnly = false, onClose, onValidate, 
               <div className="space-y-1">
                 <Label>Remarks</Label>
                 <Textarea value={retRemarks} onChange={(e) => setRetRemarks(e.target.value)} placeholder="Optional additional instructions." />
-              </div>
-              <div className="grid grid-cols-2 gap-3 p-3 bg-slate-50 rounded-md">
-                <Field label="Returned To" value="Payroll Personnel" />
-                <Field label="Returned By" value="(current Finance Officer)" />
-                <Field label="Date Returned" value={currentSystemDateTime()} />
               </div>
               <div className="flex flex-col-reverse gap-2 pt-2 border-t sm:flex-row sm:justify-end [&>button]:w-full sm:[&>button]:w-auto">
                 <Button variant="outline" disabled={returning} onClick={() => setShowReturn(false)}>Cancel</Button>

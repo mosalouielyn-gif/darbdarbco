@@ -809,6 +809,26 @@ export async function approveRestockRequest(id: string | number, payload: { user
   return data;
 }
 
+export async function confirmRestockDelivery(
+  id: string | number,
+  payload: {
+    quantity_received?: number;
+    delivery_reference?: string;
+    delivery_notes?: string;
+    user_id?: number;
+    user_name?: string;
+  },
+): Promise<any> {
+  const response = await fetch(`/api/restock-requests/${id}/confirm-delivery`, {
+    method: "PUT",
+    headers: jsonHeaders,
+    body: JSON.stringify(payload),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data?.message || "Unable to confirm restock delivery.");
+  return data;
+}
+
 export async function returnRestockRequest(id: string | number, payload: { reason: string; user_id?: number; user_name?: string }): Promise<any> {
   const response = await fetch(`/api/restock-requests/${id}/return`, {
     method: "PUT",

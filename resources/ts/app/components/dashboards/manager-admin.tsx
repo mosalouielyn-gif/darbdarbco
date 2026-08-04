@@ -68,7 +68,7 @@ interface PayrollRow {
 interface RestockRow {
   dbId?: number;
   id: string; item: string; category: string; currentStock: number; reorder: number;
-  qty: number; requestedBy: string; date: string; status: "Pending Review" | "Approved" | "Returned";
+  qty: number; requestedBy: string; date: string; status: "Pending Review" | "Approved" | "Completed" | "Returned";
   returnReason?: string;
 }
 interface AuditRow {
@@ -412,7 +412,7 @@ function mapRestockRow(row: any): RestockRow {
     qty: Number(row.requested_quantity ?? row.quantity ?? 0),
     requestedBy: row.requested_by_name ?? "Inventory Bookkeeper",
     date: formatDateLabel(databaseDateKey(row.requested_at ?? row.created_at ?? todaySystemDate())),
-    status: row.status === "Pending" ? "Pending Review" : row.status === "Rejected" ? "Returned" : row.status === "Returned" ? "Returned" : row.status === "Cancelled" ? "Returned" : "Approved",
+    status: row.status === "Pending" ? "Pending Review" : row.status === "Completed" ? "Completed" : row.status === "Rejected" ? "Returned" : row.status === "Returned" ? "Returned" : row.status === "Cancelled" ? "Returned" : "Approved",
     returnReason: row.review_notes ?? "",
   };
 }
@@ -711,6 +711,7 @@ function RestockBadge({ s }: { s: RestockRow["status"] }) {
   const map = {
     "Pending Review": "bg-amber-100 text-amber-800",
     "Approved": "bg-emerald-100 text-emerald-800",
+    "Completed": "bg-sky-100 text-sky-800",
     "Returned": "bg-red-100 text-red-800",
   };
   return <Badge className={map[s]}>{s}</Badge>;
@@ -1057,19 +1058,27 @@ function PayrollHistoryBadge({ status }: { status: PayrollRow["status"] }) {
 
 function RestockRequests({ restock, onApprove, onReturn }: { restock: RestockRow[]; onApprove: (id: string) => void | Promise<void>; onReturn: (id: string, reason: string) => void | Promise<void> }) {
   const [view, setView] = useState<RestockRow | null>(null);
+  const [confirmingApproval, setConfirmingApproval] = useState<RestockRow | null>(null);
   const [returning, setReturning] = useState<RestockRow | null>(null);
   const [reason, setReason] = useState("");
   const [approvingId, setApprovingId] = useState<string | null>(null);
   const [returningId, setReturningId] = useState<string | null>(null);
 
-  const handleApprove = async (row: RestockRow) => {
+  const openApproveConfirmation = (row: RestockRow) => {
     if (row.status !== "Pending Review") {
       toast.message(`${row.id} is already ${row.status.toLowerCase()}.`);
       return;
     }
+    setConfirmingApproval(row);
+  };
+
+  const handleApprove = async () => {
+    if (!confirmingApproval) return;
+    const row = confirmingApproval;
     setApprovingId(row.id);
     try {
       await onApprove(row.id);
+      setConfirmingApproval(null);
     } finally {
       setApprovingId(null);
     }
@@ -1114,7 +1123,7 @@ function RestockRequests({ restock, onApprove, onReturn }: { restock: RestockRow
                   <TableCell><RestockBadge s={r.status} /></TableCell>
                   <TableCell>
                     <div className="flex gap-1">
-                      <button title="Approve" className="p-1.5 rounded bg-emerald-100 text-emerald-700 hover:bg-emerald-200 disabled:opacity-60 disabled:cursor-not-allowed" disabled={r.status !== "Pending Review" || approvingId === r.id || returningId === r.id} onClick={() => handleApprove(r)}>
+                      <button title="Approve" className="p-1.5 rounded bg-emerald-100 text-emerald-700 hover:bg-emerald-200 disabled:opacity-60 disabled:cursor-not-allowed" disabled={r.status !== "Pending Review" || approvingId === r.id || returningId === r.id} onClick={() => openApproveConfirmation(r)}>
                         {approvingId === r.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
                       </button>
                       <button title="Return" className="p-1.5 rounded bg-amber-100 text-amber-700 hover:bg-amber-200 disabled:opacity-60 disabled:cursor-not-allowed" disabled={r.status !== "Pending Review" || approvingId === r.id || returningId === r.id} onClick={() => handleReturn(r)}>
@@ -1153,6 +1162,38 @@ function RestockRequests({ restock, onApprove, onReturn }: { restock: RestockRow
                 </div>
               )}
               <div className="flex flex-col gap-2 sm:flex-row sm:justify-end [&>button]:w-full sm:[&>button]:w-auto"><Button variant="outline" onClick={() => setView(null)}>Close</Button></div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!confirmingApproval} onOpenChange={(open) => !open && !approvingId && setConfirmingApproval(null)}>
+        <DialogContent className="!max-w-[calc(100vw-1rem)] w-[calc(100vw-1rem)] sm:!max-w-[560px]">
+          {confirmingApproval && (
+            <>
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2 text-emerald-800">
+                  <CheckCircle2 className="h-5 w-5" />Approve Restock Request
+                </DialogTitle>
+                <DialogDescription>
+                  This confirms manager approval only. Inventory stock will update after the Bookkeeper confirms delivery.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="rounded-md border bg-slate-50 p-4">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <Field label="Request ID" value={confirmingApproval.id} />
+                  <Field label="Item" value={confirmingApproval.item} />
+                  <Field label="Current Stock" value={String(confirmingApproval.currentStock)} />
+                  <Field label="Requested Quantity" value={confirmingApproval.qty.toLocaleString()} />
+                </div>
+              </div>
+              <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end [&>button]:w-full sm:[&>button]:w-auto">
+                <Button variant="outline" disabled={approvingId === confirmingApproval.id} onClick={() => setConfirmingApproval(null)}>Cancel</Button>
+                <Button className="bg-emerald-600 hover:bg-emerald-700" disabled={approvingId === confirmingApproval.id} onClick={handleApprove}>
+                  {approvingId === confirmingApproval.id && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}
+                  {approvingId === confirmingApproval.id ? "Approving..." : "Confirm Approval"}
+                </Button>
+              </div>
             </>
           )}
         </DialogContent>

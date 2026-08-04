@@ -55,6 +55,7 @@ Route::post('/restock-requests', [RestockRequestController::class, 'store']);
 Route::put('/restock-requests/{id}', [RestockRequestController::class, 'update']);
 Route::put('/restock-requests/{id}/cancel', [RestockRequestController::class, 'cancel']);
 Route::put('/restock-requests/{id}/approve', [RestockRequestController::class, 'approve']);
+Route::put('/restock-requests/{id}/confirm-delivery', [RestockRequestController::class, 'confirmDelivery']);
 Route::put('/restock-requests/{id}/return', [RestockRequestController::class, 'return']);
 Route::get('/role-permissions', [RolePermissionController::class, 'index']);
 Route::put('/role-permissions', [RolePermissionController::class, 'update']);

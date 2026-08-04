@@ -15,12 +15,12 @@ import { Checkbox } from "../ui/checkbox";
 import {
   LayoutDashboard, Boxes, ArrowDownCircle, ArrowUpCircle, CreditCard, History,
   FileBarChart2, AlertTriangle, Package, TrendingUp, Plus, Search, Edit, Eye,
-  Trash2, ChevronLeft, ChevronRight, ChevronDown, Check, Upload, Lock, Loader2, ShoppingCart, Receipt, Banknote,
+  Trash2, ChevronLeft, ChevronRight, ChevronDown, Check, CheckCircle2, Upload, Lock, Loader2, ShoppingCart, Receipt, Banknote,
 } from "lucide-react";
 import { User } from "../types";
 import { toast } from "sonner";
 import { useAppData } from "../../lib/app-data-context";
-import { adjustInventoryItem, cancelRestockRequest, createInventoryItem, createRestockRequest, releaseInventoryItem, returnBorrowedMaterial, stockInInventoryItem, updateInventoryItem, updateInventoryItemStatus, updateRestockRequest } from "../../lib/api";
+import { adjustInventoryItem, cancelRestockRequest, confirmRestockDelivery, createInventoryItem, createRestockRequest, releaseInventoryItem, returnBorrowedMaterial, stockInInventoryItem, updateInventoryItem, updateInventoryItemStatus, updateRestockRequest } from "../../lib/api";
 import { addDaysSystemDate, currentSystemTime, databaseDateKey, formatDatabaseDateTime, formatSystemDate, formatSystemDateTime, todaySystemDate } from "../../lib/date-time";
 import { usePersistentState } from "../../lib/use-persistent-state";
 
@@ -126,6 +126,7 @@ export function InventoryBookkeeperDashboard({ user, onLogout }: Props) {
         <RestockRequests
           user={user}
           items={items}
+          setItems={setItems}
           requests={restockRows}
           setRequests={setRestockRows}
           suggestedItemId={suggestedRestockItemId}
@@ -3762,9 +3763,10 @@ function StockHistory({ history }: { history: StockHistoryRow[] }) {
   );
 }
 
-function RestockRequests({ user, items, requests, setRequests, suggestedItemId, onSuggestionHandled }: {
+function RestockRequests({ user, items, setItems, requests, setRequests, suggestedItemId, onSuggestionHandled }: {
   user: User;
   items: InventoryItem[];
+  setItems: React.Dispatch<React.SetStateAction<InventoryItem[]>>;
   requests: RestockRequest[];
   setRequests: React.Dispatch<React.SetStateAction<RestockRequest[]>>;
   suggestedItemId?: string | null;
@@ -3776,8 +3778,10 @@ function RestockRequests({ user, items, requests, setRequests, suggestedItemId, 
   const [viewing, setViewing] = useState<RestockRequest | null>(null);
   const [editing, setEditing] = useState<RestockRequest | null>(null);
   const [cancelling, setCancelling] = useState<RestockRequest | null>(null);
+  const [delivering, setDelivering] = useState<RestockRequest | null>(null);
   const [duplicateRequest, setDuplicateRequest] = useState<RestockRequest | null>(null);
   const [savingCancel, setSavingCancel] = useState(false);
+  const [savingDelivery, setSavingDelivery] = useState(false);
 
   useEffect(() => {
     if (!suggestedItemId) return;
@@ -3811,8 +3815,9 @@ function RestockRequests({ user, items, requests, setRequests, suggestedItemId, 
     }
   };
 
-  const handleCreate = async (request: Omit<RestockRequest, "id" | "dateRequested" | "requestedBy" | "status">) => {
-    const existingRequest = findPendingRestockRequest(requests, request);
+  const handleCreate = async (requestInput: RestockRequestDraft | RestockRequestDraft[]) => {
+    const requestList = Array.isArray(requestInput) ? requestInput : [requestInput];
+    const existingRequest = requestList.map((request) => findPendingRestockRequest(requests, request)).find(Boolean);
     if (existingRequest) {
       setDuplicateRequest(existingRequest);
       setOpenCreate(false);
@@ -3821,21 +3826,25 @@ function RestockRequests({ user, items, requests, setRequests, suggestedItemId, 
     }
 
     try {
-      const saved = await createRestockRequest({
-        item_id: request.itemDbId,
-        material_name: request.material,
-        category: request.category,
-        current_quantity: request.current,
-        minimum_stock: request.minimumStock,
-        requested_quantity: request.requested,
-        priority: request.priority,
-        reason: request.reason,
-        notes: request.notes,
-        user_id: currentUserId(user),
-        user_name: user.name,
-      });
-      setRequests((current) => [mapRestockRequest(saved), ...current]);
-      toast.success("Restock request submitted for approval");
+      const savedRequests = [];
+      for (const request of requestList) {
+        const saved = await createRestockRequest({
+          item_id: request.itemDbId,
+          material_name: request.material,
+          category: request.category,
+          current_quantity: request.current,
+          minimum_stock: request.minimumStock,
+          requested_quantity: request.requested,
+          priority: request.priority,
+          reason: request.reason,
+          notes: request.notes,
+          user_id: currentUserId(user),
+          user_name: user.name,
+        });
+        savedRequests.push(mapRestockRequest(saved));
+      }
+      setRequests((current) => [...savedRequests, ...current]);
+      toast.success(requestList.length > 1 ? `${requestList.length} restock requests submitted for approval` : "Restock request submitted for approval");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Unable to submit restock request.");
       throw error;
@@ -3897,6 +3906,39 @@ function RestockRequests({ user, items, requests, setRequests, suggestedItemId, 
       toast.error(error instanceof Error ? error.message : "Unable to cancel restock request.");
     } finally {
       setSavingCancel(false);
+    }
+  };
+
+  const handleConfirmDelivery = async (quantityReceived: number, deliveryReference: string, deliveryNotes: string) => {
+    if (!delivering || savingDelivery) return;
+    if (delivering.status !== "Approved") {
+      toast.error("Only approved restock requests can be confirmed as delivered.");
+      return;
+    }
+
+    setSavingDelivery(true);
+    try {
+      const saved = await confirmRestockDelivery(delivering.dbId ?? delivering.id, {
+        quantity_received: quantityReceived,
+        delivery_reference: deliveryReference,
+        delivery_notes: deliveryNotes,
+        user_id: currentUserId(user),
+        user_name: user.name,
+      });
+      const mapped = mapRestockRequest(saved);
+      setRequests((current) => current.map((request) => request.id === delivering.id ? mapped : request));
+      setItems((current) => current.map((item) => {
+        const sameItem = delivering.itemDbId
+          ? Number(inventoryRecordId(item)) === delivering.itemDbId
+          : item.name === delivering.material;
+        return sameItem ? { ...item, onHand: item.onHand + quantityReceived, updated: todayInputDate() } : item;
+      }));
+      toast.success("Delivery confirmed and inventory stock updated");
+      setDelivering(null);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to confirm delivery.");
+    } finally {
+      setSavingDelivery(false);
     }
   };
 
@@ -4019,7 +4061,12 @@ function RestockRequests({ user, items, requests, setRequests, suggestedItemId, 
                             </button>
                           </>
                         )}
-                        {r.status !== "Pending" && (
+                        {r.status === "Approved" && (
+                          <button className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded bg-emerald-100 text-emerald-700 hover:bg-emerald-200" title="Confirm delivery" aria-label={`Confirm delivery ${r.id}`} onClick={() => setDelivering(r)}>
+                            <CheckCircle2 className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                        {r.status !== "Pending" && r.status !== "Approved" && (
                           <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded bg-slate-100 text-slate-500" title="Locked after manager action" aria-label={`${r.id} locked`}>
                             <Lock className="h-3.5 w-3.5" />
                           </span>
@@ -4061,6 +4108,12 @@ function RestockRequests({ user, items, requests, setRequests, suggestedItemId, 
         }}
       />
       <EditRestockRequestDialog request={editing} onOpenChange={(open) => !open && setEditing(null)} onUpdate={handleUpdate} />
+      <ConfirmRestockDeliveryDialog
+        request={delivering}
+        saving={savingDelivery}
+        onOpenChange={(open) => !open && !savingDelivery && setDelivering(null)}
+        onConfirm={handleConfirmDelivery}
+      />
 
       <Dialog open={!!viewing} onOpenChange={(o) => !o && setViewing(null)}>
         <DialogContent className="w-[calc(100vw-1rem)] sm:!max-w-[760px]">
@@ -4183,6 +4236,8 @@ type RestockRequest = {
   notes?: string;
 };
 
+type RestockRequestDraft = Omit<RestockRequest, "id" | "dateRequested" | "requestedBy" | "status">;
+
 function initialRestockRequests(_userName: string): RestockRequest[] {
   return [];
 }
@@ -4222,41 +4277,144 @@ function restockPriorityBadgeClass(priority?: string) {
   return priority === "Urgent" ? "bg-red-100 text-red-800" : "bg-sky-100 text-sky-800";
 }
 
+function ConfirmRestockDeliveryDialog({ request, saving, onOpenChange, onConfirm }: {
+  request: RestockRequest | null;
+  saving: boolean;
+  onOpenChange: (open: boolean) => void;
+  onConfirm: (quantityReceived: number, deliveryReference: string, deliveryNotes: string) => Promise<void> | void;
+}) {
+  const [quantityReceived, setQuantityReceived] = useState("");
+  const [deliveryReference, setDeliveryReference] = useState("");
+  const [deliveryNotes, setDeliveryNotes] = useState("");
+
+  useEffect(() => {
+    if (!request) return;
+    setQuantityReceived(String(request.requested));
+    setDeliveryReference(`DEL-${request.id}`);
+    setDeliveryNotes("");
+  }, [request]);
+
+  const handleConfirm = async () => {
+    if (!request || saving) return;
+    const quantity = Number(quantityReceived);
+    if (!quantity || quantity <= 0) {
+      toast.error("Received quantity must be greater than zero.");
+      return;
+    }
+    await onConfirm(quantity, deliveryReference.trim(), deliveryNotes.trim());
+  };
+
+  return (
+    <Dialog open={!!request} onOpenChange={(open) => !saving && onOpenChange(open)}>
+      <DialogContent className="w-[calc(100vw-1rem)] sm:!max-w-[620px]">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-emerald-800">
+            <CheckCircle2 className="h-5 w-5" />Confirm Restock Delivery
+          </DialogTitle>
+          <DialogDescription>
+            Inventory stock will increase only after this delivery is confirmed.
+          </DialogDescription>
+        </DialogHeader>
+        {request && (
+          <div className="space-y-4">
+            <div className="rounded-md border bg-slate-50 p-4">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <RestockInfo label="Request ID" value={request.id} />
+                <RestockInfo label="Material" value={request.material} />
+                <RestockInfo label="Approved Quantity" value={String(request.requested)} />
+                <RestockInfo label="Current Stock Before Delivery" value={String(request.current)} />
+              </div>
+            </div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="space-y-1">
+                <Label>Quantity Received <span className="text-red-500">*</span></Label>
+                <Input type="number" min="0.01" step="0.01" value={quantityReceived} onChange={(event) => setQuantityReceived(event.target.value)} disabled={saving} />
+              </div>
+              <div className="space-y-1">
+                <Label>Delivery Reference</Label>
+                <Input value={deliveryReference} onChange={(event) => setDeliveryReference(event.target.value)} disabled={saving} />
+              </div>
+            </div>
+            <div className="space-y-1">
+              <Label>Delivery Notes</Label>
+              <Textarea rows={3} value={deliveryNotes} onChange={(event) => setDeliveryNotes(event.target.value)} placeholder="Optional receipt, supplier, or delivery remarks." disabled={saving} />
+            </div>
+            <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+              Confirm only after the delivered materials are physically received and checked.
+            </div>
+          </div>
+        )}
+        <DialogFooter>
+          <Button variant="outline" disabled={saving} onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button className="bg-emerald-600 hover:bg-emerald-700" disabled={saving} onClick={handleConfirm}>
+            {saving && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}
+            {saving ? "Confirming..." : "Confirm Delivery"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+type RestockFormRow = {
+  key: string;
+  material: string;
+  category: string;
+  currentQty: string;
+  minStock: string;
+  requestedQty: string;
+  priority: string;
+};
+
+function blankRestockFormRow(): RestockFormRow {
+  return {
+    key: String(Date.now() + Math.random()),
+    material: "",
+    category: "",
+    currentQty: "",
+    minStock: "",
+    requestedQty: "",
+    priority: "normal",
+  };
+}
+
 function CreateRestockRequestDialog({ open, onOpenChange, items, requests, suggestedItemId, onCreate, onEditExisting }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
   items: InventoryItem[];
   requests: RestockRequest[];
   suggestedItemId?: string | null;
-  onCreate: (request: Omit<RestockRequest, "id" | "dateRequested" | "requestedBy" | "status">) => Promise<void> | void;
+  onCreate: (request: RestockRequestDraft | RestockRequestDraft[]) => Promise<void> | void;
   onEditExisting: (request: RestockRequest) => void;
 }) {
-  const [material, setMaterial] = useState("");
-  const [category, setCategory] = useState("");
-  const [currentQty, setCurrentQty] = useState("");
-  const [minStock, setMinStock] = useState("");
-  const [requestedQty, setRequestedQty] = useState("");
+  const [rows, setRows] = useState<RestockFormRow[]>([blankRestockFormRow()]);
   const [reason, setReason] = useState("");
-  const [priority, setPriority] = useState("normal");
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
   const activeItems = items.filter((item) => item.active !== false);
   const eligibleItems = activeItems.filter((item) => item.onHand <= getMinimumStock(item));
-  const selectedItem = eligibleItems.find((item) => item.id === material);
-  const existingPendingRequest = findPendingRestockRequest(requests, selectedItem);
-  const selectedCurrent = Number(currentQty) || 0;
-  const selectedMinimum = Number(minStock) || 0;
-  const canRequestRestock = !!selectedItem && selectedCurrent <= selectedMinimum;
+  const selectedItems = rows.map((row) => eligibleItems.find((item) => item.id === row.material));
+  const existingPendingRequests = selectedItems.map((item) => findPendingRestockRequest(requests, item)).filter(Boolean) as RestockRequest[];
+  const hasDuplicateInForm = rows.some((row, index) => row.material && rows.findIndex((candidate) => candidate.material === row.material) !== index);
+  const canRequestRestock = rows.some((row) => row.material) && rows.every((row) => {
+    if (!row.material) return false;
+    return (Number(row.currentQty) || 0) <= (Number(row.minStock) || 0) && (Number(row.requestedQty) || 0) > 0;
+  });
+
+  const rowFromItem = (item: InventoryItem): RestockFormRow => ({
+    key: String(Date.now() + Math.random()),
+    material: item.id,
+    category: item.category ?? "",
+    currentQty: String(item.onHand),
+    minStock: String(getMinimumStock(item)),
+    requestedQty: String(getSuggestedRestockQuantity(item)),
+    priority: deriveStatus(item) === "Out of Stock" ? "urgent" : "normal",
+  });
 
   const applyItemSuggestion = (item?: InventoryItem) => {
     if (!item) return;
-    setMaterial(item.id);
-    setCategory(item.category ?? "");
-    setCurrentQty(String(item.onHand));
-    setMinStock(String(getMinimumStock(item)));
-    setRequestedQty(String(getSuggestedRestockQuantity(item)));
+    setRows([rowFromItem(item)]);
     setReason(`Automatic low-stock suggestion: current stock is ${item.onHand} ${item.unit}, minimum stock is ${getMinimumStock(item)} ${item.unit}.`);
-    setPriority(deriveStatus(item) === "Out of Stock" ? "urgent" : "normal");
   };
 
   useEffect(() => {
@@ -4264,61 +4422,54 @@ function CreateRestockRequestDialog({ open, onOpenChange, items, requests, sugge
     applyItemSuggestion(eligibleItems.find((item) => item.id === suggestedItemId));
   }, [open, suggestedItemId, items]);
 
-  const handleMaterialChange = (itemId: string) => {
+  const handleMaterialChange = (rowKey: string, itemId: string) => {
     const item = eligibleItems.find((option) => option.id === itemId);
-    setMaterial(itemId);
-    if (item) {
-      applyItemSuggestion(item);
-      return;
-    }
-    setCategory("");
-    setCurrentQty("");
-    setMinStock("");
-    setRequestedQty("");
-    setReason("");
-    setPriority("normal");
+    setRows((current) => current.map((row) => row.key === rowKey
+      ? item
+        ? rowFromItem(item)
+        : { ...row, material: "", category: "", currentQty: "", minStock: "", requestedQty: "", priority: "normal" }
+      : row));
+  };
+
+  const updateRow = (rowKey: string, patch: Partial<RestockFormRow>) => {
+    setRows((current) => current.map((row) => row.key === rowKey ? { ...row, ...patch } : row));
   };
 
   const handleSubmit = async () => {
     if (saving) return;
-    if (!selectedItem || !requestedQty || !reason) {
+    if (!canRequestRestock || !reason.trim()) {
       toast.error("Please fill in all required fields");
       return;
     }
-    if (!canRequestRestock) {
-      toast.error("Restock requests are allowed only when current stock is at or below the minimum stock level.");
+    if (hasDuplicateInForm) {
+      toast.error("Each restock request row must use a different item.");
       return;
     }
-    if (existingPendingRequest) {
+    if (existingPendingRequests.length) {
       toast.info("You have already submitted a request for this item.");
-      return;
-    }
-    if ((Number(requestedQty) || 0) <= 0) {
-      toast.error("Requested quantity must be greater than zero");
       return;
     }
 
     setSaving(true);
     try {
-      await onCreate({
-        itemDbId: Number(inventoryRecordId(selectedItem)) || undefined,
-        material: selectedItem.name,
-        category: category || "Not specified",
-        current: Number(currentQty) || 0,
-        minimumStock: Number(minStock) || 0,
-        requested: Number(requestedQty) || 0,
-        reason,
-        priority: priority === "urgent" ? "Urgent" : "Normal",
-        notes,
+      const requestDrafts = rows.map((row) => {
+        const selectedItem = eligibleItems.find((item) => item.id === row.material)!;
+        return {
+          itemDbId: Number(inventoryRecordId(selectedItem)) || undefined,
+          material: selectedItem.name,
+          category: row.category || "Not specified",
+          current: Number(row.currentQty) || 0,
+          minimumStock: Number(row.minStock) || 0,
+          requested: Number(row.requestedQty) || 0,
+          reason: reason.trim(),
+          priority: row.priority === "urgent" ? "Urgent" : "Normal",
+          notes,
+        };
       });
+      await onCreate(requestDrafts);
       onOpenChange(false);
-      setMaterial("");
-      setCategory("");
-      setCurrentQty("");
-      setMinStock("");
-      setRequestedQty("");
+      setRows([blankRestockFormRow()]);
       setReason("");
-      setPriority("normal");
       setNotes("");
     } catch {
       // Parent handler already shows the database error toast.
@@ -4329,32 +4480,74 @@ function CreateRestockRequestDialog({ open, onOpenChange, items, requests, sugge
 
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => !saving && onOpenChange(nextOpen)}>
-      <DialogContent className="w-[calc(100vw-1rem)] sm:max-w-2xl">
+      <DialogContent className="w-[calc(100vw-1rem)] sm:!max-w-[920px] max-h-[92vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-emerald-700">
             <Plus className="h-5 w-5" />Create Restock Request
           </DialogTitle>
           <DialogDescription>
-            Submit a request only for materials at or below minimum stock.
+            Submit one or more requests only for materials at or below minimum stock.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <Label>Material Name <span className="text-red-500">*</span></Label>
-              <Select value={material} onValueChange={handleMaterialChange} disabled={saving}>
-                <SelectTrigger disabled={saving}><SelectValue placeholder="Select inventory item" /></SelectTrigger>
-                <SelectContent>
-                  {eligibleItems.map((item) => (
-                    <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {eligibleItems.length === 0 && (
-                <p className="text-xs text-muted-foreground">No inventory items are currently at or below minimum stock.</p>
-              )}
-              {existingPendingRequest && (
-                <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+          <div className="space-y-3">
+            {rows.map((row, index) => {
+              const selectedItem = eligibleItems.find((item) => item.id === row.material);
+              const existingPendingRequest = findPendingRestockRequest(requests, selectedItem);
+              return (
+                <div key={row.key} className="rounded-md border bg-white p-3">
+                  <div className="mb-3 flex items-center justify-between gap-2">
+                    <div>
+                      <div className="font-semibold">Request Item {index + 1}</div>
+                      <div className="text-xs text-muted-foreground">Only low-stock items are selectable.</div>
+                    </div>
+                    {rows.length > 1 && (
+                      <Button type="button" variant="outline" size="sm" className="text-red-600" disabled={saving} onClick={() => setRows((current) => current.filter((candidate) => candidate.key !== row.key))}>
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
+                    <div className="space-y-1 lg:col-span-2">
+                      <Label>Material Name <span className="text-red-500">*</span></Label>
+                      <Select value={row.material} onValueChange={(value) => handleMaterialChange(row.key, value)} disabled={saving}>
+                        <SelectTrigger disabled={saving}><SelectValue placeholder="Select inventory item" /></SelectTrigger>
+                        <SelectContent>
+                          {eligibleItems.map((item) => (
+                            <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1">
+                      <Label>Category</Label>
+                      <Input value={row.category} placeholder="Auto-filled" disabled />
+                    </div>
+                    <div className="space-y-1">
+                      <Label>Priority Level</Label>
+                      <Select value={row.priority} onValueChange={(value) => updateRow(row.key, { priority: value })} disabled={saving}>
+                        <SelectTrigger disabled={saving}><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="normal">Normal</SelectItem>
+                          <SelectItem value="urgent">Urgent</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1">
+                      <Label>Current Quantity</Label>
+                      <Input type="number" value={row.currentQty} placeholder="0" disabled />
+                    </div>
+                    <div className="space-y-1">
+                      <Label>Minimum Stock Level</Label>
+                      <Input type="number" value={row.minStock} placeholder="0" disabled />
+                    </div>
+                    <div className="space-y-1 md:col-span-2">
+                      <Label>Requested Quantity <span className="text-red-500">*</span></Label>
+                      <Input type="number" value={row.requestedQty} onChange={(event) => updateRow(row.key, { requestedQty: event.target.value })} placeholder="Enter quantity to request" disabled={saving} />
+                    </div>
+                  </div>
+                  {existingPendingRequest && (
+                    <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
                   <div className="font-semibold">You have already submitted a request.</div>
                   <div className="mt-1 text-amber-900">
                     Request {existingPendingRequest.id} for {existingPendingRequest.material} is still pending. Would you like to edit your request?
@@ -4368,34 +4561,16 @@ function CreateRestockRequestDialog({ open, onOpenChange, items, requests, sugge
                     <Edit className="mr-1 h-4 w-4" />Edit Request
                   </Button>
                 </div>
-              )}
-            </div>
-            <div className="space-y-1">
-              <Label>Category</Label>
-              <Input value={category} placeholder="Auto-filled" disabled />
-            </div>
-            <div className="space-y-1">
-              <Label>Current Quantity</Label>
-              <Input type="number" value={currentQty} placeholder="0" disabled />
-            </div>
-            <div className="space-y-1">
-              <Label>Minimum Stock Level</Label>
-              <Input type="number" value={minStock} placeholder="0" disabled />
-            </div>
-            <div className="space-y-1">
-              <Label>Requested Quantity <span className="text-red-500">*</span></Label>
-              <Input type="number" value={requestedQty} onChange={(e) => setRequestedQty(e.target.value)} placeholder="Enter quantity to request" disabled={saving} />
-            </div>
-            <div className="space-y-1">
-              <Label>Priority Level</Label>
-              <Select value={priority} onValueChange={setPriority} disabled={saving}>
-                <SelectTrigger disabled={saving}><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="normal">Normal</SelectItem>
-                  <SelectItem value="urgent">Urgent</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+                  )}
+                </div>
+              );
+            })}
+            {eligibleItems.length === 0 && (
+              <p className="rounded-md border bg-slate-50 p-3 text-sm text-muted-foreground">No inventory items are currently at or below minimum stock.</p>
+            )}
+            <Button type="button" variant="outline" disabled={saving || eligibleItems.length === 0} onClick={() => setRows((current) => [...current, blankRestockFormRow()])}>
+              <Plus className="mr-1 h-4 w-4" />Add Item Request
+            </Button>
           </div>
 
           <div className="space-y-1">
@@ -4414,9 +4589,9 @@ function CreateRestockRequestDialog({ open, onOpenChange, items, requests, sugge
 
           <DialogFooter>
             <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Cancel</Button>
-            <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={handleSubmit} disabled={saving || !canRequestRestock || !!existingPendingRequest}>
+            <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={handleSubmit} disabled={saving || !canRequestRestock || hasDuplicateInForm || existingPendingRequests.length > 0}>
               {saving ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <FileBarChart2 className="h-4 w-4 mr-1" />}
-              {saving ? "Submitting..." : "Submit Request"}
+              {saving ? "Submitting..." : rows.length > 1 ? "Submit Requests" : "Submit Request"}
             </Button>
           </DialogFooter>
         </div>

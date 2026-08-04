@@ -73,6 +73,43 @@ class RestockRequestController extends Controller
         return response()->json($this->setStatus($id, 'Rejected', $payload, 'Returned'));
     }
 
+    public function confirmDelivery(Request $request, int $id): JsonResponse
+    {
+        $payload = $request->validate([
+            'quantity_received' => ['nullable', 'numeric', 'min:0.01'],
+            'delivery_reference' => ['nullable', 'string', 'max:255'],
+            'delivery_notes' => ['nullable', 'string'],
+            'user_id' => ['nullable', 'integer'],
+            'user_name' => ['nullable', 'string', 'max:255'],
+        ]);
+
+        return response()->json(DB::transaction(function () use ($id, $payload) {
+            $current = DB::table('restock_requests')->where('id', $id)->lockForUpdate()->first();
+            abort_if(! $current, 404, 'Restock request not found.');
+            abort_if(($current->status ?? '') !== 'Approved', 422, 'Only approved restock requests can be confirmed as delivered.');
+
+            $receivedQuantity = (float) ($payload['quantity_received'] ?? $current->requested_quantity ?? $current->quantity ?? 0);
+            abort_if($receivedQuantity <= 0, 422, 'Received quantity must be greater than zero.');
+
+            $updatedBalance = $this->applyDeliveredRestock($current, $payload, $receivedQuantity);
+
+            $values = ['status' => 'Completed'];
+            if (Schema::hasColumn('restock_requests', 'updated_at')) $values['updated_at'] = now();
+            if (Schema::hasColumn('restock_requests', 'current_quantity')) $values['current_quantity'] = $updatedBalance;
+            if (Schema::hasColumn('restock_requests', 'review_notes')) {
+                $reference = trim((string) ($payload['delivery_reference'] ?? ''));
+                $notes = trim((string) ($payload['delivery_notes'] ?? ''));
+                $values['review_notes'] = trim(($current->review_notes ? "{$current->review_notes}\n" : '')."Delivery confirmed".($reference ? " ({$reference})" : '').($notes ? ": {$notes}" : "."));
+            }
+
+            DB::table('restock_requests')->where('id', $id)->update($values);
+            $record = $this->findRequest($id);
+            $this->recordAudit($payload['user_id'] ?? null, $payload['user_name'] ?? null, 'Completed', "Confirmed delivery for restock request {$record->request_no}");
+
+            return $record;
+        }));
+    }
+
     private function validatedPayload(Request $request): array
     {
         $payload = $request->validate([
@@ -129,18 +166,11 @@ class RestockRequestController extends Controller
             abort_if(! $current, 404, 'Restock request not found.');
             abort_if(($current->status ?? '') !== 'Pending', 422, 'Only pending restock requests can be updated.');
 
-            $approvedStockBalance = $status === 'Approved'
-                ? $this->applyApprovedRestock($current, $payload)
-                : null;
-
             $values = ['status' => $status];
             if (Schema::hasColumn('restock_requests', 'updated_at')) $values['updated_at'] = now();
             if (Schema::hasColumn('restock_requests', 'reviewed_by')) $values['reviewed_by'] = $this->resolveUserId($payload['user_id'] ?? null, $payload['user_name'] ?? null);
             if (Schema::hasColumn('restock_requests', 'reviewed_at')) $values['reviewed_at'] = now();
             if (Schema::hasColumn('restock_requests', 'review_notes')) $values['review_notes'] = $payload['review_notes'] ?? null;
-            if ($approvedStockBalance !== null && Schema::hasColumn('restock_requests', 'current_quantity')) {
-                $values['current_quantity'] = $approvedStockBalance;
-            }
 
             DB::table('restock_requests')->where('id', $id)->update($values);
             $record = $this->findRequest($id);
@@ -150,7 +180,7 @@ class RestockRequestController extends Controller
         });
     }
 
-    private function applyApprovedRestock(object $request, array $payload): float
+    private function applyDeliveredRestock(object $request, array $payload, float $quantity): float
     {
         if (! Schema::hasTable('inventory_items')) {
             return (float) ($request->current_quantity ?? 0);
@@ -161,9 +191,6 @@ class RestockRequestController extends Controller
 
         $item = DB::table('inventory_items')->where('id', $itemId)->lockForUpdate()->first();
         abort_if(! $item, 404, 'Linked inventory item was not found.');
-
-        $quantity = (float) ($request->requested_quantity ?? $request->quantity ?? 0);
-        abort_if($quantity <= 0, 422, 'Requested quantity must be greater than zero.');
 
         $previousBalance = (float) ($item->on_hand ?? 0);
         $updatedBalance = $previousBalance + $quantity;
@@ -177,7 +204,7 @@ class RestockRequestController extends Controller
         }
 
         DB::table('inventory_items')->where('id', $itemId)->update($values);
-        $this->recordRestockStockIn($itemId, $request, $item, $payload, $quantity, $previousBalance, $updatedBalance);
+        $this->recordDeliveredStockIn($itemId, $request, $item, $payload, $quantity, $previousBalance, $updatedBalance);
 
         return $updatedBalance;
     }
@@ -202,11 +229,12 @@ class RestockRequestController extends Controller
             ->value('id');
     }
 
-    private function recordRestockStockIn(int $itemId, object $request, object $item, array $payload, float $quantity, float $previousBalance, float $updatedBalance): void
+    private function recordDeliveredStockIn(int $itemId, object $request, object $item, array $payload, float $quantity, float $previousBalance, float $updatedBalance): void
     {
         $userId = $this->resolveUserId($payload['user_id'] ?? null, $payload['user_name'] ?? null);
-        $reference = 'RST-'.($request->request_no ?? $request->id);
-        $reason = "Approved restock request {$request->request_no}; stock increased from {$previousBalance} to {$updatedBalance}.";
+        $reference = trim((string) ($payload['delivery_reference'] ?? '')) ?: 'RST-'.($request->request_no ?? $request->id);
+        $notes = trim((string) ($payload['delivery_notes'] ?? ''));
+        $reason = "Delivered restock request {$request->request_no}; stock increased from {$previousBalance} to {$updatedBalance}.".($notes ? " Notes: {$notes}" : '');
 
         if (Schema::hasTable('stock_transactions')) {
             $values = [
