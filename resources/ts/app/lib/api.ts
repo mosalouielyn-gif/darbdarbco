@@ -9,6 +9,7 @@ export interface AppData {
   stockTransactions: any[];
   borrowedMaterials: any[];
   creditTransactions: any[];
+  salesReceipts: any[];
   restockRequests: any[];
   payrollSlips: any[];
   auditLogs: any[];
@@ -529,6 +530,16 @@ export async function releaseInventoryItem(
     throw new Error(data?.message || "Unable to save material release.");
   }
 
+  return data;
+}
+
+export async function createSalesReceipt(payload: {
+  receipt_no: string; beneficiary_id?: number; beneficiary_account_id?: string; customer_name: string; cash_payment: number; transaction_date: string;
+  items: { inventory_item_id: number; quantity: number; unit_price: number }[]; user_id?: number; user_name?: string;
+}): Promise<any> {
+  const response = await fetch("/api/sales-receipts", { method: "POST", headers: jsonHeaders, body: JSON.stringify(payload) });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data?.message || "Unable to save sales receipt.");
   return data;
 }
 

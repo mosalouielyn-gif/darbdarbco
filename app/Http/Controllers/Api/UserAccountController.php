@@ -26,7 +26,7 @@ class UserAccountController extends Controller
         $payload = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'email' => ['required', 'email', 'max:255', Rule::unique('users', 'email')],
-            'username' => ['required', 'string', 'max:255'],
+            'username' => ['required', 'string', 'max:255', Rule::unique('users', 'username')],
             'password' => ['required', 'string', 'min:6'],
             'role' => ['required', 'string', Rule::in(self::ROLES)],
             'active' => ['required', 'boolean'],
@@ -50,7 +50,7 @@ class UserAccountController extends Controller
         $payload = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'email' => ['required', 'email', 'max:255', Rule::unique('users', 'email')->ignore($id)],
-            'username' => ['required', 'string', 'max:255'],
+            'username' => ['required', 'string', 'max:255', Rule::unique('users', 'username')->ignore($id)],
             'role' => ['required', 'string', Rule::in(self::ROLES)],
             'active' => ['required', 'boolean'],
             'contact' => ['nullable', 'string', 'max:255'],

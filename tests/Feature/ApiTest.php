@@ -92,6 +92,78 @@ class ApiTest extends TestCase
         ]);
     }
 
+    public function test_sales_receipt_groups_cash_and_credit_for_all_items(): void
+    {
+        $user = User::query()->create([
+            'name' => 'Inventory User',
+            'email' => 'inventory@example.test',
+            'username' => 'inventory.user',
+            'password' => Hash::make('secret123'),
+            'role' => 'inventory_bookkeeper',
+            'active' => true,
+        ]);
+        $beneficiaryId = DB::table('beneficiaries')->insertGetId([
+            'beneficiary_code' => 'BEN-SALE-1',
+            'name' => 'Sale Beneficiary',
+            'active' => true,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $itemIds = [];
+        foreach ([['Item One', 10, 5], ['Item Two', 25, 4]] as [$name, $price, $stock]) {
+            $itemIds[] = DB::table('inventory_items')->insertGetId([
+                'item_code' => strtoupper(str_replace(' ', '-', $name)),
+                'name' => $name,
+                'category' => 'Supplies',
+                'unit' => 'pcs',
+                'on_hand' => $stock,
+                'minimum_stock' => 0,
+                'unit_cost' => $price,
+                'active' => true,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
+
+        $this->postJson('/api/sales-receipts', [
+            'receipt_no' => 'POS-TEST-001',
+            'beneficiary_id' => $beneficiaryId,
+            'beneficiary_account_id' => 'BEN-SALE-1',
+            'customer_name' => 'Sale Beneficiary',
+            'cash_payment' => 30,
+            'transaction_date' => '2026-11-18',
+            'items' => [
+                ['inventory_item_id' => $itemIds[0], 'quantity' => 2, 'unit_price' => 10],
+                ['inventory_item_id' => $itemIds[1], 'quantity' => 1, 'unit_price' => 25],
+            ],
+            'user_id' => $user->id,
+            'user_name' => $user->name,
+        ])->assertCreated()
+            ->assertJsonPath('receipt_no', 'POS-TEST-001')
+            ->assertJsonPath('total_amount', 45)
+            ->assertJsonPath('cash_payment', 30)
+            ->assertJsonPath('credit_amount', 15)
+            ->assertJsonCount(2, 'items')
+            ->assertJsonCount(1, 'credit_transactions');
+
+        $this->assertDatabaseHas('inventory_items', ['id' => $itemIds[0], 'on_hand' => 3]);
+        $this->assertDatabaseHas('inventory_items', ['id' => $itemIds[1], 'on_hand' => 3]);
+        $this->assertDatabaseHas('credit_transactions', ['receipt_no' => 'POS-TEST-001', 'amount' => 15]);
+        $this->assertSame(2, DB::table('inventory_transactions')->where('receipt_no', 'POS-TEST-001')->count());
+        $this->assertDatabaseHas('inventory_transactions', ['receipt_no' => 'POS-TEST-001', 'reason' => 'POS receipt POS-TEST-001; Cash Payment: 5; Credit Amount: 15']);
+        $this->assertDatabaseCount('sales_receipts', 1);
+        $this->assertDatabaseCount('sales_receipt_items', 2);
+
+        $creditId = DB::table('credit_transactions')->where('receipt_no', 'POS-TEST-001')->value('id');
+        $this->postJson("/api/credit-transactions/{$creditId}/deduct", [
+            'amount' => 4,
+            'payroll_batch' => 'PAYROLL-TEST',
+            'user_id' => $user->id,
+            'user_name' => $user->name,
+        ])->assertOk();
+        $this->assertDatabaseHas('sales_receipts', ['receipt_no' => 'POS-TEST-001', 'remaining_balance' => 11]);
+    }
+
     public function test_harvest_record_can_be_updated_and_deleted_with_audit_logs(): void
     {
         $user = User::query()->create([

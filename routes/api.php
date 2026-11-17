@@ -11,6 +11,7 @@ use App\Http\Controllers\Api\InventoryItemController;
 use App\Http\Controllers\Api\PayrollSlipController;
 use App\Http\Controllers\Api\ProductionBoxRecordController;
 use App\Http\Controllers\Api\RestockRequestController;
+use App\Http\Controllers\Api\SalesReceiptController;
 use App\Http\Controllers\Api\RolePermissionController;
 use App\Http\Controllers\Api\UserAccountController;
 use Illuminate\Support\Facades\Route;
@@ -43,6 +44,7 @@ Route::post('/inventory-items/{id}/release', [InventoryItemController::class, 'r
 Route::post('/inventory-items/{id}/adjust', [InventoryItemController::class, 'adjust']);
 Route::post('/borrowed-materials/{id}/return', [BorrowedMaterialController::class, 'returnMaterial']);
 Route::post('/credit-transactions/{id}/deduct', [CreditTransactionController::class, 'deduct']);
+Route::post('/sales-receipts', [SalesReceiptController::class, 'store']);
 Route::post('/payroll-slips', [PayrollSlipController::class, 'store']);
 Route::put('/payroll-slips/{id}', [PayrollSlipController::class, 'update']);
 Route::put('/payroll-slips/{id}/submit', [PayrollSlipController::class, 'submit']);
