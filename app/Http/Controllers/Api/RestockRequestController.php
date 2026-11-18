@@ -310,11 +310,6 @@ class RestockRequestController extends Controller
         $userId = $this->resolveUserId($userId, $userName);
         $values = ['module' => 'Inventory', 'action' => $action];
 
-        if (Schema::hasColumn('audit_logs', 'id')) {
-            $maxId = (int) DB::table('audit_logs')->max('id');
-            $values['id'] = $maxId + 1;
-        }
-
         if (Schema::hasColumn('audit_logs', 'user_id')) $values['user_id'] = $userId;
         if (Schema::hasColumn('audit_logs', 'user_name')) $values['user_name'] = $userName;
         if (Schema::hasColumn('audit_logs', 'details')) $values['details'] = $description;

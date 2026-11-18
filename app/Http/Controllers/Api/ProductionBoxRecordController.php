@@ -242,11 +242,6 @@ class ProductionBoxRecordController extends Controller
             'action' => $action,
         ];
 
-        if (Schema::hasColumn('audit_logs', 'id')) {
-            $maxId = (int) DB::table('audit_logs')->max('id');
-            $values['id'] = $maxId + 1;
-        }
-
         if (Schema::hasColumn('audit_logs', 'status')) {
             $values['status'] = 'Completed';
         }

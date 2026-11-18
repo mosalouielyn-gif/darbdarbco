@@ -203,6 +203,12 @@ class BeneficiaryController extends Controller
             $values['updated_at'] = now();
         }
 
-        DB::table('audit_logs')->insert($values);
+        try {
+            DB::table('audit_logs')->insert($values);
+        } catch (\Throwable $error) {
+            // A failed audit write must not turn a saved beneficiary into a
+            // failed API response; callers may otherwise retry and duplicate it.
+            report($error);
+        }
     }
 }
