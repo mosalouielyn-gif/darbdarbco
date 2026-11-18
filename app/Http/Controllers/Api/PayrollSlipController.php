@@ -7,7 +7,6 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
-use App\Services\ContactNumberFormatter;
 
 class PayrollSlipController extends Controller
 {
@@ -19,12 +18,8 @@ class PayrollSlipController extends Controller
         $slipNo = $payload['slip_no'] ?? $this->nextSlipNo();
         $values = $this->values($payload, $slipNo);
 
-        $id = DB::transaction(function () use ($values, $payload) {
-            $id = DB::table('payroll_slips')->insertGetId($values);
-            $this->syncOtherDeductions($id, $payload['other_deduction_items'] ?? []);
-            $this->syncProductionRecords($id, $payload['production_records'] ?? []);
-            return $id;
-        });
+        $id = DB::table('payroll_slips')->insertGetId($values);
+        $this->syncOtherDeductions($id, $payload['other_deduction_items'] ?? []);
         $record = $this->findSlip($id);
 
         $this->recordAudit($payload['user_id'] ?? null, $payload['user_name'] ?? null, 'Created', "Created payroll slip {$slipNo}");
@@ -42,11 +37,8 @@ class PayrollSlipController extends Controller
         abort_if(($current->validation_status ?? 'Draft') === 'Validated' || ($current->approval_status ?? '') === 'Approved', 422, 'Validated or approved payroll slips cannot be edited.');
 
         $payload = $this->validatedPayload($request);
-        DB::transaction(function () use ($id, $payload, $current) {
-            DB::table('payroll_slips')->where('id', $id)->update($this->values($payload, $current->slip_no ?? null, $current));
-            $this->syncOtherDeductions($id, $payload['other_deduction_items'] ?? []);
-            $this->syncProductionRecords($id, $payload['production_records'] ?? []);
-        });
+        DB::table('payroll_slips')->where('id', $id)->update($this->values($payload, $current->slip_no ?? null, $current));
+        $this->syncOtherDeductions($id, $payload['other_deduction_items'] ?? []);
 
         $record = $this->findSlip($id);
         $isResubmission = ($current->validation_status ?? '') === 'Returned for Correction'
@@ -259,13 +251,9 @@ class PayrollSlipController extends Controller
             'beneficiary_id' => ['required', 'integer'],
             'beneficiary_name' => ['nullable', 'string', 'max:255'],
             'beneficiary_code' => ['nullable', 'string', 'max:255'],
-            'beneficiary_contact_number' => ContactNumberFormatter::rules(),
+            'beneficiary_contact_number' => ['nullable', 'string', 'max:255'],
             'beneficiary_address' => ['nullable', 'string'],
             'production_record_id' => ['nullable', 'integer'],
-            'production_records' => ['nullable', 'array'],
-            'production_records.*.sourceTable' => ['required_with:production_records', 'in:production_records,production_box_records'],
-            'production_records.*.id' => ['required_with:production_records', 'integer', 'min:1'],
-            'production_records.*.harvestDate' => ['nullable', 'date'],
             'payroll_period' => ['required', 'string', 'max:255'],
             'harvest_date' => ['nullable', 'date'],
             'class_a_boxes' => ['nullable', 'integer', 'min:0'],
@@ -420,10 +408,6 @@ class PayrollSlipController extends Controller
             ->where('payroll_slips.id', $id)
             ->first();
 
-        if ($slip && isset($slip->beneficiary_contact_number)) {
-            $slip->beneficiary_contact_number = ContactNumberFormatter::format($slip->beneficiary_contact_number);
-        }
-
         if ($slip && Schema::hasTable('payroll_deductions')) {
             $slip->deductions = DB::table('payroll_deductions')
                 ->where('payroll_slip_id', $id)
@@ -432,41 +416,7 @@ class PayrollSlipController extends Controller
                 ->all();
         }
 
-        if ($slip && Schema::hasTable('payroll_slip_production_records')) {
-            $links = DB::table('payroll_slip_production_records')->where('payroll_slip_id', $id)->orderBy('id')->get();
-            $slip->production_record_links = $links->map(function ($link) {
-                $recordTable = $link->source_table;
-                $recordNo = null;
-                if (Schema::hasTable($recordTable)) {
-                    $record = DB::table($recordTable)->where('id', $link->production_record_id)->first();
-                    $recordNo = $record->record_no ?? $record->reference_no ?? null;
-                }
-                return [
-                    'source_table' => $recordTable,
-                    'production_record_id' => (int) $link->production_record_id,
-                    'record_no' => $recordNo ?: (string) $link->production_record_id,
-                    'harvest_date' => $link->harvest_date,
-                ];
-            })->all();
-        }
-
         return $slip;
-    }
-
-    private function syncProductionRecords(int $slipId, array $items): void
-    {
-        if (! Schema::hasTable('payroll_slip_production_records')) return;
-        DB::table('payroll_slip_production_records')->where('payroll_slip_id', $slipId)->delete();
-        foreach ($items as $item) {
-            DB::table('payroll_slip_production_records')->insert([
-                'payroll_slip_id' => $slipId,
-                'source_table' => $item['sourceTable'],
-                'production_record_id' => $item['id'],
-                'harvest_date' => $item['harvestDate'] ?? null,
-                'created_at' => now(),
-                'updated_at' => now(),
-            ]);
-        }
     }
 
     private function syncOtherDeductions(int $slipId, array $items): void
@@ -503,7 +453,7 @@ class PayrollSlipController extends Controller
             return [
                 'beneficiary_name' => $payload['beneficiary_name'] ?? null,
                 'beneficiary_code' => $payload['beneficiary_code'] ?? null,
-                'beneficiary_contact_number' => ContactNumberFormatter::format($payload['beneficiary_contact_number'] ?? null),
+                'beneficiary_contact_number' => $payload['beneficiary_contact_number'] ?? null,
                 'beneficiary_address' => $payload['beneficiary_address'] ?? null,
             ];
         }
@@ -520,7 +470,7 @@ class PayrollSlipController extends Controller
         return [
             'beneficiary_name' => $payload['beneficiary_name'] ?? ($record->{$nameColumn} ?? null),
             'beneficiary_code' => $payload['beneficiary_code'] ?? ($record->{$codeColumn} ?? null),
-            'beneficiary_contact_number' => ContactNumberFormatter::format($payload['beneficiary_contact_number'] ?? ($contactColumn && $record ? ($record->{$contactColumn} ?? null) : null)),
+            'beneficiary_contact_number' => $payload['beneficiary_contact_number'] ?? ($contactColumn && $record ? ($record->{$contactColumn} ?? null) : null),
             'beneficiary_address' => $payload['beneficiary_address'] ?? ($record->address ?? null),
         ];
     }

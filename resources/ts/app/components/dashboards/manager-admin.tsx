@@ -43,7 +43,6 @@ import {
 } from "../../lib/api";
 import { currentSystemDateTime, databaseDateKey, formatDatabaseDateTime, formatSystemDate, parseDatabaseTimestamp, SYSTEM_TIME_ZONE, todaySystemDate } from "../../lib/date-time";
 import { usePersistentState } from "../../lib/use-persistent-state";
-import { formatContactNumber } from "../../lib/contact-number";
 
 interface Props { user: User; onLogout: () => void }
 
@@ -313,7 +312,7 @@ function mapAccount(row: any): Account {
     active: row.active === true || row.active === 1 || row.active === "1",
     lastLogin: row.last_login_at ? formatDatabaseDateTime(row.last_login_at) : "-",
     createdAt: row.created_at ? formatDatabaseDateTime(row.created_at) : "-",
-    contact: formatContactNumber(String(row.contact_information || row.contact || "")),
+    contact: row.contact_information || row.contact || "",
     remarks: row.remarks || "",
   };
 }
@@ -323,7 +322,7 @@ function mapBeneficiary(row: any): MasterBeneficiary {
     id: String(row.id),
     name: String(row.name ?? row.full_name ?? row.beneficiary_name ?? ""),
     code: String(row.code ?? row.beneficiary_code ?? ""),
-    contact: formatContactNumber(String(row.contact_number ?? row.contact ?? "")),
+    contact: String(row.contact_number ?? row.contact ?? ""),
     address: String(row.address ?? ""),
     active: row.active === undefined || row.active === true || row.active === 1 || row.active === "1",
     createdAt: row.created_at ? formatDatabaseDateTime(row.created_at) : "-",
@@ -2244,7 +2243,7 @@ function UserManagement({ users, setUsers, setAudit, adminId, adminName }: {
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-1"><Label>Contact Number</Label><Input type="tel" inputMode="numeric" pattern="[0-9-]*" maxLength={13} autoComplete="tel" value={form.contact} onChange={(e) => setForm({ ...form, contact: formatContactNumber(e.target.value) })} /></div>
+            <div className="space-y-1"><Label>Contact Number</Label><Input autoComplete="tel" value={form.contact} onChange={(e) => setForm({ ...form, contact: e.target.value })} /></div>
             <div className="space-y-1">
               <Label>Status</Label>
               <Select value={form.active ? "active" : "inactive"} onValueChange={(value) => setForm({ ...form, active: value === "active" })}>
@@ -2327,7 +2326,7 @@ function UserManagement({ users, setUsers, setAudit, adminId, adminName }: {
                     <SelectContent>{Object.entries(ROLE_LABELS).map(([role, label]) => <SelectItem key={role} value={role}>{label}</SelectItem>)}</SelectContent>
                   </Select>
                 </div>
-                <div className="space-y-1"><Label>Contact Number</Label><Input type="tel" inputMode="numeric" pattern="[0-9-]*" maxLength={13} value={editing.contact || ""} onChange={(e) => setEditing({ ...editing, contact: formatContactNumber(e.target.value) })} /></div>
+                <div className="space-y-1"><Label>Contact Number</Label><Input value={editing.contact || ""} onChange={(e) => setEditing({ ...editing, contact: e.target.value })} /></div>
                 <div className="space-y-1">
                   <Label>Status</Label>
                   <Select value={editing.active ? "active" : "inactive"} onValueChange={(value) => setEditing({ ...editing, active: value === "active" })}>
@@ -2388,25 +2387,11 @@ function BeneficiaryHarvesterManagement({ beneficiaries, setBeneficiaries, users
   const filteredBeneficiaries = beneficiaries.filter((beneficiary) => {
     const query = search.toLowerCase();
     return !query || `${beneficiary.code} ${beneficiary.name} ${beneficiary.contact} ${beneficiary.address}`.toLowerCase().includes(query);
-  }).sort((a, b) => {
-    const codeA = /^BEN-(\d+)$/i.exec(a.code)?.[1];
-    const codeB = /^BEN-(\d+)$/i.exec(b.code)?.[1];
-    if (codeA && codeB) return Number(codeA) - Number(codeB);
-    if (codeA) return -1;
-    if (codeB) return 1;
-    return a.code.localeCompare(b.code, undefined, { numeric: true });
   });
 
   const filteredHarvesters = harvesters.filter((harvester) => {
     const query = search.toLowerCase();
     return !query || `${harvester.username} ${harvester.name} ${harvester.contact} ${harvester.remarks}`.toLowerCase().includes(query);
-  }).sort((a, b) => {
-    const codeA = /^HAR-(\d+)$/i.exec(a.username)?.[1];
-    const codeB = /^HAR-(\d+)$/i.exec(b.username)?.[1];
-    if (codeA && codeB) return Number(codeA) - Number(codeB);
-    if (codeA) return -1;
-    if (codeB) return 1;
-    return a.username.localeCompare(b.username, undefined, { numeric: true });
   });
 
   const submitBeneficiary = async () => {
@@ -2501,12 +2486,14 @@ function BeneficiaryHarvesterManagement({ beneficiaries, setBeneficiaries, users
     setSaving(true);
 
     try {
-      const uniqueSuffix = Date.now().toString();
-      const accountKey = `harvester.${uniqueSuffix}`;
+      const uniqueSuffix = Date.now().toString().slice(-6);
+      const generatedCode = `HAR-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}${uniqueSuffix}`;
+      const harvesterCode = (harvesterForm.code.trim() || generatedCode).toUpperCase();
+      const accountKey = harvesterCode.toLowerCase().replace(/[^a-z0-9]+/g, ".").replace(/^\.+|\.+$/g, "") || `harvester.${uniqueSuffix}`;
       const harvester = mapAccount(await createUserAccount({
         name: harvesterForm.name.trim(),
-        email: `${accountKey}@harvester.local`,
-        username: accountKey,
+        email: `${accountKey}.${uniqueSuffix}@harvester.local`,
+        username: harvesterCode,
         password: `Harvester-${uniqueSuffix}`,
         role: "harvester",
         active: harvesterForm.active,
@@ -2592,9 +2579,9 @@ function BeneficiaryHarvesterManagement({ beneficiaries, setBeneficiaries, users
         <CardContent>
           {tab === "beneficiaries" ? (
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
-              <div className="space-y-1"><Label>Beneficiary Code</Label><Input name="beneficiary_code" autoComplete="off" value={beneficiaryForm.code} disabled placeholder="Assigned automatically (BEN-###)" /><p className="text-xs text-muted-foreground">Codes are assigned in sequence.</p></div>
+              <div className="space-y-1"><Label>Beneficiary Code</Label><Input name="beneficiary_code" autoComplete="off" value={beneficiaryForm.code} onChange={(e) => setBeneficiaryForm({ ...beneficiaryForm, code: e.target.value })} placeholder="Auto-generated if blank" /></div>
               <div className="space-y-1"><Label>Complete Name</Label><Input name="beneficiary_full_name" autoComplete="name" value={beneficiaryForm.name} onChange={(e) => setBeneficiaryForm({ ...beneficiaryForm, name: e.target.value })} /></div>
-              <div className="space-y-1"><Label>Contact Number</Label><Input name="beneficiary_contact_number" type="tel" autoComplete="tel" inputMode="numeric" pattern="[0-9-]*" maxLength={13} value={beneficiaryForm.contact} onChange={(e) => setBeneficiaryForm({ ...beneficiaryForm, contact: formatContactNumber(e.target.value) })} /></div>
+              <div className="space-y-1"><Label>Contact Number</Label><Input name="beneficiary_contact_number" autoComplete="tel" inputMode="tel" value={beneficiaryForm.contact} onChange={(e) => setBeneficiaryForm({ ...beneficiaryForm, contact: e.target.value })} /></div>
               <div className="space-y-1">
                 <Label>Status</Label>
                 <Select value={beneficiaryForm.active ? "active" : "inactive"} onValueChange={(value) => setBeneficiaryForm({ ...beneficiaryForm, active: value === "active" })}>
@@ -2607,9 +2594,9 @@ function BeneficiaryHarvesterManagement({ beneficiaries, setBeneficiaries, users
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
-              <div className="space-y-1"><Label>Harvester Code</Label><Input name="harvester_code" autoComplete="off" value={harvesterForm.code} disabled placeholder="Assigned automatically (HAR-###)" /><p className="text-xs text-muted-foreground">Codes are assigned in sequence.</p></div>
+              <div className="space-y-1"><Label>Harvester Code</Label><Input name="harvester_code" autoComplete="off" value={harvesterForm.code} onChange={(e) => setHarvesterForm({ ...harvesterForm, code: e.target.value })} placeholder="Auto-generated if blank" /></div>
               <div className="space-y-1"><Label>Harvester Name</Label><Input name="harvester_full_name" autoComplete="name" value={harvesterForm.name} onChange={(e) => setHarvesterForm({ ...harvesterForm, name: e.target.value })} /></div>
-              <div className="space-y-1"><Label>Contact Number</Label><Input name="harvester_contact_number" type="tel" autoComplete="tel" inputMode="numeric" pattern="[0-9-]*" maxLength={13} value={harvesterForm.contact} onChange={(e) => setHarvesterForm({ ...harvesterForm, contact: formatContactNumber(e.target.value) })} /></div>
+              <div className="space-y-1"><Label>Contact Number</Label><Input name="harvester_contact_number" autoComplete="tel" inputMode="tel" value={harvesterForm.contact} onChange={(e) => setHarvesterForm({ ...harvesterForm, contact: e.target.value })} /></div>
               <div className="space-y-1">
                 <Label>Status</Label>
                 <Select value={harvesterForm.active ? "active" : "inactive"} onValueChange={(value) => setHarvesterForm({ ...harvesterForm, active: value === "active" })}>
@@ -2685,9 +2672,9 @@ function BeneficiaryHarvesterManagement({ beneficiaries, setBeneficiaries, users
           {editingHarvester && <>
             <DialogHeader><DialogTitle className="flex items-center gap-2 text-emerald-700"><Edit className="h-5 w-5" />Edit Harvester</DialogTitle></DialogHeader>
             <div className="grid gap-3 sm:grid-cols-2">
-              <div className="space-y-1"><Label>Harvester Code</Label><Input value={editingHarvester.username} disabled /></div>
+              <div className="space-y-1"><Label>Harvester Code</Label><Input value={editingHarvester.username} onChange={(e) => setEditingHarvester({ ...editingHarvester, username: e.target.value })} /></div>
               <div className="space-y-1"><Label>Harvester Name</Label><Input value={editingHarvester.name} onChange={(e) => setEditingHarvester({ ...editingHarvester, name: e.target.value })} /></div>
-              <div className="space-y-1"><Label>Contact Number</Label><Input type="tel" inputMode="numeric" pattern="[0-9-]*" maxLength={13} value={editingHarvester.contact ?? ""} onChange={(e) => setEditingHarvester({ ...editingHarvester, contact: formatContactNumber(e.target.value) })} /></div>
+              <div className="space-y-1"><Label>Contact Number</Label><Input value={editingHarvester.contact ?? ""} onChange={(e) => setEditingHarvester({ ...editingHarvester, contact: e.target.value })} /></div>
               <div className="space-y-1"><Label>Status</Label><Select value={editingHarvester.active ? "active" : "inactive"} onValueChange={(value) => setEditingHarvester({ ...editingHarvester, active: value === "active" })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="active">Active</SelectItem><SelectItem value="inactive">Inactive</SelectItem></SelectContent></Select></div>
               <div className="space-y-1 sm:col-span-2"><Label>Address</Label><Textarea value={editingHarvester.remarks ?? ""} onChange={(e) => setEditingHarvester({ ...editingHarvester, remarks: e.target.value })} /></div>
             </div>
@@ -2704,7 +2691,7 @@ function BeneficiaryHarvesterManagement({ beneficiaries, setBeneficiaries, users
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                 <div className="space-y-1"><Label>Beneficiary Code</Label><Input name="edit_beneficiary_code" autoComplete="off" value={editingBeneficiary.code} onChange={(e) => setEditingBeneficiary({ ...editingBeneficiary, code: e.target.value })} /></div>
                 <div className="space-y-1"><Label>Complete Name</Label><Input name="edit_beneficiary_full_name" autoComplete="name" value={editingBeneficiary.name} onChange={(e) => setEditingBeneficiary({ ...editingBeneficiary, name: e.target.value })} /></div>
-                <div className="space-y-1"><Label>Contact Number</Label><Input name="edit_beneficiary_contact_number" type="tel" autoComplete="tel" inputMode="numeric" pattern="[0-9-]*" maxLength={13} value={editingBeneficiary.contact} onChange={(e) => setEditingBeneficiary({ ...editingBeneficiary, contact: formatContactNumber(e.target.value) })} /></div>
+                <div className="space-y-1"><Label>Contact Number</Label><Input name="edit_beneficiary_contact_number" autoComplete="tel" inputMode="tel" value={editingBeneficiary.contact} onChange={(e) => setEditingBeneficiary({ ...editingBeneficiary, contact: e.target.value })} /></div>
                 <div className="space-y-1">
                   <Label>Status</Label>
                   <Select value={editingBeneficiary.active ? "active" : "inactive"} onValueChange={(value) => setEditingBeneficiary({ ...editingBeneficiary, active: value === "active" })}>

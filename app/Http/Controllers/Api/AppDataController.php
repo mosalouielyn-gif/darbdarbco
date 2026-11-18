@@ -7,7 +7,6 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
-use App\Services\ContactNumberFormatter;
 
 class AppDataController extends Controller
 {
@@ -176,30 +175,16 @@ class AppDataController extends Controller
             $columns[] = 'address';
         }
 
-        $beneficiaries = DB::table('beneficiaries')
+        return DB::table('beneficiaries')
             ->select($columns)
+            ->orderBy($nameColumn)
             ->limit(200)
             ->get()
             ->all();
-        foreach ($beneficiaries as $beneficiary) {
-            if (isset($beneficiary->contact_number)) {
-                $beneficiary->contact_number = ContactNumberFormatter::format($beneficiary->contact_number);
-            }
-        }
-        usort($beneficiaries, function ($left, $right) {
-            preg_match('/^BEN-(\d+)$/i', (string) ($left->code ?? ''), $leftMatch);
-            preg_match('/^BEN-(\d+)$/i', (string) ($right->code ?? ''), $rightMatch);
-            if (isset($leftMatch[1], $rightMatch[1])) return (int) $leftMatch[1] <=> (int) $rightMatch[1];
-            if (isset($leftMatch[1])) return -1;
-            if (isset($rightMatch[1])) return 1;
-            return strnatcasecmp((string) ($left->code ?? ''), (string) ($right->code ?? ''));
-        });
-        return $beneficiaries;
     }
 
     private function productionRecords(): array
     {
-        $records = [];
         if (Schema::hasTable('production_records')) {
             $records = DB::table('production_records')
                 ->leftJoin('beneficiaries', 'beneficiaries.id', '=', 'production_records.beneficiary_id')
@@ -209,19 +194,21 @@ class AppDataController extends Controller
                 ->get()
                 ->all();
 
+            if (count($records) > 0) {
+                return $records;
+            }
         }
 
-        if (Schema::hasTable('production_box_records')) {
-            $records = array_merge($records, DB::table('production_box_records')
-                ->selectRaw("'production_box_records' as source_table, id, record_no, beneficiary_id, beneficiary_name, production_date as harvest_date, production_date as packing_date, class_a_big_hands, class_a_small_hands, class_a_cps, class_b_big_hands, class_b_small_hands, class_b_cps, special_product as special_total, defects_11_weeks, defects_12_weeks, defects_13_weeks, defects_14_weeks, rejects_11_weeks, rejects_12_weeks, rejects_13_weeks, rejects_14_weeks")
-                ->orderByDesc('production_date')
-                ->limit(100)
-                ->get()
-                ->all());
+        if (! Schema::hasTable('production_box_records')) {
+            return [];
         }
 
-        usort($records, fn ($left, $right) => strcmp((string) ($right->harvest_date ?? ''), (string) ($left->harvest_date ?? '')));
-        return array_slice($records, 0, 200);
+        return DB::table('production_box_records')
+            ->selectRaw("'production_box_records' as source_table, id, record_no, beneficiary_id, beneficiary_name, production_date as harvest_date, production_date as packing_date, class_a_big_hands, class_a_small_hands, class_a_cps, class_b_big_hands, class_b_small_hands, class_b_cps, special_product as special_total, defects_11_weeks, defects_12_weeks, defects_13_weeks, defects_14_weeks, rejects_11_weeks, rejects_12_weeks, rejects_13_weeks, rejects_14_weeks")
+            ->orderByDesc('production_date')
+            ->limit(100)
+            ->get()
+            ->all();
     }
 
     private function beneficiaryContactColumn(): ?string
@@ -320,9 +307,6 @@ class AppDataController extends Controller
                 ? 'coalesce(stock_transactions.beneficiary_name, beneficiaries.full_name)'
                 : 'beneficiaries.full_name';
             $receiptSelect = Schema::hasColumn('stock_transactions', 'receipt_no') ? 'stock_transactions.receipt_no' : 'null';
-            $supplierSelect = Schema::hasColumn('stock_transactions', 'supplier_name') ? 'stock_transactions.supplier_name' : 'null';
-            $previousBalanceSelect = Schema::hasColumn('stock_transactions', 'previous_balance') ? 'stock_transactions.previous_balance' : 'null';
-            $updatedBalanceSelect = Schema::hasColumn('stock_transactions', 'updated_balance') ? 'stock_transactions.updated_balance' : 'null';
 
             return DB::table('stock_transactions')
                 ->leftJoin('inventory_items', 'inventory_items.id', '=', 'stock_transactions.item_id')
@@ -330,7 +314,7 @@ class AppDataController extends Controller
                 ->when(Schema::hasTable('inventory_categories') && Schema::hasColumn('inventory_items', 'category_id'), function ($query) {
                     $query->leftJoin('inventory_categories', 'inventory_categories.id', '=', 'inventory_items.category_id');
                 })
-                ->selectRaw("stock_transactions.id, stock_transactions.reference_no, $receiptSelect as receipt_no, $supplierSelect as supplier_name, $previousBalanceSelect as previous_balance, $updatedBalanceSelect as updated_balance, stock_transactions.txn_type as type, inventory_items.item_name as material, stock_transactions.quantity, stock_transactions.unit_cost, inventory_items.unit, stock_transactions.reason, $beneficiarySelect as beneficiary_name, $categorySelect as category, stock_transactions.txn_at")
+                ->selectRaw("stock_transactions.id, stock_transactions.reference_no, $receiptSelect as receipt_no, stock_transactions.txn_type as type, inventory_items.item_name as material, stock_transactions.quantity, stock_transactions.unit_cost, inventory_items.unit, stock_transactions.reason, $beneficiarySelect as beneficiary_name, $categorySelect as category, stock_transactions.txn_at")
                 ->orderByDesc('stock_transactions.txn_at')
                 ->limit(150)
                 ->get()
@@ -342,12 +326,9 @@ class AppDataController extends Controller
         }
 
         $receiptSelect = Schema::hasColumn('inventory_transactions', 'receipt_no') ? 'inventory_transactions.receipt_no' : 'null';
-        $supplierSelect = Schema::hasColumn('inventory_transactions', 'supplier_name') ? 'inventory_transactions.supplier_name' : 'null';
-        $previousBalanceSelect = Schema::hasColumn('inventory_transactions', 'previous_balance') ? 'inventory_transactions.previous_balance' : 'null';
-        $updatedBalanceSelect = Schema::hasColumn('inventory_transactions', 'updated_balance') ? 'inventory_transactions.updated_balance' : 'null';
         return DB::table('inventory_transactions')
             ->leftJoin('inventory_items', 'inventory_items.id', '=', 'inventory_transactions.inventory_item_id')
-            ->selectRaw("inventory_transactions.id, inventory_transactions.reference_no, $receiptSelect as receipt_no, $supplierSelect as supplier_name, $previousBalanceSelect as previous_balance, $updatedBalanceSelect as updated_balance, inventory_transactions.transaction_type as type, inventory_transactions.quantity, inventory_transactions.unit_cost, inventory_transactions.beneficiary_name, inventory_transactions.reason, inventory_transactions.transaction_at, inventory_items.name as material, inventory_items.category, inventory_items.unit")
+            ->selectRaw("inventory_transactions.id, inventory_transactions.reference_no, $receiptSelect as receipt_no, inventory_transactions.transaction_type as type, inventory_transactions.quantity, inventory_transactions.unit_cost, inventory_transactions.beneficiary_name, inventory_transactions.reason, inventory_transactions.transaction_at, inventory_items.name as material, inventory_items.category, inventory_items.unit")
             ->orderByDesc('inventory_transactions.transaction_at')
             ->limit(150)
             ->get()
@@ -495,25 +476,6 @@ class AppDataController extends Controller
             ->limit(100)
             ->get()
             ->all();
-
-        if (Schema::hasTable('payroll_slip_production_records')) {
-            $links = DB::table('payroll_slip_production_records')
-                ->whereIn('payroll_slip_id', collect($slips)->pluck('id')->all())
-                ->orderBy('id')->get()->groupBy('payroll_slip_id');
-            foreach ($slips as $slip) {
-                $slip->production_record_links = ($links[$slip->id] ?? collect())->map(function ($link) {
-                    $record = Schema::hasTable($link->source_table)
-                        ? DB::table($link->source_table)->where('id', $link->production_record_id)->first()
-                        : null;
-                    return [
-                        'source_table' => $link->source_table,
-                        'production_record_id' => (int) $link->production_record_id,
-                        'record_no' => $record->record_no ?? $record->reference_no ?? (string) $link->production_record_id,
-                        'harvest_date' => $link->harvest_date ?? ($record->harvest_date ?? $record->production_date ?? null),
-                    ];
-                })->all();
-            }
-        }
 
         if (! Schema::hasTable('payroll_deductions')) {
             return $slips;

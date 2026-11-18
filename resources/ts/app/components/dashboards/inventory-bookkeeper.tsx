@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { DarbcoLayout } from "../darbco-layout";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../ui/card";
 import { Input } from "../ui/input";
@@ -23,7 +23,6 @@ import { useAppData } from "../../lib/app-data-context";
 import { adjustInventoryItem, cancelRestockRequest, confirmRestockDelivery, createInventoryItem, createSalesReceipt, createRestockRequest, releaseInventoryItem, returnBorrowedMaterial, stockInInventoryItem, updateInventoryItem, updateInventoryItemStatus, updateRestockRequest } from "../../lib/api";
 import { addDaysSystemDate, currentSystemTime, databaseDateKey, formatDatabaseDateTime, formatSystemDate, formatSystemDateTime, todaySystemDate } from "../../lib/date-time";
 import { usePersistentState } from "../../lib/use-persistent-state";
-import { INVENTORY_UNITS, normalizeInventoryUnit } from "../../lib/inventory-units";
 
 interface Props { user: User; onLogout: () => void }
 
@@ -36,7 +35,7 @@ const NAV = [
   { id: "credit", label: "Credit Transactions", icon: <CreditCard className="h-4 w-4" /> },
   { id: "cash", label: "Cash Transactions", icon: <Banknote className="h-4 w-4" /> },
   { id: "history", label: "Stock History", icon: <History className="h-4 w-4" /> },
-  { id: "restock", label: "Restock Inventory", icon: <FileBarChart2 className="h-4 w-4" /> },
+  { id: "restock", label: "Restock Request", icon: <FileBarChart2 className="h-4 w-4" /> },
 ];
 
 export function InventoryBookkeeperDashboard({ user, onLogout }: Props) {
@@ -129,11 +128,12 @@ export function InventoryBookkeeperDashboard({ user, onLogout }: Props) {
       {active === "cash" && <CashTransactions history={historyRows} items={items} />}
       {active === "history" && <StockHistory history={historyRows} />}
       {active === "restock" && (
-        <DirectRestock
+        <RestockRequests
           user={user}
           items={items}
           setItems={setItems}
-          setHistory={setHistoryRows}
+          requests={restockRows}
+          setRequests={setRestockRows}
           suggestedItemId={suggestedRestockItemId}
           onSuggestionHandled={() => setSuggestedRestockItemId(null)}
         />
@@ -390,11 +390,36 @@ interface InventoryItem {
 const seedItems: InventoryItem[] = [];
 
 function buildProductionBeneficiaryOptions(data: any): BeneficiaryOption[] {
-  const byDatabaseId = new Map<number, BeneficiaryOption>();
+  const beneficiaryById = new Map<string, BeneficiaryOption>();
   (data?.beneficiaries ?? []).map(mapBeneficiary).forEach((item) => {
-    if (item.dbId > 0 && item.name.trim()) byDatabaseId.set(item.dbId, item);
+    if (item.name.trim()) beneficiaryById.set(String(item.dbId), item);
   });
-  return Array.from(byDatabaseId.values()).sort((a, b) => a.name.localeCompare(b.name));
+
+  const options = new Map<string, BeneficiaryOption>();
+  beneficiaryById.forEach((item) => options.set(item.id, item));
+  const addRecordBeneficiary = (record: any) => {
+    const dbId = Number(record.beneficiary_id);
+    const idKey = Number.isFinite(dbId) && dbId > 0 ? String(dbId) : "";
+    const tableMatch = idKey ? beneficiaryById.get(idKey) : undefined;
+    const name = String(tableMatch?.name ?? record.beneficiary_name ?? record.beneficiary ?? "").trim();
+
+    if (!name) return;
+
+    const key = idKey || `name:${name.toLowerCase()}`;
+    if (!options.has(key)) {
+      options.set(key, {
+        id: idKey || key,
+        dbId: dbId || 0,
+        code: tableMatch?.code ?? (idKey ? `BEN-${idKey}` : beneficiaryAccountId(name)),
+        name,
+      });
+    }
+  };
+
+  (data?.harvestRecords ?? []).forEach(addRecordBeneficiary);
+  (data?.productionRecords ?? []).forEach(addRecordBeneficiary);
+
+  return Array.from(options.values()).sort((a, b) => a.name.localeCompare(b.name));
 }
 
 function mapBeneficiary(row: any): BeneficiaryOption {
@@ -412,7 +437,7 @@ function mapInventoryItem(row: any): InventoryItem {
     dbId: Number(row.id) || undefined,
     name: row.name ?? row.item_name ?? "",
     category: row.category ?? "",
-    unit: normalizeInventoryUnit(row.unit),
+    unit: row.unit ?? "",
     onHand: Number(row.on_hand ?? row.onHand ?? 0),
     stockDate: databaseDateKey(row.stock_date ?? row.created_at ?? todayInputDate()),
     cost: Number(row.unit_cost ?? row.cost ?? 0),
@@ -454,7 +479,6 @@ function mapStockTransaction(row: any): StockHistoryRow {
     account: row.user_name ?? row.created_by ?? "Inventory Bookkeeper",
     ref: row.receipt_no ?? row.reference_no ?? `TXN-${row.id}`,
     beneficiary: row.beneficiary_name ?? row.beneficiary ?? "",
-    supplier: row.supplier_name ?? row.supplier ?? "",
     category: row.category ?? "",
     unitCost,
     totalAmount: Math.abs(quantity) * unitCost,
@@ -781,11 +805,9 @@ function SalesPos({ items, setItems, setCredits, setHistory, history, user, bene
   const [customer, setCustomer] = useState("");
   const [manualCustomer, setManualCustomer] = useState("");
   const [cashPayment, setCashPayment] = useState("");
-  const [paymentChoice, setPaymentChoice] = useState<"Cash Payment" | "Credit Payment" | "Split Payment">("Cash Payment");
   const [receiptToView, setReceiptToView] = useState<any | null>(null);
   const [transactionFilter, setTransactionFilter] = useState<"all" | "Cash" | "Beneficiary Credit">("all");
   const [saving, setSaving] = useState(false);
-  const checkoutInFlight = useRef(false);
   const activeItems = items.filter((item) => item.active !== false);
   const query = search.trim().toLowerCase();
   const filteredItems = activeItems.filter((item) =>
@@ -795,11 +817,9 @@ function SalesPos({ items, setItems, setCredits, setHistory, history, user, bene
   const isWalkInCustomer = customerType === "walk-in";
   const customerName = isWalkInCustomer ? manualCustomer.trim() : selectedBeneficiary?.name || "";
   const totalAmount = cart.reduce((sum, line) => sum + line.quantity * line.item.cost, 0);
-  const cashPaymentValue = paymentChoice === "Cash Payment" || isWalkInCustomer
-    ? totalAmount
-    : paymentChoice === "Credit Payment" ? 0 : Math.max(0, Number(cashPayment) || 0);
+  const cashPaymentValue = cashPayment.trim() === "" ? totalAmount : Math.max(0, Number(cashPayment) || 0);
   const creditAmount = Math.max(0, totalAmount - cashPaymentValue);
-  const paymentMethod = paymentChoice === "Split Payment" && creditAmount > 0 && cashPaymentValue > 0 ? "Cash & Beneficiary Credit" : creditAmount > 0 ? "Beneficiary Credit" : "Cash";
+  const paymentMethod = creditAmount > 0 && cashPaymentValue > 0 ? "Cash & Beneficiary Credit" : creditAmount > 0 ? "Beneficiary Credit" : "Cash";
   const salesTransactions = history
     .filter(isSalesHistoryRow)
     .filter((row) => transactionFilter === "all" || normalizedPaymentMethod(row) === transactionFilter || normalizedPaymentMethod(row) === "Cash & Beneficiary Credit");
@@ -839,7 +859,7 @@ function SalesPos({ items, setItems, setCredits, setHistory, history, user, bene
   };
 
   const confirmTransaction = async () => {
-    if (saving || checkoutInFlight.current) return;
+    if (saving) return;
     if (cart.length === 0) {
       toast.error("Add at least one item to the cart");
       return;
@@ -865,7 +885,6 @@ function SalesPos({ items, setItems, setCredits, setHistory, history, user, bene
       return;
     }
 
-    checkoutInFlight.current = true;
     const reference = generatePosReference();
     const date = todayInputDate();
     setSaving(true);
@@ -929,11 +948,9 @@ function SalesPos({ items, setItems, setCredits, setHistory, history, user, bene
       setManualCustomer("");
       setCustomerType("registered");
       setCashPayment("");
-      setPaymentChoice("Cash Payment");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Unable to save POS transaction.");
     } finally {
-      checkoutInFlight.current = false;
       setSaving(false);
     }
   };
@@ -1065,19 +1082,8 @@ function SalesPos({ items, setItems, setCredits, setHistory, history, user, bene
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="space-y-1">
-                  <Label>Payment Method</Label>
-                  <Select value={isWalkInCustomer ? "Cash Payment" : paymentChoice} onValueChange={(value) => { setPaymentChoice(value as typeof paymentChoice); setCashPayment(""); }} disabled={isWalkInCustomer}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="Cash Payment">Cash Payment</SelectItem>
-                      <SelectItem value="Credit Payment">Credit Payment</SelectItem>
-                      <SelectItem value="Split Payment">Split Payment</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
+                <div className="space-y-1"><Label>Cash Payment</Label><Input type="number" min="0" max={totalAmount} step="0.01" value={cashPayment} onChange={(e) => setCashPayment(e.target.value)} placeholder={money(totalAmount)} disabled={isWalkInCustomer} /></div>
               </div>
-              {paymentChoice === "Split Payment" && !isWalkInCustomer && <div className="space-y-1"><Label>Cash Amount</Label><Input type="number" min="0" max={totalAmount} step="0.01" value={cashPayment} onChange={(e) => setCashPayment(e.target.value)} placeholder="Enter cash portion" /></div>}
               <div className="space-y-1">
                 <Label>Beneficiary Name</Label>
                 <Select value={customer} onValueChange={(value) => { setCustomer(value); setManualCustomer(""); }} disabled={isWalkInCustomer}>
@@ -1718,7 +1724,7 @@ function EditItemDialog({ item, onClose, onSave, categories, onAddCategory, onDe
               <Select value={form.unit} onValueChange={(v) => setForm({ ...form, unit: v })}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {INVENTORY_UNITS.map((unit) => <SelectItem key={unit.value} value={unit.value}>{unit.label}</SelectItem>)}
+                  {["kg", "L", "pcs", "roll", "pair", "bag"].map((u) => <SelectItem key={u} value={u}>{u}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
@@ -1860,13 +1866,6 @@ function AddInventoryItem({ open, onOpenChange, items, setItems, setHistory, use
       toast.error("Expiration Date is required when an item has an expiration date");
       return;
     }
-    const duplicateRows = rows.some((row, index) => rows.some((other, otherIndex) => otherIndex < index && row.category === other.category && row.name.trim().toLowerCase() === other.name.trim().toLowerCase()));
-    if (duplicateRows) { toast.error("The same item cannot be added twice in one form. Combine its quantity in one row."); return; }
-    const invalidExisting = rows.find((row) => {
-      const existing = items.find((item) => item.active !== false && item.category === row.category && item.name.trim().toLowerCase() === row.name.trim().toLowerCase());
-      return existing && (existing.unit !== row.unit || (row.hasExpiration && existing.expiry !== "—" && existing.expiry !== row.expiry));
-    });
-    if (invalidExisting) { toast.error("Existing item unit or expiry does not match. Use Restock for the existing inventory item."); return; }
     const validRows = rows.map((row, index) => ({
       ...row,
       id: generateMaterialId(row.category, index, rows, items),
@@ -1879,32 +1878,10 @@ function AddInventoryItem({ open, onOpenChange, items, setItems, setHistory, use
     }));
 
     setSaving(true);
-    const committedRows: number[] = [];
     try {
-      const commitRow = (item: InventoryItem, historyRow: StockHistoryRow) => {
-        setItems((current) => current.some((old) => old.id === item.id)
-          ? current.map((old) => old.id === item.id ? item : old)
-          : [item, ...current]);
-        setHistory((current) => [historyRow, ...current]);
-      };
+      const savedItems: InventoryItem[] = [];
 
-      for (const [rowIndex, row] of validRows.entries()) {
-        const existing = items.find((item) => item.active !== false && item.category === row.category && item.name.trim().toLowerCase() === row.name.trim().toLowerCase());
-        if (existing) {
-          const ref = `RC-${date.replaceAll("-", "")}-${Math.floor(Math.random() * 1_000_000).toString().padStart(6, "0")}`;
-          const result = await stockInInventoryItem(inventoryRecordId(existing), {
-            quantity: row.qtyValue, unit_cost: row.costValue, supplier: row.supplierValue, reference_no: ref,
-            stock_date: date, expiry_date: row.hasExpiration ? row.expiry : null,
-            notes: row.notes.trim() || notes.trim() || "Received materials into inventory",
-            user_id: currentUserId(user), user_name: user.name,
-          });
-          const updated = mapInventoryItem(result.item ?? result);
-          commitRow(updated, { date: formatDateTime(date), material: existing.name, type: "Stock In", qty: row.qtyValue, unit: existing.unit,
-            reason: `Received from ${row.supplierValue}. Added to existing inventory item.`, supplier: row.supplierValue, account: user.name, ref,
-            previousBalance: existing.onHand, updatedBalance: updated.onHand });
-          committedRows.push(rowIndex);
-          continue;
-        }
+      for (const row of validRows) {
         const saved = await createInventoryItem({
           item_code: row.id,
           name: row.name.trim(),
@@ -1920,22 +1897,30 @@ function AddInventoryItem({ open, onOpenChange, items, setItems, setHistory, use
           user_id: currentUserId(user),
           user_name: user.name,
         });
-        const mapped = mapInventoryItem(saved);
-        commitRow(mapped, { date: formatDateTime(date), material: row.name.trim(), type: "Stock In", qty: row.qtyValue, unit: row.unit,
-          reason: row.notes.trim() || notes.trim() || "Received materials into inventory", supplier: row.supplierValue, account: user.name,
-          ref: mapped.id, previousBalance: 0, updatedBalance: row.qtyValue });
-        committedRows.push(rowIndex);
+        savedItems.push(mapInventoryItem(saved));
       }
+
+      setItems((current) => [...savedItems, ...current]);
+      setHistory((current) => [
+        ...validRows.map((row, index) => ({
+          date: formatDateTime(date),
+          material: row.name.trim(),
+          type: "Stock In",
+          qty: row.qtyValue,
+          unit: row.unit,
+          reason: row.notes.trim() || notes.trim() || "Received materials into inventory",
+          account: user.name,
+          ref: `RC-${date.slice(0, 4)}-${String(current.length + index + 1).padStart(4, "0")}`,
+          previousBalance: 0,
+          updatedBalance: row.qtyValue,
+        })),
+        ...current,
+      ]);
 
       toast.success("Inventory item saved to the database");
       onOpenChange(false);
     } catch (error) {
-      if (committedRows.length) {
-        setRows((current) => current.filter((_, index) => !committedRows.includes(index)));
-        toast.error(`Saved ${committedRows.length} row(s). The remaining row(s) are still open; ${error instanceof Error ? error.message : "the next row could not be saved."}`);
-      } else {
-        toast.error(error instanceof Error ? error.message : "Unable to save inventory item.");
-      }
+      toast.error(error instanceof Error ? error.message : "Unable to save inventory item.");
     } finally {
       setSaving(false);
     }
@@ -1965,7 +1950,7 @@ function AddInventoryItem({ open, onOpenChange, items, setItems, setHistory, use
 
           <div className="space-y-2">
             {rows.map((r, i) => {
-              const match = items.find((s) => s.active !== false && s.category === r.category && s.name.trim().toLowerCase() === r.name.trim().toLowerCase());
+              const match = items.find((s) => s.active !== false && s.name.toLowerCase() === r.name.trim().toLowerCase());
               const expiryConflict = !!(match && r.expiry.trim() && match.expiry !== "—" && match.expiry !== r.expiry.trim());
               return (
               <div key={i} className="grid grid-cols-1 gap-4 rounded-md border bg-white p-4 md:grid-cols-12">
@@ -1983,18 +1968,17 @@ function AddInventoryItem({ open, onOpenChange, items, setItems, setHistory, use
                     <Trash2 className="h-4 w-4" />
                   </button>
                 </div>
-                <div className="order-2 space-y-1 md:col-span-6 md:order-2">
+                <div className="space-y-1 md:col-span-6">
                   <Label>Item Name</Label>
                   <Input
                     list={`existing-items-${i}`}
                     value={r.name}
                     onChange={(e) => update(i, "name", e.target.value)}
                     placeholder={r.category ? "Type to search or enter new" : "Select a category first"}
-                    disabled={!r.category || saving}
                   />
                   <datalist id={`existing-items-${i}`}>
                     {items
-                      .filter((s) => s.active !== false && !!r.category && s.category === r.category)
+                      .filter((s) => s.active !== false && (!r.category || s.category === r.category))
                       .map((s) => (
                         <option key={s.id} value={s.name} />
                       ))}
@@ -2003,14 +1987,14 @@ function AddInventoryItem({ open, onOpenChange, items, setItems, setHistory, use
                     <p className="text-xs text-emerald-700">Matches existing item: {match.id} • On Hand {match.onHand} {match.unit} • Expiry {match.expiry}</p>
                   )}
                   {expiryConflict && (
-                    <p className="text-xs text-amber-700">Expiry differs from the existing item. Correct the selection or use a separate inventory item with a distinct name.</p>
+                    <p className="text-xs text-amber-700">Expiry differs from saved record ({match!.expiry}). This batch will be saved as a separate inventory entry.</p>
                   )}
                 </div>
-                <div className="order-1 space-y-1 md:col-span-6 md:order-1">
+                <div className="space-y-1 md:col-span-6">
                   <Label>Category</Label>
                   <CategorySelectWithAdd
                     value={r.category}
-                    onChange={(value) => setRows((current) => current.map((row, index) => index === i ? { ...row, category: value, name: row.category === value ? row.name : "" } : row))}
+                    onChange={(value) => update(i, "category", value)}
                     categories={categories}
                     onAddCategory={onAddCategory}
                     onDeleteCategory={onDeleteCategory}
@@ -2025,7 +2009,10 @@ function AddInventoryItem({ open, onOpenChange, items, setItems, setHistory, use
                   <Select value={r.unit} onValueChange={(v) => update(i, "unit", v)}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      {INVENTORY_UNITS.map((unit) => <SelectItem key={unit.value} value={unit.value}>{unit.label}</SelectItem>)}
+                      <SelectItem value="kg">kg</SelectItem>
+                      <SelectItem value="pcs">pcs</SelectItem>
+                      <SelectItem value="liter">liter</SelectItem>
+                      <SelectItem value="pairs">pairs</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -3627,7 +3614,6 @@ interface StockHistoryRow {
   account: string;
   ref: string;
   beneficiary?: string;
-  supplier?: string;
   category?: string;
   unitCost?: number;
   totalAmount?: number;
@@ -3714,7 +3700,6 @@ function StockHistory({ history }: { history: StockHistoryRow[] }) {
                 <TableHead className="text-right">Qty Deducted</TableHead>
                 <TableHead className="text-right">Previous Balance</TableHead>
                 <TableHead className="text-right">Updated Balance</TableHead>
-                <TableHead>Supplier</TableHead>
                 <TableHead>Reason / Details</TableHead><TableHead>Bookkeeper Account</TableHead>
                 <TableHead>Reference No.</TableHead>
               </TableRow>
@@ -3722,7 +3707,7 @@ function StockHistory({ history }: { history: StockHistoryRow[] }) {
             <TableBody>
               {filtered.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={12} className="text-center text-muted-foreground py-6">
+                  <TableCell colSpan={11} className="text-center text-muted-foreground py-6">
                     No inventory transactions found for the selected filters.
                   </TableCell>
                 </TableRow>
@@ -3747,7 +3732,6 @@ function StockHistory({ history }: { history: StockHistoryRow[] }) {
                   <TableCell className="text-right text-red-600">{quantityDeducted(r) ? `${quantityDeducted(r)} ${r.unit}` : "-"}</TableCell>
                   <TableCell className="text-right">{typeof r.previousBalance === "number" ? `${r.previousBalance} ${r.unit}` : "-"}</TableCell>
                   <TableCell className="text-right">{typeof r.updatedBalance === "number" ? `${r.updatedBalance} ${r.unit}` : "-"}</TableCell>
-                  <TableCell>{r.supplier || "-"}</TableCell>
                   <TableCell>{r.reason}</TableCell>
                   <TableCell>{r.account}</TableCell>
                   <TableCell>{r.ref}</TableCell>
@@ -3768,78 +3752,6 @@ function StockHistory({ history }: { history: StockHistoryRow[] }) {
       </Card>
     </div>
   );
-}
-
-function DirectRestock({ user, items, setItems, setHistory, suggestedItemId, onSuggestionHandled }: {
-  user: User;
-  items: InventoryItem[];
-  setItems: React.Dispatch<React.SetStateAction<InventoryItem[]>>;
-  setHistory: React.Dispatch<React.SetStateAction<StockHistoryRow[]>>;
-  suggestedItemId: string | null;
-  onSuggestionHandled: () => void;
-}) {
-  const activeItems = items.filter((item) => item.active !== false);
-  const [itemId, setItemId] = useState("");
-  const [quantity, setQuantity] = useState("");
-  const [supplier, setSupplier] = useState("");
-  const [unitCost, setUnitCost] = useState("");
-  const [stockDate, setStockDate] = useState(todaySystemDate());
-  const [reference, setReference] = useState("");
-  const [saving, setSaving] = useState(false);
-  const selected = activeItems.find((item) => item.id === itemId);
-
-  useEffect(() => {
-    if (!suggestedItemId) return;
-    const match = activeItems.find((item) => item.id === suggestedItemId || String(item.dbId) === suggestedItemId);
-    if (match) setItemId(match.id);
-    onSuggestionHandled();
-  }, [suggestedItemId, items]);
-
-  const submit = async () => {
-    const amount = Number(quantity);
-    if (!selected) { toast.error("Select an existing inventory item"); return; }
-    if (!Number.isFinite(amount) || amount <= 0) { toast.error("Quantity to add must be greater than zero"); return; }
-    if (!supplier.trim()) { toast.error("Supplier is required"); return; }
-    if (saving) return;
-    const ref = reference.trim() || `RST-${Date.now()}`;
-    const cost = Number(unitCost || selected.cost || 0);
-    setSaving(true);
-    try {
-      const result = await stockInInventoryItem(inventoryRecordId(selected), {
-        quantity: amount, unit_cost: cost, supplier: supplier.trim(), reference_no: ref,
-        stock_date: stockDate, expiry_date: null, notes: `Restock added ${amount} ${selected.unit} to existing stock`,
-        user_id: currentUserId(user), user_name: user.name,
-      });
-      const updated = mapInventoryItem(result.item ?? result);
-      setItems((current) => current.map((item) => item.id === selected.id ? updated : item));
-      setHistory((current) => [{ date: formatSystemDateTime(stockDate), material: selected.name, type: "Stock In", qty: amount, unit: selected.unit,
-        reason: `Restocked by ${user.name}. Supplier: ${supplier.trim()}.`, supplier: supplier.trim(), account: user.name, ref,
-        previousBalance: selected.onHand, updatedBalance: updated.onHand, category: selected.category, unitCost: cost }, ...current]);
-      toast.success(`${selected.name} restocked. New balance: ${updated.onHand} ${selected.unit}.`);
-      setQuantity(""); setSupplier(""); setReference("");
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Unable to restock item.");
-    } finally { setSaving(false); }
-  };
-
-  return <div className="mx-auto max-w-3xl space-y-4">
-    <div><h1 className="text-xl font-semibold">Restock Inventory</h1><p className="text-sm text-muted-foreground">Choose an existing item and add to its current stock. Restocks are saved to stock history.</p></div>
-    <Card><CardHeader><CardTitle className="text-base">Add Stock</CardTitle><CardDescription>Quantity is added to the current balance; it does not replace it.</CardDescription></CardHeader>
-      <CardContent className="space-y-4">
-        <div className="space-y-1"><Label>Existing Item</Label><Select value={itemId} onValueChange={(value) => { setItemId(value); const item = activeItems.find((row) => row.id === value); setUnitCost(item ? String(item.cost) : ""); }}>
-          <SelectTrigger><SelectValue placeholder="Select inventory item" /></SelectTrigger><SelectContent>{activeItems.map((item) => <SelectItem key={item.id} value={item.id}>{item.name} • {item.id}</SelectItem>)}</SelectContent></Select></div>
-        {selected && <div className="rounded-md bg-slate-50 p-3 text-sm">Current stock: <strong>{selected.onHand} {selected.unit}</strong> • Category: {selected.category}</div>}
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className="space-y-1"><Label>Quantity to Add</Label><Input type="number" min="0.01" step="0.01" value={quantity} onChange={(event) => setQuantity(event.target.value)} /></div>
-          <div className="space-y-1"><Label>Supplier</Label><Input value={supplier} onChange={(event) => setSupplier(event.target.value)} /></div>
-          <div className="space-y-1"><Label>Unit Cost</Label><Input type="number" min="0" step="0.01" value={unitCost} onChange={(event) => setUnitCost(event.target.value)} /></div>
-          <div className="space-y-1"><Label>Restock Date</Label><InventoryDateInput value={stockDate} onChange={setStockDate} /></div>
-          <div className="space-y-1 sm:col-span-2"><Label>Receipt / Delivery Reference (optional)</Label><Input value={reference} onChange={(event) => setReference(event.target.value)} placeholder="Generated if left blank" /></div>
-        </div>
-        <Button onClick={submit} disabled={saving || !selected} className="bg-emerald-600 hover:bg-emerald-700">{saving ? "Saving Restock..." : "Confirm Restock"}</Button>
-      </CardContent>
-    </Card>
-  </div>;
 }
 
 function RestockRequests({ user, items, setItems, requests, setRequests, suggestedItemId, onSuggestionHandled }: {

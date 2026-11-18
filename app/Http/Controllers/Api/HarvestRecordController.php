@@ -7,7 +7,6 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
-use App\Services\BeneficiaryCodeGenerator;
 
 class HarvestRecordController extends Controller
 {
@@ -19,11 +18,8 @@ class HarvestRecordController extends Controller
     public function store(Request $request): JsonResponse
     {
         $payload = $this->validatedPayload($request);
-        [$id, $recordValues] = DB::transaction(function () use ($payload) {
-            $recordValues = $this->recordValues($payload);
-            $id = DB::table('harvest_records')->insertGetId($recordValues);
-            return [$id, $recordValues];
-        });
+        $recordValues = $this->recordValues($payload);
+        $id = DB::table('harvest_records')->insertGetId($recordValues);
 
         $this->recordAudit(
             $payload['user_id'] ?? null,
@@ -39,7 +35,7 @@ class HarvestRecordController extends Controller
     {
         $payload = $this->validatedPayload($request);
 
-        DB::transaction(fn () => DB::table('harvest_records')->where('id', $id)->update($this->recordValues($payload, false)));
+        DB::table('harvest_records')->where('id', $id)->update($this->recordValues($payload, false));
 
         $record = $this->findRecord($id);
         $this->recordAudit(
@@ -172,7 +168,7 @@ class HarvestRecordController extends Controller
         }
 
         $values = [$nameColumn => $name];
-        $code = app(BeneficiaryCodeGenerator::class)->nextCode();
+        $code = 'BEN-'.now()->format('ymdHis');
         if (Schema::hasColumn('beneficiaries', 'code')) {
             $values['code'] = $code;
         }
