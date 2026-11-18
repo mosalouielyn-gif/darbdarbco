@@ -251,6 +251,17 @@ class InventoryItemController extends Controller
     {
         $codeColumn = $this->codeColumn();
 
+        if ($request->has('unit')) {
+            $unit = strtolower(trim((string) $request->input('unit')));
+            $request->merge(['unit' => match ($unit) {
+                'l', 'liters' => 'liter',
+                'pair' => 'pairs',
+                'rolls' => 'roll',
+                'bags' => 'bag',
+                default => $unit,
+            }]);
+        }
+
         return $request->validate([
             'item_code' => [
                 'required',
@@ -260,7 +271,7 @@ class InventoryItemController extends Controller
             ],
             'name' => ['required', 'string', 'max:255'],
             'category' => ['required', 'string', 'max:255'],
-            'unit' => ['required', 'string', 'max:50'],
+            'unit' => ['required', 'string', Rule::in(['kg', 'liter', 'pcs', 'pairs', 'roll', 'bag'])],
             'on_hand' => ['required', 'numeric', 'min:0'],
             'minimum_stock' => ['nullable', 'numeric', 'min:0'],
             'unit_cost' => ['required', 'numeric', 'min:0'],
@@ -325,6 +336,9 @@ class InventoryItemController extends Controller
                 'txn_at' => now(),
             ];
 
+            if (Schema::hasColumn('stock_transactions', 'previous_balance')) $values['previous_balance'] = $previousBalance;
+            if (Schema::hasColumn('stock_transactions', 'updated_balance')) $values['updated_balance'] = $updatedBalance;
+
             DB::table('stock_transactions')->insert($values);
             return;
         }
@@ -343,6 +357,10 @@ class InventoryItemController extends Controller
 
         if (Schema::hasColumn('inventory_transactions', 'created_by')) {
             $values['created_by'] = $userId;
+        }
+
+        if (Schema::hasColumn('inventory_transactions', 'supplier_name')) {
+            $values['supplier_name'] = $payload['supplier'] ?? null;
         }
 
         if (Schema::hasColumn('inventory_transactions', 'previous_balance')) {
@@ -386,6 +404,9 @@ class InventoryItemController extends Controller
                 'recorded_by' => $userId,
                 'txn_at' => $payload['stock_date'],
             ];
+
+            if (Schema::hasColumn('stock_transactions', 'previous_balance')) $values['previous_balance'] = $previousBalance;
+            if (Schema::hasColumn('stock_transactions', 'updated_balance')) $values['updated_balance'] = $updatedBalance;
 
             DB::table('stock_transactions')->insert($values);
             return;

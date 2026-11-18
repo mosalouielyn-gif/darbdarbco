@@ -7,6 +7,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use App\Services\BeneficiaryCodeGenerator;
 
 class ProductionBoxRecordController extends Controller
 {
@@ -18,8 +19,11 @@ class ProductionBoxRecordController extends Controller
     public function store(Request $request): JsonResponse
     {
         $payload = $this->validatedPayload($request);
-        $recordValues = $this->recordValues($payload);
-        $id = DB::table('production_box_records')->insertGetId($recordValues);
+        [$id, $recordValues] = DB::transaction(function () use ($payload) {
+            $recordValues = $this->recordValues($payload);
+            $id = DB::table('production_box_records')->insertGetId($recordValues);
+            return [$id, $recordValues];
+        });
 
         $this->recordAudit(
             $payload['user_id'] ?? null,
@@ -36,9 +40,11 @@ class ProductionBoxRecordController extends Controller
         $payload = $this->validatedPayload($request);
         $current = $this->findRecord($id);
         abort_if(! $current, 404, 'Production box record not found.');
-        $values = $this->recordValues($payload, false);
-
-        DB::table('production_box_records')->where('id', $id)->update($values);
+        $values = DB::transaction(function () use ($payload, $id) {
+            $values = $this->recordValues($payload, false);
+            DB::table('production_box_records')->where('id', $id)->update($values);
+            return $values;
+        });
 
         $this->recordFieldChangeAudit($current, $values, $payload, $id);
 
@@ -205,7 +211,7 @@ class ProductionBoxRecordController extends Controller
         }
 
         $values = [$nameColumn => $name];
-        $code = 'BEN-'.now()->format('ymdHis');
+        $code = app(BeneficiaryCodeGenerator::class)->nextCode();
         if (Schema::hasColumn('beneficiaries', 'code')) {
             $values['code'] = $code;
         }

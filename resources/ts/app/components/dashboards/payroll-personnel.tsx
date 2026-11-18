@@ -21,6 +21,7 @@ import { useAppData } from "../../lib/app-data-context";
 import { createPayrollSlip, submitPayrollSlip, updatePayrollSlip } from "../../lib/api";
 import { currentPayrollPeriodLabel, databaseDateKey, formatDatabaseDateTime, formatSystemDate, formatSystemDateTime, todaySystemDate } from "../../lib/date-time";
 import { usePersistentState } from "../../lib/use-persistent-state";
+import { formatContactNumber } from "../../lib/contact-number";
 
 interface Props { user: User; onLogout: () => void }
 
@@ -177,6 +178,7 @@ type PayrollRecord = {
   beneficiaryContactNumber?: string;
   beneficiaryAddress?: string;
   productionRecordId?: number;
+  productionRecordLinks?: { sourceTable: string; id: number; refNo: string; harvestDate: string }[];
   harvestDate: string;
   totalBoxes: number;
   grossIncome: number;
@@ -254,7 +256,7 @@ function mapBeneficiary(row: any): BeneficiaryOption {
     dbId: Number(row.id),
     code: String(row.code ?? row.beneficiary_code ?? row.id),
     name: formatBeneficiaryDisplayName(row.name ?? row.full_name ?? ""),
-    contactNumber: String(row.contact_number ?? row.contact ?? "").trim(),
+    contactNumber: formatContactNumber(String(row.contact_number ?? row.contact ?? "").trim()),
     address: String(row.address ?? "").trim(),
   };
 }
@@ -321,9 +323,13 @@ function mapPayrollSlip(row: any): PayrollRecord {
     beneficiary: row.beneficiary_name ?? row.beneficiary ?? "",
     beneficiaryId: Number(row.beneficiary_id) || undefined,
     beneficiaryCode: row.beneficiary_code ?? "",
-    beneficiaryContactNumber: row.beneficiary_contact_number ?? row.contact_number ?? "",
+    beneficiaryContactNumber: formatContactNumber(String(row.beneficiary_contact_number ?? row.contact_number ?? "")),
     beneficiaryAddress: row.beneficiary_address ?? row.address ?? "",
     productionRecordId: Number(row.production_record_id ?? row.production_box_record_id) || undefined,
+    productionRecordLinks: (Array.isArray(row.production_record_links) ? row.production_record_links : []).map((link: any) => ({
+      sourceTable: String(link.source_table ?? "production_records"), id: Number(link.production_record_id),
+      refNo: String(link.record_no ?? link.production_record_id), harvestDate: String(link.harvest_date ?? "").slice(0, 10),
+    })),
     harvestDate: row.harvest_date ? String(row.harvest_date).slice(0, 10) : databaseDateKey(row.created_at ?? todaySystemDate()),
     totalBoxes: Number(row.total_boxes ?? classABoxes + classBBoxes + specialBoxes),
     grossIncome: Number(row.gross_amount ?? row.gross_income ?? 0),
@@ -432,6 +438,7 @@ function payrollPayload(record: PayrollRecord, user: User) {
     beneficiary_contact_number: record.beneficiaryContactNumber,
     beneficiary_address: record.beneficiaryAddress,
     production_record_id: record.productionRecordId,
+    production_records: record.productionRecordLinks ?? [],
     payroll_period: record.period,
     harvest_date: record.harvestDate,
     class_a_boxes: record.classABoxes ?? 0,
@@ -977,6 +984,7 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, beneficiar
         beneficiaryContactNumber: beneficiary.contactNumber,
         beneficiaryAddress: beneficiary.address,
         productionRecordId: matchedProductionRecords[0]?.sourceTable === "production_records" ? matchedProductionRecords[0]?.dbId : undefined,
+        productionRecordLinks: matchedProductionRecords.map((record) => ({ sourceTable: record.sourceTable, id: record.dbId, refNo: record.refNo, harvestDate: record.harvestDate })),
         harvestDate: matchedProductionRecords[0]?.harvestDate ?? today,
         totalBoxes,
         grossIncome,
@@ -1662,30 +1670,31 @@ function ViewPayrollSlipDialog({ slip, beneficiaries = [], productionRecords = [
   const beneficiaryContactNumber = slip.beneficiaryContactNumber || beneficiaryRecord?.contactNumber || "-";
   const beneficiaryAddress = slip.beneficiaryAddress || beneficiaryRecord?.address || "-";
   const preparedByName = slip.preparedByName?.trim() || "-";
-  const sourceProductionRecord =
-    productionRecords.find((record) => slip.productionRecordId && record.dbId === slip.productionRecordId) ??
-    productionRecords.find((record) =>
-      sameBeneficiaryName(record.beneficiaryName, slip.beneficiary) &&
-      (!slip.harvestDate || record.harvestDate === slip.harvestDate)
-    ) ??
-    productionRecords.find((record) => sameBeneficiaryName(record.beneficiaryName, slip.beneficiary));
+  const linkedProductionRecords = (slip.productionRecordLinks?.length
+    ? slip.productionRecordLinks.map((link) => productionRecords.find((record) => record.dbId === link.id && record.sourceTable === link.sourceTable)).filter(Boolean)
+    : [productionRecords.find((record) => slip.productionRecordId && record.dbId === slip.productionRecordId) ??
+      productionRecords.find((record) => sameBeneficiaryName(record.beneficiaryName, slip.beneficiary) && (!slip.harvestDate || record.harvestDate === slip.harvestDate))]
+  ).filter((record): record is PayrollProductionRecord => !!record);
+  const sourceProductionRecord = linkedProductionRecords[0];
+  const sumLinked = (field: "classA" | "classB" | "special" | "classA_big" | "classA_small" | "classA_cp" | "classB_big" | "classB_small" | "classB_cp") =>
+    linkedProductionRecords.reduce((sum, record) => sum + record[field], 0);
 
   const productionData = {
-    refNo: sourceProductionRecord?.refNo ?? (slip.productionRecordId ? String(slip.productionRecordId) : "-"),
-    harvestDate: sourceProductionRecord?.harvestDate ?? slip.harvestDate,
+    refNo: linkedProductionRecords.length ? linkedProductionRecords.map((record) => `${record.refNo} (${record.harvestDate})`).join(", ") : (slip.productionRecordId ? String(slip.productionRecordId) : "-"),
+    harvestDate: linkedProductionRecords.map((record) => record.harvestDate).filter(Boolean).join(", ") || slip.harvestDate,
     classA: {
-      total: sourceProductionRecord?.classA ?? classABoxes,
-      bigHands: sourceProductionRecord?.classA_big ?? classABoxes,
-      smallHands: sourceProductionRecord?.classA_small ?? 0,
-      cps: sourceProductionRecord?.classA_cp ?? 0,
+      total: linkedProductionRecords.length ? sumLinked("classA") : classABoxes,
+      bigHands: linkedProductionRecords.length ? sumLinked("classA_big") : classABoxes,
+      smallHands: linkedProductionRecords.length ? sumLinked("classA_small") : 0,
+      cps: linkedProductionRecords.length ? sumLinked("classA_cp") : 0,
     },
     classB: {
-      total: sourceProductionRecord?.classB ?? classBBoxes,
-      bigHands: sourceProductionRecord?.classB_big ?? classBBoxes,
-      smallHands: sourceProductionRecord?.classB_small ?? 0,
-      cps: sourceProductionRecord?.classB_cp ?? 0,
+      total: linkedProductionRecords.length ? sumLinked("classB") : classBBoxes,
+      bigHands: linkedProductionRecords.length ? sumLinked("classB_big") : classBBoxes,
+      smallHands: linkedProductionRecords.length ? sumLinked("classB_small") : 0,
+      cps: linkedProductionRecords.length ? sumLinked("classB_cp") : 0,
     },
-    special: sourceProductionRecord?.special ?? specialBoxes
+    special: linkedProductionRecords.length ? sumLinked("special") : specialBoxes
   };
 
   // Pricing

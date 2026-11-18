@@ -51,6 +51,7 @@ interface FoSlip {
   dbId?: number;
   slipNo: string;
   productionRecordId: string;
+  productionRecordLinks: string;
   beneficiaryId: string;
   beneficiaryName: string;
   payrollPeriod: string;
@@ -115,6 +116,9 @@ function mapPayrollSlip(row: any): FoSlip {
     dbId: Number(row.id) || undefined,
     slipNo: String(row.slip_no ?? row.id),
     productionRecordId: String(row.production_record_id ?? row.production_box_record_id ?? "N/A"),
+    productionRecordLinks: Array.isArray(row.production_record_links) && row.production_record_links.length
+      ? row.production_record_links.map((link: any) => `${link.record_no ?? link.production_record_id} (${String(link.harvest_date ?? "date unavailable").slice(0, 10)})`).join("; ")
+      : String(row.production_record_id ?? row.production_box_record_id ?? "N/A"),
     beneficiaryId: String(row.beneficiary_id ?? ""),
     beneficiaryName: row.beneficiary_name ?? "",
     payrollPeriod: row.payroll_period ?? "",
@@ -694,7 +698,7 @@ function ValidationDetailsDialog({ slip, readOnly = false, onClose, onValidate, 
               <Field label="Payroll Slip No." value={slip.slipNo} />
               <Field label="Beneficiary ID" value={slip.beneficiaryId} />
               <Field label="Beneficiary Name" value={slip.beneficiaryName} />
-              <Field label="Production Record ID" value={slip.productionRecordId} />
+              <Field label="Production Record ID(s) and Harvest Date(s)" value={slip.productionRecordLinks} />
               <Field label="Harvest Date" value={slip.harvestDate} />
               <Field label="Payroll Period" value={slip.payrollPeriod} />
               <Field label="Prepared By" value={slip.preparedBy} />

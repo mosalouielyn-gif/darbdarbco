@@ -108,6 +108,8 @@ class SalesReceiptController extends Controller
                     if (Schema::hasColumn('stock_transactions', 'beneficiary_id')) $values['beneficiary_id'] = $payload['beneficiary_id'] ?? null;
                     if (Schema::hasColumn('stock_transactions', 'beneficiary_name')) $values['beneficiary_name'] = $payload['customer_name'];
                     if (Schema::hasColumn('stock_transactions', 'receipt_no')) $values['receipt_no'] = $payload['receipt_no'];
+                    if (Schema::hasColumn('stock_transactions', 'previous_balance')) $values['previous_balance'] = $previous;
+                    if (Schema::hasColumn('stock_transactions', 'updated_balance')) $values['updated_balance'] = $updated;
                     DB::table('stock_transactions')->insert($values);
                 } elseif (Schema::hasTable('inventory_transactions')) {
                     $values = [

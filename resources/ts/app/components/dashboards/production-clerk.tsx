@@ -1313,15 +1313,15 @@ function ProductionBoxesDialog({ open, onOpenChange, record, beneficiaryOptions,
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div className="space-y-1">
                 <Label className="text-sm">Big Hands</Label>
-                <Input type="number" value={form.classA_big} onChange={(e) => setNumber("classA_big", e.target.value)} placeholder="0" className="bg-white" />
+                <Input type="text" inputMode="numeric" pattern="[0-9]*" value={form.classA_big || ""} onChange={(e) => setNumber("classA_big", e.target.value)} placeholder="0" className="bg-white" />
               </div>
               <div className="space-y-1">
                 <Label className="text-sm">Small Hands</Label>
-                <Input type="number" value={form.classA_small} onChange={(e) => setNumber("classA_small", e.target.value)} placeholder="0" className="bg-white" />
+                <Input type="text" inputMode="numeric" pattern="[0-9]*" value={form.classA_small || ""} onChange={(e) => setNumber("classA_small", e.target.value)} placeholder="0" className="bg-white" />
               </div>
               <div className="space-y-1">
                 <Label className="text-sm">CPs</Label>
-                <Input type="number" value={form.classA_cp} onChange={(e) => setNumber("classA_cp", e.target.value)} placeholder="0" className="bg-white" />
+                <Input type="text" inputMode="numeric" pattern="[0-9]*" value={form.classA_cp || ""} onChange={(e) => setNumber("classA_cp", e.target.value)} placeholder="0" className="bg-white" />
               </div>
             </div>
           </div>
@@ -1331,15 +1331,15 @@ function ProductionBoxesDialog({ open, onOpenChange, record, beneficiaryOptions,
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div className="space-y-1">
                 <Label className="text-sm">Big Hands</Label>
-                <Input type="number" value={form.classB_big} onChange={(e) => setNumber("classB_big", e.target.value)} placeholder="0" className="bg-white" />
+                <Input type="text" inputMode="numeric" pattern="[0-9]*" value={form.classB_big || ""} onChange={(e) => setNumber("classB_big", e.target.value)} placeholder="0" className="bg-white" />
               </div>
               <div className="space-y-1">
                 <Label className="text-sm">Small Hands</Label>
-                <Input type="number" value={form.classB_small} onChange={(e) => setNumber("classB_small", e.target.value)} placeholder="0" className="bg-white" />
+                <Input type="text" inputMode="numeric" pattern="[0-9]*" value={form.classB_small || ""} onChange={(e) => setNumber("classB_small", e.target.value)} placeholder="0" className="bg-white" />
               </div>
               <div className="space-y-1">
                 <Label className="text-sm">CPs</Label>
-                <Input type="number" value={form.classB_cp} onChange={(e) => setNumber("classB_cp", e.target.value)} placeholder="0" className="bg-white" />
+                <Input type="text" inputMode="numeric" pattern="[0-9]*" value={form.classB_cp || ""} onChange={(e) => setNumber("classB_cp", e.target.value)} placeholder="0" className="bg-white" />
               </div>
             </div>
           </div>
@@ -1348,7 +1348,7 @@ function ProductionBoxesDialog({ open, onOpenChange, record, beneficiaryOptions,
             <Label className="text-base text-violet-700">Special Product</Label>
             <div className="space-y-1">
               <Label className="text-sm">Total Boxes / Quantity</Label>
-              <Input type="number" value={form.special} onChange={(e) => setNumber("special", e.target.value)} placeholder="0" className="bg-white" />
+              <Input type="text" inputMode="numeric" pattern="[0-9]*" value={form.special || ""} onChange={(e) => setNumber("special", e.target.value)} placeholder="0" className="bg-white" />
             </div>
           </div>
 

@@ -9,6 +9,8 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\Rule;
+use App\Services\ContactNumberFormatter;
+use App\Services\HarvesterCodeGenerator;
 
 class UserAccountController extends Controller
 {
@@ -30,13 +32,18 @@ class UserAccountController extends Controller
             'password' => ['required', 'string', 'min:6'],
             'role' => ['required', 'string', Rule::in(self::ROLES)],
             'active' => ['required', 'boolean'],
-            'contact' => ['nullable', 'string', 'max:255'],
+            'contact' => ContactNumberFormatter::rules(),
             'remarks' => ['nullable', 'string'],
             'admin_id' => ['nullable', 'integer'],
             'admin_name' => ['nullable', 'string', 'max:255'],
         ]);
 
-        $id = DB::table('users')->insertGetId($this->userValues($payload, creating: true));
+        $id = DB::transaction(function () use ($payload) {
+            if ($payload['role'] === 'harvester') {
+                $payload['username'] = app(HarvesterCodeGenerator::class)->nextCode();
+            }
+            return DB::table('users')->insertGetId($this->userValues($payload, creating: true));
+        });
 
         $account = $this->findUser($id);
         $payload['admin_id'] ??= $id;
@@ -47,19 +54,32 @@ class UserAccountController extends Controller
 
     public function update(Request $request, int $id): JsonResponse
     {
+        $current = DB::table('users')->where('id', $id)->first();
+        abort_if(! $current, 404, 'User account not found.');
+
         $payload = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'email' => ['required', 'email', 'max:255', Rule::unique('users', 'email')->ignore($id)],
             'username' => ['required', 'string', 'max:255', Rule::unique('users', 'username')->ignore($id)],
             'role' => ['required', 'string', Rule::in(self::ROLES)],
             'active' => ['required', 'boolean'],
-            'contact' => ['nullable', 'string', 'max:255'],
+            'contact' => ContactNumberFormatter::rules(),
             'remarks' => ['nullable', 'string'],
             'admin_id' => ['nullable', 'integer'],
             'admin_name' => ['nullable', 'string', 'max:255'],
         ]);
 
-        DB::table('users')->where('id', $id)->update($this->userValues($payload, creating: false));
+        $currentRole = Schema::hasColumn('users', 'role_id') && Schema::hasTable('roles')
+            ? DB::table('roles')->where('id', $current->role_id)->value('code')
+            : ($current->role ?? null);
+        DB::transaction(function () use ($payload, $current, $currentRole, $id) {
+            if ($payload['role'] === 'harvester') {
+                $payload['username'] = $currentRole === 'harvester'
+                    ? ($current->username ?? app(HarvesterCodeGenerator::class)->nextCode())
+                    : app(HarvesterCodeGenerator::class)->nextCode();
+            }
+            DB::table('users')->where('id', $id)->update($this->userValues($payload, creating: false));
+        });
 
         $account = $this->findUser($id);
         $payload['admin_id'] ??= $id;
@@ -111,7 +131,7 @@ class UserAccountController extends Controller
         }
 
         if (Schema::hasColumn('users', 'contact_information')) {
-            $values['contact_information'] = $payload['contact'] ?? null;
+            $values['contact_information'] = ContactNumberFormatter::format($payload['contact'] ?? null);
         }
 
         if (Schema::hasColumn('users', 'remarks')) {
@@ -158,7 +178,11 @@ class UserAccountController extends Controller
             $select[] = 'users.remarks';
         }
 
-        return $query->select($select)->first();
+        $account = $query->select($select)->first();
+        if ($account && isset($account->contact_information)) {
+            $account->contact_information = ContactNumberFormatter::format($account->contact_information);
+        }
+        return $account;
     }
 
     private function roleId(string $role): ?int

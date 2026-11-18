@@ -8,13 +8,15 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\Rule;
+use App\Services\BeneficiaryCodeGenerator;
+use App\Services\ContactNumberFormatter;
 
 class BeneficiaryController extends Controller
 {
     public function store(Request $request): JsonResponse
     {
         $payload = $this->validatedPayload($request);
-        $id = DB::table('beneficiaries')->insertGetId($this->values($payload, true));
+        $id = DB::transaction(fn () => DB::table('beneficiaries')->insertGetId($this->values($payload, true)));
         $beneficiary = $this->findBeneficiary($id);
         $this->recordAudit($payload, 'Created', "Created beneficiary {$beneficiary->name}");
 
@@ -57,16 +59,50 @@ class BeneficiaryController extends Controller
 
     private function validatedPayload(Request $request, ?int $ignoreId = null): array
     {
-        return $request->validate([
+        $payload = $request->validate([
             'code' => ['nullable', 'string', 'max:255', Rule::unique('beneficiaries', $this->codeColumn())->ignore($ignoreId)],
             'name' => ['required', 'string', 'max:255'],
-            'contact_number' => ['nullable', 'string', 'max:255'],
+            'contact_number' => ContactNumberFormatter::rules(),
             'address' => ['nullable', 'string'],
             'active' => ['required', 'boolean'],
             'admin_id' => ['nullable', 'integer'],
             'admin_name' => ['nullable', 'string', 'max:255'],
             'remarks' => ['nullable', 'string'],
         ]);
+
+        $canonicalName = $this->canonicalName($payload['name']);
+        $duplicate = DB::table('beneficiaries')
+            ->when($ignoreId !== null, fn ($query) => $query->where('id', '<>', $ignoreId))
+            ->get([$this->nameColumn()])
+            ->first(fn ($row) => $this->canonicalName((string) $row->{$this->nameColumn()}) === $canonicalName);
+        if ($duplicate) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'name' => 'A beneficiary with the same name already exists. Select the existing beneficiary account instead.',
+            ]);
+        }
+
+        return $payload;
+    }
+
+    private function canonicalName(string $name): string
+    {
+        $name = mb_strtolower(trim($name));
+        if (str_contains($name, ',')) {
+            [$familyName, $givenNames] = array_pad(explode(',', $name, 2), 2, '');
+            $name = trim($givenNames.' '.$familyName);
+        }
+
+        $parts = preg_split('/[^\pL\pN]+/u', $name, -1, PREG_SPLIT_NO_EMPTY) ?: [];
+        if (count($parts) > 2) {
+            $middleNames = array_slice($parts, 1, -1);
+            $parts = [
+                $parts[0],
+                ...array_map(static fn (string $part): string => mb_substr($part, 0, 1), $middleNames),
+                $parts[count($parts) - 1],
+            ];
+        }
+        sort($parts, SORT_STRING);
+        return implode(' ', $parts);
     }
 
     private function values(array $payload, bool $creating): array
@@ -79,12 +115,16 @@ class BeneficiaryController extends Controller
         $values = $this->withUpdatedTimestamp($values);
 
         if (Schema::hasColumn('beneficiaries', $this->codeColumn())) {
-            $values[$this->codeColumn()] = $payload['code'] ?: $this->nextCode();
+            if ($creating) {
+                $values[$this->codeColumn()] = app(BeneficiaryCodeGenerator::class)->nextCode();
+            } elseif (! empty($payload['code'])) {
+                $values[$this->codeColumn()] = $payload['code'];
+            }
         }
 
         $contactColumn = $this->contactColumn();
         if ($contactColumn) {
-            $values[$contactColumn] = $payload['contact_number'] ?? null;
+            $values[$contactColumn] = ContactNumberFormatter::format($payload['contact_number'] ?? null);
         }
 
         if (Schema::hasColumn('beneficiaries', 'address')) {
@@ -127,12 +167,11 @@ class BeneficiaryController extends Controller
             $select[] = 'address';
         }
 
-        return DB::table('beneficiaries')->select($select)->where('id', $id)->first();
-    }
-
-    private function nextCode(): string
-    {
-        return 'BEN-'.now()->format('YmdHis');
+        $beneficiary = DB::table('beneficiaries')->select($select)->where('id', $id)->first();
+        if ($beneficiary && isset($beneficiary->contact_number)) {
+            $beneficiary->contact_number = ContactNumberFormatter::format($beneficiary->contact_number);
+        }
+        return $beneficiary;
     }
 
     private function nameColumn(): string
