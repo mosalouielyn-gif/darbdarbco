@@ -48,14 +48,6 @@ class CreditTransactionController extends Controller
                 'updated_at' => now(),
             ]);
 
-            if (! empty($credit->receipt_no) && Schema::hasTable('sales_receipts')) {
-                $receiptBalance = DB::table('credit_transactions')->where('receipt_no', $credit->receipt_no)->sum('remaining_balance');
-                DB::table('sales_receipts')->where('receipt_no', $credit->receipt_no)->update([
-                    'remaining_balance' => $receiptBalance,
-                    'updated_at' => now(),
-                ]);
-            }
-
             $this->recordAudit(
                 $payload['user_id'] ?? null,
                 $payload['user_name'] ?? null,

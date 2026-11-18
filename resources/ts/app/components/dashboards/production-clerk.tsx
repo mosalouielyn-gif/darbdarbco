@@ -115,9 +115,11 @@ function Dashboard({ goToTab, productionData, harvestData, beneficiariesCount }:
   const dailyProduction = getDailyProduction(productionData);
   const classificationBreakdown = getClassificationBreakdown(productionData);
   const harvestBuligs = getHarvestBuligs(harvestData);
+  const quality = getQualityAnalysis(productionData);
   const hasDailyProduction = dailyProduction.some((row) => row.v > 0);
   const hasClassificationData = classificationBreakdown.some((row) => row.value > 0);
   const hasHarvestData = harvestBuligs.some((row) => row.v > 0);
+  const hasQualityData = quality.some((row) => row.defects > 0 || row.rejects > 0);
 
   return (
     <div className="space-y-6">
@@ -128,16 +130,11 @@ function Dashboard({ goToTab, productionData, harvestData, beneficiariesCount }:
         <div className="text-muted-foreground">{formatSystemDate()}</div>
       </div>
 
-      <section className="space-y-3">
-      <h2 className="text-base font-semibold text-slate-800">Key Metrics</h2>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <KpiCard icon={<Package />} color="emerald" label="Boxes Today" value={metrics.boxesToday.toLocaleString()} delta={metrics.boxesTodayDelta} onClick={() => goToTab("production")} />
-        <KpiCard icon={<Boxes />} color="amber" label="Total Boxes This Month" value={metrics.boxesThisMonth.toLocaleString()} delta={metrics.monthDelta} />
-        <KpiCard icon={<TrendingUp />} color="sky" label="Buligs Today" value={metrics.buligsToday.toLocaleString()} delta="Harvested across all age groups" onClick={() => goToTab("harvest")} />
-        <KpiCard icon={<TrendingUp />} color="emerald" label="Buligs This Month" value={metrics.buligsThisMonth.toLocaleString()} delta="Harvested across all age groups" onClick={() => goToTab("harvest")} />
         <KpiCard icon={<Users />} color="sky" label="Total Beneficiaries" value={metrics.totalBeneficiaries.toLocaleString()} delta={`${metrics.activeToday.toLocaleString()} active today`} onClick={() => goToTab("harvest")} />
+        <KpiCard icon={<Boxes />} color="amber" label="Total Boxes This Month" value={metrics.boxesThisMonth.toLocaleString()} delta={metrics.monthDelta} />
       </div>
-      </section>
 
       <div className="grid grid-cols-1 gap-4">
         <Card>
@@ -198,6 +195,20 @@ function Dashboard({ goToTab, productionData, harvestData, beneficiariesCount }:
           </CardContent>
         </Card>
 
+        <Card>
+          <CardHeader className="pb-2"><CardTitle className="text-base">Quality Analysis (by Age)</CardTitle></CardHeader>
+          <CardContent className="space-y-2 pt-2">
+            {hasQualityData ? quality.map((q) => (
+              <div key={q.age} className="flex items-center justify-between gap-3 text-sm">
+                <span className="text-muted-foreground">{q.age}</span>
+                <div className="flex flex-wrap justify-end gap-x-3 gap-y-1">
+                  <span className="text-amber-600 font-medium">Defects: {q.defects}</span>
+                  <span className="text-red-600 font-medium">Rejects: {q.rejects}</span>
+                </div>
+              </div>
+            )) : <EmptyDashboardState message="No defects or rejects recorded yet." compact />}
+          </CardContent>
+        </Card>
       </div>
 
     </div>
@@ -266,6 +277,31 @@ function getHarvestBuligs(records: HarvestRecord[]) {
   }));
 }
 
+function getQualityAnalysis(records: ProductionRecord[]) {
+  return [
+    {
+      age: "11 weeks",
+      defects: records.reduce((sum, record) => sum + record.defects_11, 0),
+      rejects: records.reduce((sum, record) => sum + record.rejects_11, 0),
+    },
+    {
+      age: "12 weeks",
+      defects: records.reduce((sum, record) => sum + record.defects_12, 0),
+      rejects: records.reduce((sum, record) => sum + record.rejects_12, 0),
+    },
+    {
+      age: "13 weeks",
+      defects: records.reduce((sum, record) => sum + record.defects_13, 0),
+      rejects: records.reduce((sum, record) => sum + record.rejects_13, 0),
+    },
+    {
+      age: "14 weeks",
+      defects: records.reduce((sum, record) => sum + record.defects_14, 0),
+      rejects: records.reduce((sum, record) => sum + record.rejects_14, 0),
+    },
+  ];
+}
+
 function getDashboardMetrics(productionData: ProductionRecord[], harvestData: HarvestRecord[], beneficiariesCount: number) {
   const today = todaySystemDate();
   const yesterday = addDaysSystemDate(today, -1);
@@ -280,8 +316,6 @@ function getDashboardMetrics(productionData: ProductionRecord[], harvestData: Ha
     ...productionData.filter((record) => record.date === today).map((record) => record.beneficiary).filter(Boolean),
     ...harvestData.filter((record) => record.date === today).map((record) => record.beneficiary).filter(Boolean),
   ]).size;
-  const buligsToday = harvestData.filter((record) => record.date === today).reduce((sum, record) => sum + record.total, 0);
-  const buligsThisMonth = harvestData.filter((record) => record.date.slice(0, 7) === currentMonth).reduce((sum, record) => sum + record.total, 0);
 
   return {
     boxesToday,
@@ -290,8 +324,6 @@ function getDashboardMetrics(productionData: ProductionRecord[], harvestData: Ha
     activeToday,
     boxesThisMonth,
     monthDelta: comparisonLabel(boxesThisMonth, boxesLastMonth, "vs last month"),
-    buligsToday,
-    buligsThisMonth,
   };
 }
 
@@ -1025,7 +1057,16 @@ function HarvestDetailsDialog({ record, onOpenChange }: {
   record: HarvestRecord | null;
   onOpenChange: (open: boolean) => void;
 }) {
-  const metric = (label: string, value: string | number, highlight = false) => <div key={label} className={`rounded-lg border p-4 ${highlight ? "border-emerald-200 bg-emerald-50" : "bg-white"}`}><div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</div><div className={`mt-1 ${highlight ? "text-2xl font-bold text-emerald-800" : "font-semibold text-slate-900"}`}>{value}</div></div>;
+  const rows = record ? [
+    ["Harvest Date", record.date],
+    ["Beneficiary", record.beneficiary],
+    ["Harvester", record.harvester],
+    ["11 weeks", record.w11],
+    ["12 weeks", record.w12],
+    ["13 weeks", record.w13],
+    ["14 weeks", record.w14],
+    ["Total Buligs", record.total],
+  ] : [];
 
   return (
     <Dialog open={!!record} onOpenChange={onOpenChange}>
@@ -1035,7 +1076,16 @@ function HarvestDetailsDialog({ record, onOpenChange }: {
             <FileText className="h-5 w-5" />Harvest Record Details
           </DialogTitle>
         </DialogHeader>
-        {record && <div className="space-y-4"><section className="space-y-2"><h3 className="text-sm font-semibold text-slate-700">Harvest Information</h3><div className="grid gap-3 sm:grid-cols-3">{metric("Harvest Date", record.date)}{metric("Beneficiary", record.beneficiary)}{metric("Harvester", record.harvester)}</div></section><section className="space-y-2"><h3 className="text-sm font-semibold text-slate-700">Buligs by Age</h3><div className="grid gap-3 grid-cols-2 sm:grid-cols-4">{metric("11 weeks", record.w11)}{metric("12 weeks", record.w12)}{metric("13 weeks", record.w13)}{metric("14 weeks", record.w14)}</div></section><div className="grid gap-3 sm:grid-cols-2">{metric("Total Buligs", record.total, true)}<div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-muted-foreground">Recorded harvest quantities grouped by plant age for quick review.</div></div></div>}
+        {record && (
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {rows.map(([label, value]) => (
+              <div key={String(label)} className="rounded-md border bg-slate-50 p-3">
+                <div className="text-xs text-muted-foreground">{label}</div>
+                <div className="font-medium">{value}</div>
+              </div>
+            ))}
+          </div>
+        )}
         <div className="flex justify-end">
           <Button variant="outline" onClick={() => onOpenChange(false)}>Close</Button>
         </div>
@@ -1048,7 +1098,25 @@ function ProductionDetailsDialog({ record, onOpenChange }: {
   record: ProductionRecord | null;
   onOpenChange: (open: boolean) => void;
 }) {
-  const metric = (label: string, value: string | number) => <div key={label} className="rounded-lg border bg-white p-4"><div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</div><div className="mt-1 text-xl font-semibold text-slate-900">{value}</div></div>;
+  const rows = record ? [
+    ["Date", record.date],
+    ["Beneficiary", record.beneficiary],
+    ["Class A - Big Hands", record.classA_big],
+    ["Class A - Small Hands", record.classA_small],
+    ["Class A - CPs", record.classA_cp],
+    ["Class B - Big Hands", record.classB_big],
+    ["Class B - Small Hands", record.classB_small],
+    ["Class B - CPs", record.classB_cp],
+    ["Special Product", record.special],
+    ["Defects - 11 weeks", record.defects_11],
+    ["Defects - 12 weeks", record.defects_12],
+    ["Defects - 13 weeks", record.defects_13],
+    ["Defects - 14 weeks", record.defects_14],
+    ["Rejects - 11 weeks", record.rejects_11],
+    ["Rejects - 12 weeks", record.rejects_12],
+    ["Rejects - 13 weeks", record.rejects_13],
+    ["Rejects - 14 weeks", record.rejects_14],
+  ] : [];
 
   return (
     <Dialog open={!!record} onOpenChange={onOpenChange}>
@@ -1058,7 +1126,16 @@ function ProductionDetailsDialog({ record, onOpenChange }: {
             <FileText className="h-5 w-5" />Production Record Details
           </DialogTitle>
         </DialogHeader>
-        {record && <div className="space-y-4"><section className="space-y-2"><h3 className="text-sm font-semibold text-slate-700">Production Information</h3><div className="grid gap-3 sm:grid-cols-2">{metric("Production Date", record.date)}{metric("Beneficiary", record.beneficiary)}</div></section><section className="space-y-2"><h3 className="text-sm font-semibold text-emerald-800">Class A Boxes</h3><div className="grid gap-3 grid-cols-2 sm:grid-cols-3">{metric("Big Hands", record.classA_big)}{metric("Small Hands", record.classA_small)}{metric("CPs", record.classA_cp)}</div></section><section className="space-y-2"><h3 className="text-sm font-semibold text-amber-800">Class B Boxes</h3><div className="grid gap-3 grid-cols-2 sm:grid-cols-3">{metric("Big Hands", record.classB_big)}{metric("Small Hands", record.classB_small)}{metric("CPs", record.classB_cp)}</div></section><section className="space-y-2"><h3 className="text-sm font-semibold text-violet-800">Special Product</h3><div className="grid gap-3 sm:grid-cols-3">{metric("Special Quantity", record.special)}{metric("Total Standard Boxes", record.classA_big + record.classA_small + record.classA_cp + record.classB_big + record.classB_small + record.classB_cp)}{metric("Total Boxes", record.classA_big + record.classA_small + record.classA_cp + record.classB_big + record.classB_small + record.classB_cp + record.special)}</div></section></div>}
+        {record && (
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {rows.map(([label, value]) => (
+              <div key={String(label)} className="rounded-md border bg-slate-50 p-3">
+                <div className="text-xs text-muted-foreground">{label}</div>
+                <div className="font-medium">{value}</div>
+              </div>
+            ))}
+          </div>
+        )}
         <div className="flex justify-end">
           <Button variant="outline" onClick={() => onOpenChange(false)}>Close</Button>
         </div>
@@ -1108,8 +1185,7 @@ function HarvestDialog({ open, onOpenChange, record, beneficiaryOptions, harvest
   }, [open, record]);
 
   const updateCount = (key: "w11" | "w12" | "w13" | "w14", value: string) => {
-    const parsed = value.trim() === "" ? 0 : Number(value);
-    const next = { ...form, [key]: Number.isFinite(parsed) ? Math.max(0, Math.trunc(parsed)) : form[key] };
+    const next = { ...form, [key]: Math.max(0, Number(value) || 0) };
     next.total = next.w11 + next.w12 + next.w13 + next.w14;
     setForm(next);
   };
@@ -1178,19 +1254,19 @@ function HarvestDialog({ open, onOpenChange, record, beneficiaryOptions, harvest
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               <div className="space-y-1">
                 <Label className="text-sm text-muted-foreground">11 weeks</Label>
-                <Input type="text" inputMode="numeric" pattern="[0-9]*" value={form.w11 === 0 ? "" : form.w11} onChange={(e) => updateCount("w11", e.target.value)} placeholder="0" className="bg-white" />
+                <Input type="number" value={form.w11} onChange={(e) => updateCount("w11", e.target.value)} placeholder="0" className="bg-white" />
               </div>
               <div className="space-y-1">
                 <Label className="text-sm text-muted-foreground">12 weeks</Label>
-                <Input type="text" inputMode="numeric" pattern="[0-9]*" value={form.w12 === 0 ? "" : form.w12} onChange={(e) => updateCount("w12", e.target.value)} placeholder="0" className="bg-white" />
+                <Input type="number" value={form.w12} onChange={(e) => updateCount("w12", e.target.value)} placeholder="0" className="bg-white" />
               </div>
               <div className="space-y-1">
                 <Label className="text-sm text-muted-foreground">13 weeks</Label>
-                <Input type="text" inputMode="numeric" pattern="[0-9]*" value={form.w13 === 0 ? "" : form.w13} onChange={(e) => updateCount("w13", e.target.value)} placeholder="0" className="bg-white" />
+                <Input type="number" value={form.w13} onChange={(e) => updateCount("w13", e.target.value)} placeholder="0" className="bg-white" />
               </div>
               <div className="space-y-1">
                 <Label className="text-sm text-muted-foreground">14 weeks</Label>
-                <Input type="text" inputMode="numeric" pattern="[0-9]*" value={form.w14 === 0 ? "" : form.w14} onChange={(e) => updateCount("w14", e.target.value)} placeholder="0" className="bg-white" />
+                <Input type="number" value={form.w14} onChange={(e) => updateCount("w14", e.target.value)} placeholder="0" className="bg-white" />
               </div>
             </div>
           </div>
@@ -1349,6 +1425,50 @@ function ProductionBoxesDialog({ open, onOpenChange, record, beneficiaryOptions,
             <div className="space-y-1">
               <Label className="text-sm">Total Boxes / Quantity</Label>
               <Input type="number" value={form.special} onChange={(e) => setNumber("special", e.target.value)} placeholder="0" className="bg-white" />
+            </div>
+          </div>
+
+          <div className="border rounded-md p-4 space-y-3 bg-orange-50">
+            <Label className="text-base text-orange-700">Defects (by age)</Label>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="space-y-1">
+                <Label className="text-sm">11 weeks</Label>
+                <Input type="number" value={form.defects_11} onChange={(e) => setNumber("defects_11", e.target.value)} placeholder="0" className="bg-white" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-sm">12 weeks</Label>
+                <Input type="number" value={form.defects_12} onChange={(e) => setNumber("defects_12", e.target.value)} placeholder="0" className="bg-white" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-sm">13 weeks</Label>
+                <Input type="number" value={form.defects_13} onChange={(e) => setNumber("defects_13", e.target.value)} placeholder="0" className="bg-white" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-sm">14 weeks</Label>
+                <Input type="number" value={form.defects_14} onChange={(e) => setNumber("defects_14", e.target.value)} placeholder="0" className="bg-white" />
+              </div>
+            </div>
+          </div>
+
+          <div className="border rounded-md p-4 space-y-3 bg-red-50">
+            <Label className="text-base text-red-700">Rejects (by age)</Label>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="space-y-1">
+                <Label className="text-sm">11 weeks</Label>
+                <Input type="number" value={form.rejects_11} onChange={(e) => setNumber("rejects_11", e.target.value)} placeholder="0" className="bg-white" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-sm">12 weeks</Label>
+                <Input type="number" value={form.rejects_12} onChange={(e) => setNumber("rejects_12", e.target.value)} placeholder="0" className="bg-white" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-sm">13 weeks</Label>
+                <Input type="number" value={form.rejects_13} onChange={(e) => setNumber("rejects_13", e.target.value)} placeholder="0" className="bg-white" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-sm">14 weeks</Label>
+                <Input type="number" value={form.rejects_14} onChange={(e) => setNumber("rejects_14", e.target.value)} placeholder="0" className="bg-white" />
+              </div>
             </div>
           </div>
 

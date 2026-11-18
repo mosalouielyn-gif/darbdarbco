@@ -49,17 +49,14 @@ export function PayrollPersonnelDashboard({ user, onLogout }: Props) {
 
   return (
     <DarbcoLayout user={user} onLogout={onLogout} navItems={NAV} active={active} onChange={setActive}>
-      {active === "dashboard" && <Dashboard onNavigate={setActive} onPrepare={openPreparePayroll} payrollRecords={payrollRecords} />}
+      {active === "dashboard" && <Dashboard onNavigate={setActive} onPrepare={openPreparePayroll} />}
       {active === "work" && <BeneficiaryPayroll mode="work" user={user} beneficiaries={beneficiaries} productionRecords={productionRecords} creditTransactions={creditTransactions} payrollRecords={payrollRecords} setPayrollRecords={setPayrollRecords} prepareSignal={prepareSignal} />}
       {active === "beneficiary" && <BeneficiaryPayroll mode="history" user={user} beneficiaries={beneficiaries} productionRecords={productionRecords} creditTransactions={creditTransactions} payrollRecords={payrollRecords} setPayrollRecords={setPayrollRecords} prepareSignal={0} />}
     </DarbcoLayout>
   );
 }
 
-function Dashboard({ onNavigate, onPrepare, payrollRecords }: { onNavigate: (id: string) => void; onPrepare: () => void; payrollRecords: PayrollRecord[] }) {
-  const pendingCount = payrollRecords.filter((record) => record.validationStatus === "Draft").length;
-  const validationCount = payrollRecords.filter((record) => record.validationStatus === "Submitted for Validation").length;
-  const approvedCount = payrollRecords.filter((record) => record.approvalStatus === "Approved").length;
+function Dashboard({ onNavigate, onPrepare }: { onNavigate: (id: string) => void; onPrepare: () => void }) {
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -72,21 +69,21 @@ function Dashboard({ onNavigate, onPrepare, payrollRecords }: { onNavigate: (id:
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <KpiCard
           label="Pending Payroll"
-          value={String(pendingCount)}
-          subtext="Saved as draft"
+          value="2"
+          subtext="Awaiting preparation"
           color="amber"
           onClick={() => onNavigate("beneficiary")}
         />
         <KpiCard
           label="For Validation"
-          value={String(validationCount)}
+          value="1"
           subtext="Submitted to Finance"
           color="violet"
           onClick={() => onNavigate("beneficiary")}
         />
         <KpiCard
           label="Approved Payroll"
-          value={String(approvedCount)}
+          value="3"
           subtext="Ready for release"
           color="emerald"
           onClick={() => onNavigate("beneficiary")}
@@ -108,7 +105,7 @@ function Dashboard({ onNavigate, onPrepare, payrollRecords }: { onNavigate: (id:
                   <Plus className="h-6 w-6" />
                 </div>
                 <div className="text-left">
-                  <div className="font-semibold">Beneficiary Payroll</div>
+                  <div className="font-semibold">Prepare Beneficiary Payroll</div>
                   <div className="text-xs opacity-90">Calculate earnings and deductions</div>
                 </div>
               </div>
@@ -630,7 +627,7 @@ function BeneficiaryPayroll({ mode, user, beneficiaries, productionRecords, cred
         </div>
         {mode === "work" && (
           <Button className="w-full bg-emerald-600 hover:bg-emerald-700 sm:w-auto" onClick={() => { setEditRecord(null); setOpenPrepare(true); }}>
-            <Plus className="h-4 w-4 mr-1" />Beneficiary Payroll
+            <Plus className="h-4 w-4 mr-1" />Prepare Beneficiary Payroll
           </Button>
         )}
       </div>
@@ -1026,7 +1023,7 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, beneficiar
                 </>
               ) : (
                 <>
-            <Plus className="h-5 w-5" />Beneficiary Payroll
+                  <Plus className="h-5 w-5" />Prepare Beneficiary Payroll
                 </>
               )}
             </DialogTitle>

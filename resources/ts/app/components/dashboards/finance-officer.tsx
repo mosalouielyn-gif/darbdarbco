@@ -440,6 +440,7 @@ function Dashboard({ slips, activities, goTo, onReview }: { slips: FoSlip[]; act
       <Card>
         <CardHeader className="flex-row items-center justify-between pb-2">
           <CardTitle className="text-base flex items-center gap-2"><ClipboardList className="h-4 w-4 text-emerald-700" />Payroll Slips for Validation</CardTitle>
+          <Button variant="link" className="text-emerald-700" onClick={() => goTo("pending")}>Open Pending Validation →</Button>
         </CardHeader>
         <CardContent>
           <SlipTable slips={pending} onReview={onReview} />
@@ -860,14 +861,19 @@ function ValidationDetailsDialog({ slip, readOnly = false, onClose, onValidate, 
                     <TableCell>{item.area}</TableCell>
                     <TableCell className="text-xs text-muted-foreground">{item.detail}</TableCell>
                     <TableCell>
-                      <div className="flex flex-wrap gap-2">
-                        {(["Matched", "Not Matched"] as ManualAssessmentValue[]).map((value) => (
-                          <Button key={value} type="button" size="sm" variant={assessments[item.id] === value ? "default" : "outline"}
-                            className={assessments[item.id] === value ? (value === "Matched" ? "bg-emerald-600 hover:bg-emerald-700" : "bg-red-600 hover:bg-red-700") : ""}
-                            onClick={() => setAssessments((current) => ({ ...current, [item.id]: value }))}
-                            disabled={!financeCanAct || returning || validating}>{value}</Button>
-                        ))}
-                      </div>
+                      <Select
+                        value={assessments[item.id] ?? ""}
+                        onValueChange={(value: ManualAssessmentValue) => setAssessments((current) => ({ ...current, [item.id]: value }))}
+                        disabled={!financeCanAct || returning || validating}
+                      >
+                        <SelectTrigger className="w-full sm:w-[180px]">
+                          <SelectValue placeholder="Select result" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="Matched">Matched</SelectItem>
+                          <SelectItem value="Not Matched">Not Matched</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </TableCell>
                   </TableRow>
                 ))}

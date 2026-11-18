@@ -31,7 +31,6 @@ class AppDataController extends Controller
                 $payload['stockTransactions'] = $this->stockTransactions();
                 $payload['borrowedMaterials'] = $this->borrowedMaterials();
                 $payload['creditTransactions'] = $this->creditTransactions();
-                $payload['salesReceipts'] = $this->salesReceipts();
                 $payload['restockRequests'] = $this->restockRequests();
                 break;
 
@@ -69,7 +68,6 @@ class AppDataController extends Controller
                     'stockTransactions' => $this->stockTransactions(),
                     'borrowedMaterials' => $this->borrowedMaterials(),
                     'creditTransactions' => $this->creditTransactions(),
-                    'salesReceipts' => $this->salesReceipts(),
                     'restockRequests' => $this->restockRequests(),
                     'payrollSlips' => $this->payrollSlips(),
                     'auditLogs' => $this->auditLogs(),
@@ -94,7 +92,6 @@ class AppDataController extends Controller
             'stockTransactions' => [],
             'borrowedMaterials' => [],
             'creditTransactions' => [],
-            'salesReceipts' => [],
             'restockRequests' => [],
             'payrollSlips' => [],
             'auditLogs' => [],
@@ -306,7 +303,6 @@ class AppDataController extends Controller
             $beneficiarySelect = Schema::hasColumn('stock_transactions', 'beneficiary_name')
                 ? 'coalesce(stock_transactions.beneficiary_name, beneficiaries.full_name)'
                 : 'beneficiaries.full_name';
-            $receiptSelect = Schema::hasColumn('stock_transactions', 'receipt_no') ? 'stock_transactions.receipt_no' : 'null';
 
             return DB::table('stock_transactions')
                 ->leftJoin('inventory_items', 'inventory_items.id', '=', 'stock_transactions.item_id')
@@ -314,7 +310,7 @@ class AppDataController extends Controller
                 ->when(Schema::hasTable('inventory_categories') && Schema::hasColumn('inventory_items', 'category_id'), function ($query) {
                     $query->leftJoin('inventory_categories', 'inventory_categories.id', '=', 'inventory_items.category_id');
                 })
-                ->selectRaw("stock_transactions.id, stock_transactions.reference_no, $receiptSelect as receipt_no, stock_transactions.txn_type as type, inventory_items.item_name as material, stock_transactions.quantity, stock_transactions.unit_cost, inventory_items.unit, stock_transactions.reason, $beneficiarySelect as beneficiary_name, $categorySelect as category, stock_transactions.txn_at")
+                ->selectRaw("stock_transactions.id, stock_transactions.reference_no, stock_transactions.txn_type as type, inventory_items.item_name as material, stock_transactions.quantity, stock_transactions.unit_cost, inventory_items.unit, stock_transactions.reason, $beneficiarySelect as beneficiary_name, $categorySelect as category, stock_transactions.txn_at")
                 ->orderByDesc('stock_transactions.txn_at')
                 ->limit(150)
                 ->get()
@@ -325,10 +321,9 @@ class AppDataController extends Controller
             return [];
         }
 
-        $receiptSelect = Schema::hasColumn('inventory_transactions', 'receipt_no') ? 'inventory_transactions.receipt_no' : 'null';
         return DB::table('inventory_transactions')
             ->leftJoin('inventory_items', 'inventory_items.id', '=', 'inventory_transactions.inventory_item_id')
-            ->selectRaw("inventory_transactions.id, inventory_transactions.reference_no, $receiptSelect as receipt_no, inventory_transactions.transaction_type as type, inventory_transactions.quantity, inventory_transactions.unit_cost, inventory_transactions.beneficiary_name, inventory_transactions.reason, inventory_transactions.transaction_at, inventory_items.name as material, inventory_items.category, inventory_items.unit")
+            ->selectRaw('inventory_transactions.id, inventory_transactions.reference_no, inventory_transactions.transaction_type as type, inventory_transactions.quantity, inventory_transactions.unit_cost, inventory_transactions.beneficiary_name, inventory_transactions.reason, inventory_transactions.transaction_at, inventory_items.name as material, inventory_items.category, inventory_items.unit')
             ->orderByDesc('inventory_transactions.transaction_at')
             ->limit(150)
             ->get()
@@ -414,24 +409,6 @@ class AppDataController extends Controller
         }
 
         return $credits;
-    }
-
-    private function salesReceipts(): array
-    {
-        if (! Schema::hasTable('sales_receipts') || ! Schema::hasTable('sales_receipt_items')) {
-            return [];
-        }
-
-        $receipts = DB::table('sales_receipts')->orderByDesc('transaction_at')->orderByDesc('id')->limit(150)->get();
-        foreach ($receipts as $receipt) {
-            $receipt->items = DB::table('sales_receipt_items')
-                ->where('sales_receipt_id', $receipt->id)
-                ->orderBy('id')
-                ->get()
-                ->all();
-        }
-
-        return $receipts->all();
     }
 
     private function payrollSlips(): array

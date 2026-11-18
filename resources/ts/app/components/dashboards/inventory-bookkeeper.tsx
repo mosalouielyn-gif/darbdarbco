@@ -20,7 +20,7 @@ import {
 import { User } from "../types";
 import { toast } from "sonner";
 import { useAppData } from "../../lib/app-data-context";
-import { adjustInventoryItem, cancelRestockRequest, confirmRestockDelivery, createInventoryItem, createSalesReceipt, createRestockRequest, releaseInventoryItem, returnBorrowedMaterial, stockInInventoryItem, updateInventoryItem, updateInventoryItemStatus, updateRestockRequest } from "../../lib/api";
+import { adjustInventoryItem, cancelRestockRequest, confirmRestockDelivery, createInventoryItem, createRestockRequest, releaseInventoryItem, returnBorrowedMaterial, stockInInventoryItem, updateInventoryItem, updateInventoryItemStatus, updateRestockRequest } from "../../lib/api";
 import { addDaysSystemDate, currentSystemTime, databaseDateKey, formatDatabaseDateTime, formatSystemDate, formatSystemDateTime, todaySystemDate } from "../../lib/date-time";
 import { usePersistentState } from "../../lib/use-persistent-state";
 
@@ -46,7 +46,6 @@ export function InventoryBookkeeperDashboard({ user, onLogout }: Props) {
   const [borrowedRows, setBorrowedRows] = useState<BorrowedMaterialRow[]>(borrowedMaterials);
   const [historyRows, setHistoryRows] = useState<StockHistoryRow[]>(stockHistory);
   const [restockRows, setRestockRows] = useState<RestockRequest[]>(initialRestockRequests(user.name));
-  const [salesReceipts, setSalesReceipts] = useState<any[]>([]);
   const [suggestedRestockItemId, setSuggestedRestockItemId] = useState<string | null>(null);
   const beneficiaries = buildProductionBeneficiaryOptions(data);
 
@@ -79,8 +78,6 @@ export function InventoryBookkeeperDashboard({ user, onLogout }: Props) {
       setRestockRows(data.restockRequests.map(mapRestockRequest));
     }
   }, [data?.restockRequests]);
-
-  useEffect(() => { setSalesReceipts(data?.salesReceipts ?? []); }, [data?.salesReceipts]);
 
   useEffect(() => {
     if (active === "released") {
@@ -120,8 +117,6 @@ export function InventoryBookkeeperDashboard({ user, onLogout }: Props) {
           history={historyRows}
           user={user}
           beneficiaries={beneficiaries}
-          receipts={salesReceipts}
-          setReceipts={setSalesReceipts}
         />
       )}
       {active === "credit" && <CreditTransactions credits={creditRows} setCredits={setCreditRows} user={user} />}
@@ -278,7 +273,7 @@ function Dashboard({ goTo, items, credits, history, restockRequests, onRestockSu
           </CardHeader>
           <CardContent className="space-y-2">
             {pendingCredits.slice(0, 3).map((credit) => (
-              <div key={credit.dbId ?? `${credit.receipt}-${credit.material}`} className="rounded-md border bg-amber-50 p-3 text-sm">
+              <div key={credit.receipt} className="rounded-md border bg-amber-50 p-3 text-sm">
                 <div className="flex items-center justify-between gap-3">
                   <span className="font-medium">{credit.beneficiary}</span>
                   <Badge className="bg-amber-100 text-amber-800">₱{credit.remaining.toLocaleString()}</Badge>
@@ -396,7 +391,6 @@ function buildProductionBeneficiaryOptions(data: any): BeneficiaryOption[] {
   });
 
   const options = new Map<string, BeneficiaryOption>();
-  beneficiaryById.forEach((item) => options.set(item.id, item));
   const addRecordBeneficiary = (record: any) => {
     const dbId = Number(record.beneficiary_id);
     const idKey = Number.isFinite(dbId) && dbId > 0 ? String(dbId) : "";
@@ -418,6 +412,10 @@ function buildProductionBeneficiaryOptions(data: any): BeneficiaryOption[] {
 
   (data?.harvestRecords ?? []).forEach(addRecordBeneficiary);
   (data?.productionRecords ?? []).forEach(addRecordBeneficiary);
+
+  if (options.size === 0) {
+    beneficiaryById.forEach((item) => options.set(item.id, item));
+  }
 
   return Array.from(options.values()).sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -456,8 +454,6 @@ function mapStockTransaction(row: any): StockHistoryRow {
   const quantity = Number(row.quantity ?? 0);
   const unitCost = Number(row.unit_cost ?? 0);
   const reason = row.reason ?? "";
-  const cashAmountMatch = String(reason).match(/cash payment:\s*([\d.]+)/i);
-  const creditAmountMatch = String(reason).match(/credit amount:\s*([\d.]+)/i);
   const isIncreaseAdjustment = type === "Adjustment" && String(row.reason ?? "").startsWith("Increase adjustment");
   const signedQuantity = isIncreaseAdjustment ? Math.abs(quantity) : [
     "Release",
@@ -477,14 +473,12 @@ function mapStockTransaction(row: any): StockHistoryRow {
     unit: row.unit ?? "",
     reason,
     account: row.user_name ?? row.created_by ?? "Inventory Bookkeeper",
-    ref: row.receipt_no ?? row.reference_no ?? `TXN-${row.id}`,
+    ref: row.reference_no ?? `TXN-${row.id}`,
     beneficiary: row.beneficiary_name ?? row.beneficiary ?? "",
     category: row.category ?? "",
     unitCost,
     totalAmount: Math.abs(quantity) * unitCost,
     paymentMethod: inferPaymentMethod(type, reason),
-    cashAmount: cashAmountMatch ? Number(cashAmountMatch[1]) : undefined,
-    creditAmount: creditAmountMatch ? Number(creditAmountMatch[1]) : undefined,
     previousBalance: Number(row.previous_balance ?? 0),
     updatedBalance: Number(row.updated_balance ?? 0),
   };
@@ -492,9 +486,6 @@ function mapStockTransaction(row: any): StockHistoryRow {
 
 function inferPaymentMethod(type: string, reason: string) {
   if (type === "Credit Issued") return "Beneficiary Credit";
-  const cash = Number(String(reason).match(/cash payment:\s*([\d.]+)/i)?.[1] ?? NaN);
-  const credit = Number(String(reason).match(/credit amount:\s*([\d.]+)/i)?.[1] ?? NaN);
-  if (Number.isFinite(cash) && Number.isFinite(credit)) return cash > 0 && credit > 0 ? "Cash & Beneficiary Credit" : credit > 0 ? "Beneficiary Credit" : "Cash";
   const match = String(reason).match(/Payment Method:\s*([^.;]+)/i);
   if (match?.[1]) return match[1].trim();
   if (type === "Direct Release") return "Cash";
@@ -533,7 +524,7 @@ function mapBorrowedMaterial(row: any): BorrowedMaterialRow {
 function mapCreditTransaction(row: any): CreditRow {
   return {
     dbId: Number(row.id) || undefined,
-    receipt: String(row.receipt_no ?? row.credit_no ?? row.id),
+    receipt: String(row.credit_no ?? row.id),
     date: formatCreditTransactionTime(row.created_at ?? row.credit_date ?? todayInputDate()),
     beneficiary: row.beneficiary_name ?? "",
     beneficiaryId: row.beneficiary_account_id ?? beneficiaryAccountId(row.beneficiary_name ?? ""),
@@ -788,7 +779,7 @@ type PosCartItem = {
   quantity: number;
 };
 
-function SalesPos({ items, setItems, setCredits, setHistory, history, user, beneficiaries, receipts, setReceipts }: {
+function SalesPos({ items, setItems, setCredits, setHistory, history, user, beneficiaries }: {
   items: InventoryItem[];
   setItems: React.Dispatch<React.SetStateAction<InventoryItem[]>>;
   setCredits: React.Dispatch<React.SetStateAction<CreditRow[]>>;
@@ -796,16 +787,13 @@ function SalesPos({ items, setItems, setCredits, setHistory, history, user, bene
   history: StockHistoryRow[];
   user: User;
   beneficiaries: BeneficiaryOption[];
-  receipts: any[];
-  setReceipts: React.Dispatch<React.SetStateAction<any[]>>;
 }) {
   const [search, setSearch] = useState("");
   const [cart, setCart] = useState<PosCartItem[]>([]);
   const [customerType, setCustomerType] = useState<"registered" | "walk-in">("registered");
   const [customer, setCustomer] = useState("");
   const [manualCustomer, setManualCustomer] = useState("");
-  const [cashPayment, setCashPayment] = useState("");
-  const [receiptToView, setReceiptToView] = useState<any | null>(null);
+  const [paymentMethod, setPaymentMethod] = useState<"Cash" | "Beneficiary Credit">("Cash");
   const [transactionFilter, setTransactionFilter] = useState<"all" | "Cash" | "Beneficiary Credit">("all");
   const [saving, setSaving] = useState(false);
   const activeItems = items.filter((item) => item.active !== false);
@@ -817,12 +805,9 @@ function SalesPos({ items, setItems, setCredits, setHistory, history, user, bene
   const isWalkInCustomer = customerType === "walk-in";
   const customerName = isWalkInCustomer ? manualCustomer.trim() : selectedBeneficiary?.name || "";
   const totalAmount = cart.reduce((sum, line) => sum + line.quantity * line.item.cost, 0);
-  const cashPaymentValue = cashPayment.trim() === "" ? totalAmount : Math.max(0, Number(cashPayment) || 0);
-  const creditAmount = Math.max(0, totalAmount - cashPaymentValue);
-  const paymentMethod = creditAmount > 0 && cashPaymentValue > 0 ? "Cash & Beneficiary Credit" : creditAmount > 0 ? "Beneficiary Credit" : "Cash";
   const salesTransactions = history
     .filter(isSalesHistoryRow)
-    .filter((row) => transactionFilter === "all" || normalizedPaymentMethod(row) === transactionFilter || normalizedPaymentMethod(row) === "Cash & Beneficiary Credit");
+    .filter((row) => transactionFilter === "all" || normalizedPaymentMethod(row) === transactionFilter);
 
   const addToCart = (item: InventoryItem) => {
     if (item.onHand <= 0) {
@@ -868,11 +853,10 @@ function SalesPos({ items, setItems, setCredits, setHistory, history, user, bene
       toast.error("Beneficiary or customer name is required");
       return;
     }
-    if (creditAmount > 0 && (isWalkInCustomer || !selectedBeneficiary)) {
+    if (paymentMethod === "Beneficiary Credit" && (isWalkInCustomer || !selectedBeneficiary)) {
       toast.error("Select a beneficiary account for Beneficiary Credit");
       return;
     }
-    if (cashPaymentValue > totalAmount) { toast.error("Cash payment cannot exceed the transaction total"); return; }
     const overStockLine = cart.find((line) => {
       const latestItem = items.find((item) => item.id === line.item.id);
       const availableStock = latestItem?.onHand ?? line.item.onHand;
@@ -890,17 +874,27 @@ function SalesPos({ items, setItems, setCredits, setHistory, history, user, bene
     setSaving(true);
 
     try {
-      const savedReceipt = await createSalesReceipt({
-        receipt_no: reference,
-        beneficiary_id: selectedBeneficiary?.dbId || undefined,
-        beneficiary_account_id: selectedBeneficiary?.code,
-        customer_name: customerName,
-        cash_payment: cashPaymentValue,
-        transaction_date: date,
-        items: cart.map((line) => ({ inventory_item_id: inventoryRecordId(line.item), quantity: line.quantity, unit_price: line.item.cost })),
-        user_id: currentUserId(user), user_name: user.name,
-      });
-      const savedItems = new Map(cart.map((line) => [line.item.id, { ...line.item, onHand: line.item.onHand - line.quantity, updatedAt: date, hasTransactions: true }]));
+      const savedItems = new Map<string, InventoryItem>();
+      const savedCredits: CreditRow[] = [];
+      for (const line of cart) {
+        const saved = await releaseInventoryItem(inventoryRecordId(line.item), {
+          quantity: line.quantity,
+          unit_cost: line.item.cost,
+          reference_no: `${reference}-${line.item.id}`,
+          stock_date: date,
+          release_type: paymentMethod === "Beneficiary Credit" ? "credit" : "direct",
+          beneficiary_id: selectedBeneficiary?.dbId || undefined,
+          beneficiary_account_id: selectedBeneficiary?.code || undefined,
+          beneficiary: customerName,
+          purpose: `POS sale to ${customerName}`,
+          payment_method: paymentMethod,
+          notes: `Payment Method: ${paymentMethod}; POS transaction ${reference}.`,
+          user_id: currentUserId(user),
+          user_name: user.name,
+        });
+        savedItems.set(line.item.id, mapInventoryItem(saved.item ?? saved));
+        if (saved.credit) savedCredits.push(mapCreditTransaction(saved.credit));
+      }
 
       setItems((current) => current.map((item) => {
         const line = cart.find((cartLine) => cartLine.item.id === item.id);
@@ -908,38 +902,45 @@ function SalesPos({ items, setItems, setCredits, setHistory, history, user, bene
       }));
 
       setHistory((current) => [
-        ...cart.map((line, index) => {
-          const lineTotal = line.quantity * line.item.cost;
-          const creditForLine = Math.min(lineTotal, Math.max(0, creditAmount - cart.slice(0, index).reduce((sum, previous) => sum + previous.quantity * previous.item.cost, 0)));
-          const cashForLine = Math.max(0, lineTotal - creditForLine);
-          const linePaymentMethod = cashForLine > 0 && creditForLine > 0 ? "Cash & Beneficiary Credit" : creditForLine > 0 ? "Beneficiary Credit" : "Cash";
-          return ({
+        ...cart.map((line) => ({
           date: formatDateTime(date),
           material: line.item.name,
-          type: "Sale",
+          type: paymentMethod === "Beneficiary Credit" ? "Credit Issued" : "Direct Release",
           qty: -line.quantity,
           unit: line.item.unit,
-          reason: `Sold to ${customerName}. Cash Payment: ${cashForLine}; Credit Amount: ${creditForLine}; Receipt Cash Total: ${cashPaymentValue}; Receipt Credit Total: ${creditAmount}; POS receipt ${reference}.`,
+          reason: `Sold to ${customerName}. Payment Method: ${paymentMethod}; POS transaction ${reference}.`,
           account: user.name,
           ref: `${reference}-${line.item.id}`,
           beneficiary: customerName,
           category: line.item.category,
           unitCost: line.item.cost,
           totalAmount: line.quantity * line.item.cost,
-          paymentMethod: linePaymentMethod,
-          cashAmount: cashForLine,
-          creditAmount: creditForLine,
+          paymentMethod,
           previousBalance: line.item.onHand,
           updatedBalance: line.item.onHand - line.quantity,
-        });
-        }),
+        })),
         ...current,
       ]);
 
-      const receiptCredits = (savedReceipt.credit_transactions ?? []).map(mapCreditTransaction);
-      if (receiptCredits.length) setCredits((current) => [...receiptCredits, ...current]);
-      setReceipts((current) => [savedReceipt, ...current]);
-      setReceiptToView(savedReceipt);
+      if (paymentMethod === "Beneficiary Credit") {
+        setCredits((current) => [
+          ...(savedCredits.length ? savedCredits : cart.map((line, index) => ({
+            receipt: `CR-${reference}-${index + 1}`,
+            date: formatDateLabel(date),
+            beneficiary: customerName,
+            beneficiaryId: selectedBeneficiary?.code || beneficiaryAccountId(customerName),
+            material: line.item.name,
+            qty: line.quantity,
+            unit: line.item.unit,
+            unitCost: line.item.cost,
+            amount: line.quantity * line.item.cost,
+            status: "Pending",
+            remaining: line.quantity * line.item.cost,
+            slip: `${reference}-${line.item.id}`,
+          }))),
+          ...current,
+        ]);
+      }
 
       toast.success(paymentMethod === "Cash" ? "Cash sale completed" : "Beneficiary credit sale recorded");
       setCart([]);
@@ -947,7 +948,7 @@ function SalesPos({ items, setItems, setCredits, setHistory, history, user, bene
       setCustomer("");
       setManualCustomer("");
       setCustomerType("registered");
-      setCashPayment("");
+      setPaymentMethod("Cash");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Unable to save POS transaction.");
     } finally {
@@ -1069,7 +1070,7 @@ function SalesPos({ items, setItems, setCredits, setHistory, history, user, bene
                       setCustomerType(nextType);
                       if (nextType === "walk-in") {
                         setCustomer("");
-                        setCashPayment("");
+                        setPaymentMethod("Cash");
                       } else {
                         setManualCustomer("");
                       }
@@ -1082,7 +1083,25 @@ function SalesPos({ items, setItems, setCredits, setHistory, history, user, bene
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="space-y-1"><Label>Cash Payment</Label><Input type="number" min="0" max={totalAmount} step="0.01" value={cashPayment} onChange={(e) => setCashPayment(e.target.value)} placeholder={money(totalAmount)} disabled={isWalkInCustomer} /></div>
+                <div className="space-y-1">
+                  <Label>Payment Method</Label>
+                  <Select
+                    value={paymentMethod}
+                    onValueChange={(value) => {
+                      if (value === "Beneficiary Credit" && isWalkInCustomer) {
+                        toast.error("Beneficiary Credit is only for registered beneficiaries");
+                        return;
+                      }
+                      setPaymentMethod(value as "Cash" | "Beneficiary Credit");
+                    }}
+                  >
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Cash">Cash</SelectItem>
+                      <SelectItem value="Beneficiary Credit" disabled={isWalkInCustomer}>Beneficiary Credit</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
               <div className="space-y-1">
                 <Label>Beneficiary Name</Label>
@@ -1109,7 +1128,6 @@ function SalesPos({ items, setItems, setCredits, setHistory, history, user, bene
                   <span className="font-medium">Total Amount</span>
                   <span className="text-xl font-semibold text-emerald-800">{money(totalAmount)}</span>
                 </div>
-                <div className="mt-2 grid grid-cols-2 gap-2 border-t border-emerald-100 pt-2 text-sm"><div className="text-muted-foreground">Cash</div><div className="text-right font-medium">{money(cashPaymentValue)}</div><div className="text-muted-foreground">Beneficiary Credit</div><div className="text-right font-medium">{money(creditAmount)}</div></div>
               </div>
               <Button className="h-11 w-full bg-emerald-600 hover:bg-emerald-700" onClick={confirmTransaction} disabled={saving}>
                 {saving ? "Saving Transaction..." : "Confirm Transaction"}
@@ -1183,13 +1201,6 @@ function SalesPos({ items, setItems, setCredits, setHistory, history, user, bene
           </div>
         </CardContent>
       </Card>
-
-      {receipts.length > 0 && <Card><CardHeader className="pb-2"><CardTitle className="text-base">Recent Sales Receipts</CardTitle><CardDescription>Each receipt groups all items and its cash and credit payments.</CardDescription></CardHeader><CardContent className="space-y-2">{receipts.slice(0, 8).map((receipt) => <button key={receipt.id} className="flex w-full items-center justify-between gap-3 rounded-md border bg-white p-3 text-left hover:bg-slate-50" onClick={() => setReceiptToView(receipt)}><span><span className="block font-medium">{receipt.receipt_no} · {receipt.customer_name}</span><span className="text-xs text-muted-foreground">{(receipt.items ?? []).length} items · {formatDateTime(receipt.transaction_at)}</span></span><span className="text-right"><span className="block font-semibold">{money(Number(receipt.total_amount))}</span><span className="text-xs text-muted-foreground">Cash {money(Number(receipt.cash_payment))} · Credit {money(Number(receipt.credit_amount))}</span></span></button>)}</CardContent></Card>}
-      <Dialog open={!!receiptToView} onOpenChange={(open) => !open && setReceiptToView(null)}>
-        <DialogContent className="w-[calc(100vw-1rem)] max-h-[90dvh] overflow-y-auto sm:max-w-2xl">
-          {receiptToView && <><DialogHeader><DialogTitle className="flex items-center gap-2 text-emerald-700"><Receipt className="h-5 w-5" />Sales Receipt</DialogTitle><DialogDescription>One receipt for the complete purchase.</DialogDescription></DialogHeader><div className="grid gap-3 rounded-md border bg-slate-50 p-3 sm:grid-cols-2"><div><span className="text-xs text-muted-foreground">Receipt Number</span><div className="font-semibold">{receiptToView.receipt_no}</div></div><div><span className="text-xs text-muted-foreground">Transaction Date</span><div className="font-medium">{formatDateTime(receiptToView.transaction_at)}</div></div><div><span className="text-xs text-muted-foreground">Customer / Beneficiary</span><div className="font-medium">{receiptToView.customer_name}</div></div><div><span className="text-xs text-muted-foreground">Total Amount</span><div className="font-semibold text-emerald-800">{money(Number(receiptToView.total_amount))}</div></div></div><div className="overflow-x-auto rounded-md border"><Table><TableHeader><TableRow><TableHead>Item</TableHead><TableHead>Qty</TableHead><TableHead>Unit Price</TableHead><TableHead className="text-right">Amount</TableHead></TableRow></TableHeader><TableBody>{(receiptToView.items ?? []).map((line: any) => <TableRow key={line.id}><TableCell>{line.item_name}<div className="text-xs text-muted-foreground">{line.category ?? ""}</div></TableCell><TableCell>{line.quantity} {line.unit}</TableCell><TableCell>{money(Number(line.unit_price))}</TableCell><TableCell className="text-right">{money(Number(line.total_amount))}</TableCell></TableRow>)}</TableBody></Table></div><div className="grid gap-2 rounded-md border p-3 sm:grid-cols-2"><span>Cash Payment</span><strong className="sm:text-right">{money(Number(receiptToView.cash_payment))}</strong><span>Credit Amount</span><strong className="sm:text-right">{money(Number(receiptToView.credit_amount))}</strong><span>Remaining Balance</span><strong className="sm:text-right">{money(Number(receiptToView.remaining_balance))}</strong></div></>}
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
@@ -1204,7 +1215,7 @@ function normalizedPaymentMethod(row: StockHistoryRow) {
 }
 
 function generatePosReference() {
-  return `POS-${todayInputDate().replaceAll("-", "")}-${currentSystemTime().replaceAll(":", "")}-${Math.floor(Math.random() * 9000 + 1000)}`;
+  return `POS-${todayInputDate().replaceAll("-", "")}-${currentSystemTime().replaceAll(":", "")}`;
 }
 
 const CATEGORIES = [
@@ -1461,6 +1472,7 @@ function InventoryItems({ items, setItems, setHistory, user }: {
           </div>
         </CardContent>
       </Card>
+
       <AddInventoryItem
         open={showAdd}
         onOpenChange={setShowAdd}
@@ -1969,6 +1981,16 @@ function AddInventoryItem({ open, onOpenChange, items, setItems, setHistory, use
                   </button>
                 </div>
                 <div className="space-y-1 md:col-span-6">
+                  <Label>Category</Label>
+                  <CategorySelectWithAdd
+                    value={r.category}
+                    onChange={(value) => update(i, "category", value)}
+                    categories={categories}
+                    onAddCategory={onAddCategory}
+                    onDeleteCategory={onDeleteCategory}
+                  />
+                </div>
+                <div className="space-y-1 md:col-span-6">
                   <Label>Item Name</Label>
                   <Input
                     list={`existing-items-${i}`}
@@ -1990,16 +2012,6 @@ function AddInventoryItem({ open, onOpenChange, items, setItems, setHistory, use
                     <p className="text-xs text-amber-700">Expiry differs from saved record ({match!.expiry}). This batch will be saved as a separate inventory entry.</p>
                   )}
                 </div>
-                <div className="space-y-1 md:col-span-6">
-                  <Label>Category</Label>
-                  <CategorySelectWithAdd
-                    value={r.category}
-                    onChange={(value) => update(i, "category", value)}
-                    categories={categories}
-                    onAddCategory={onAddCategory}
-                    onDeleteCategory={onDeleteCategory}
-                  />
-                </div>
                 <div className="space-y-1 md:col-span-3">
                   <Label>Quantity</Label>
                   <Input value={r.qty} onChange={(e) => update(i, "qty", e.target.value)} placeholder="" />
@@ -2012,7 +2024,6 @@ function AddInventoryItem({ open, onOpenChange, items, setItems, setHistory, use
                       <SelectItem value="kg">kg</SelectItem>
                       <SelectItem value="pcs">pcs</SelectItem>
                       <SelectItem value="liter">liter</SelectItem>
-                      <SelectItem value="pairs">pairs</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -2694,15 +2705,15 @@ function CashTransactions({ history, items }: { history: StockHistoryRow[]; item
   const [search, setSearch] = useState("");
   const [view, setView] = useState<StockHistoryRow | null>(null);
   const cashRows = history
-    .filter((row) => row.qty < 0 && ((row.cashAmount ?? 0) > 0 || (!/cash payment:/i.test(row.reason) && (row.paymentMethod || inferPaymentMethod(row.type, row.reason)) === "Cash")))
+    .filter((row) => row.qty < 0 && (row.paymentMethod || inferPaymentMethod(row.type, row.reason)) === "Cash")
     .filter((row) => {
       const q = search.trim().toLowerCase();
       if (!q) return true;
       return `${row.ref} ${row.material} ${row.beneficiary ?? ""} ${row.reason}`.toLowerCase().includes(q);
     });
-  const totalCollected = cashRows.reduce((sum, row) => sum + (row.cashAmount ?? row.totalAmount ?? Math.abs(row.qty) * (row.unitCost ?? 0)), 0);
+  const totalCollected = cashRows.reduce((sum, row) => sum + (row.totalAmount ?? Math.abs(row.qty) * (row.unitCost ?? 0)), 0);
   const viewCustomer = view ? view.beneficiary || customerFromReason(view.reason) || "-" : "-";
-  const viewAmount = view ? view.cashAmount ?? view.totalAmount ?? Math.abs(view.qty) * (view.unitCost ?? 0) : 0;
+  const viewAmount = view ? view.totalAmount ?? Math.abs(view.qty) * (view.unitCost ?? 0) : 0;
   const viewCategory = view ? view.category || getItemCategory(items, view.material) : "-";
 
   const printReceipt = () => {
@@ -2787,7 +2798,7 @@ function CashTransactions({ history, items }: { history: StockHistoryRow[]; item
                     <TableCell>{row.category || getItemCategory(items, row.material)}</TableCell>
                     <TableCell className="text-right">{Math.abs(row.qty)} {row.unit}</TableCell>
                     <TableCell className="text-right">{money(row.unitCost ?? 0)}</TableCell>
-                    <TableCell className="text-right">{money(row.cashAmount ?? row.totalAmount ?? Math.abs(row.qty) * (row.unitCost ?? 0))}</TableCell>
+                    <TableCell className="text-right">{money(row.totalAmount ?? Math.abs(row.qty) * (row.unitCost ?? 0))}</TableCell>
                     <TableCell><Badge className="bg-emerald-100 text-emerald-800">Completed</Badge></TableCell>
                     <TableCell>{row.account}</TableCell>
                     <TableCell>
@@ -3478,7 +3489,7 @@ function CreditTransactions({ credits, setCredits, user }: { credits: CreditRow[
                     <TableCell colSpan={11} className="text-center text-muted-foreground py-6">No credit ledger records match the selected filters.</TableCell>
                   </TableRow>
                 ) : ledgerRows.map((credit) => (
-                  <TableRow key={credit.dbId ?? `${credit.receipt}-${credit.material}`}>
+                  <TableRow key={credit.receipt}>
                     <TableCell className="font-medium">{credit.receipt}</TableCell>
                     <TableCell>{credit.date}</TableCell>
                     <TableCell>{credit.beneficiary}</TableCell>
@@ -3618,8 +3629,6 @@ interface StockHistoryRow {
   unitCost?: number;
   totalAmount?: number;
   paymentMethod?: "Cash" | "Beneficiary Credit" | string;
-  cashAmount?: number;
-  creditAmount?: number;
   previousBalance?: number;
   updatedBalance?: number;
 }

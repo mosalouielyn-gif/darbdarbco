@@ -476,21 +476,18 @@ function Dashboard({ goTo, payroll, restock, audit, inventoryItems, productionRe
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight"><LayoutDashboard className="h-6 w-6 text-emerald-700" />Admin Dashboard</h1>
-        <p className="mt-1 text-sm text-muted-foreground">Welcome back, {userName}. Current operations and approval queue at a glance.</p>
+        <h1 className="flex items-center gap-2"><LayoutDashboard className="h-6 w-6 text-emerald-700" />Dashboard</h1>
+        <p className="text-muted-foreground">Welcome back, {userName} — overview of farm operations and approval queue.</p>
       </div>
 
-      <section className="space-y-3">
-      <h2 className="text-base font-semibold text-slate-800">Key Metrics</h2>
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-6 gap-4 items-stretch">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-6 gap-4">
         <Kpi color="amber" icon={<AlertTriangle className="h-4 w-4" />} value={String(inventoryCounts.lowStock)} label="Low-Stock Items" sub="Manager monitoring" onClick={() => goTo("reports")} />
         <Kpi color="red" icon={<AlertTriangle className="h-4 w-4" />} value={String(inventoryCounts.outOfStock)} label="Out-of-Stock Items" sub="Critical inventory" onClick={() => goTo("reports")} />
         <Kpi color="amber" icon={<Wallet className="h-4 w-4" />} value={String(pendingPay.length)} label="Pending Payroll Approvals" sub={`₱${pendingPayAmount.toLocaleString()}.00`} onClick={() => goTo("payroll")} />
         <Kpi color="amber" icon={<AlertTriangle className="h-4 w-4" />} value={String(pendingRestock.length)} label="Pending Restock Requests" sub={`${pendingRestockAmount.toLocaleString()} units`} onClick={() => goTo("restock")} />
         <Kpi color="emerald" icon={<TrendingUp className="h-4 w-4" />} value={String(productionToday)} label="Production Today" sub="Boxes from production records" onClick={() => goTo("reports")} />
-        <Kpi color="emerald" icon={<CheckCircle2 className="h-4 w-4" />} value={String(approvedThisWeek)} label="Approved Transactions" sub="Payroll and restock approvals" onClick={() => goTo("audit")} />
+        <Kpi color="emerald" icon={<CheckCircle2 className="h-4 w-4" />} value={String(approvedThisWeek)} label="Approved This Week" sub="Transactions from database" onClick={() => goTo("audit")} />
       </div>
-      </section>
 
       <ProductionSummary records={productionRows} />
 
@@ -512,7 +509,7 @@ function Dashboard({ goTo, payroll, restock, audit, inventoryItems, productionRe
         </Card>
 
         <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-base">Payroll Approval Status</CardTitle></CardHeader>
+          <CardHeader className="pb-2"><CardTitle className="text-base">Payroll Approvals (This Month)</CardTitle></CardHeader>
           <CardContent className="h-64 relative">
             <ResponsiveContainer>
               <PieChart>
@@ -699,11 +696,12 @@ function Kpi({ color, icon, value, label, sub, onClick }: { color: "emerald" | "
     violet: "bg-violet-100 text-violet-700",
   };
   return (
-    <Card onClick={onClick} className={`h-full border-slate-200 shadow-sm transition ${onClick ? "cursor-pointer hover:-translate-y-0.5 hover:border-emerald-300 hover:shadow-md" : ""}`}>
-      <CardContent className="flex h-full min-h-32 flex-col p-4">
-        <div className="flex items-center justify-between"><span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</span><div className={`inline-flex h-9 w-9 shrink-0 rounded-lg items-center justify-center ${map[color]}`}>{icon}</div></div>
-        <div className="mt-3 text-2xl font-bold tracking-tight text-slate-900">{value}</div>
-        <div className="mt-1 text-xs text-muted-foreground">{sub}</div>
+    <Card onClick={onClick} className={onClick ? "cursor-pointer hover:border-emerald-400 hover:shadow transition" : ""}>
+      <CardContent className="p-4">
+        <div className={`inline-flex h-9 w-9 rounded-full items-center justify-center ${map[color]}`}>{icon}</div>
+        <div className="mt-2 text-xl">{value}</div>
+        <div className="text-muted-foreground text-xs">{label}</div>
+        <div className="text-xs text-muted-foreground">{sub}</div>
       </CardContent>
     </Card>
   );
@@ -2363,7 +2361,6 @@ function BeneficiaryHarvesterManagement({ beneficiaries, setBeneficiaries, users
   const [search, setSearch] = useState("");
   const [saving, setSaving] = useState(false);
   const [editingBeneficiary, setEditingBeneficiary] = useState<MasterBeneficiary | null>(null);
-  const [editingHarvester, setEditingHarvester] = useState<Account | null>(null);
   const [statusTarget, setStatusTarget] = useState<MasterBeneficiary | null>(null);
   const [beneficiaryForm, setBeneficiaryForm] = useState({ code: "", name: "", contact: "", address: "", active: true, remarks: "" });
   const [harvesterForm, setHarvesterForm] = useState({ code: "", name: "", contact: "", address: "", active: true });
@@ -2535,30 +2532,6 @@ function BeneficiaryHarvesterManagement({ beneficiaries, setBeneficiaries, users
     }
   };
 
-  const saveHarvesterEdit = async () => {
-    if (!editingHarvester || saving) return;
-    if (!editingHarvester.username.trim() || !editingHarvester.name.trim()) {
-      toast.error("Harvester code and name are required");
-      return;
-    }
-    setSaving(true);
-    try {
-      const saved = mapAccount(await updateUserAccount(editingHarvester.id, {
-        name: editingHarvester.name.trim(), email: editingHarvester.email, username: editingHarvester.username.trim(),
-        role: "harvester", active: editingHarvester.active, contact: editingHarvester.contact?.trim() ?? "",
-        remarks: editingHarvester.remarks?.trim() ?? "", admin_id: Number(adminId) || undefined, admin_name: adminName,
-      }));
-      setUsers(users.map((user) => user.id === saved.id ? saved : user));
-      recordManagementAudit("Updated", "Harvesters", saved.id, `Updated harvester ${saved.name}`, "Harvester master record updated.");
-      setEditingHarvester(null);
-      toast.success("Harvester updated");
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Unable to update harvester.");
-    } finally {
-      setSaving(false);
-    }
-  };
-
   return (
     <div className="space-y-4">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -2654,7 +2627,6 @@ function BeneficiaryHarvesterManagement({ beneficiaries, setBeneficiaries, users
                     <TableCell><Badge className={harvester.active ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-700"}>{harvester.active ? "Active" : "Inactive"}</Badge></TableCell>
                     <TableCell className="text-xs">{harvester.updatedAt || harvester.createdAt || "-"}</TableCell>
                     <TableCell>
-                      <button className="mr-1 p-1.5 rounded bg-sky-100 text-sky-700 hover:bg-sky-200" onClick={() => setEditingHarvester(harvester)} title="Edit harvester"><Edit className="h-3.5 w-3.5" /></button>
                       <button className={`p-1.5 rounded ${harvester.active ? "bg-red-100 text-red-700 hover:bg-red-200" : "bg-emerald-100 text-emerald-700 hover:bg-emerald-200"}`} onClick={() => updateHarvesterStatus(harvester)} title={harvester.active ? "Deactivate" : "Activate"}>
                         <Power className="h-3.5 w-3.5" />
                       </button>
@@ -2666,22 +2638,6 @@ function BeneficiaryHarvesterManagement({ beneficiaries, setBeneficiaries, users
           )}
         </CardContent>
       </Card>
-
-      <Dialog open={!!editingHarvester} onOpenChange={(open) => !open && !saving && setEditingHarvester(null)}>
-        <DialogContent className="w-[calc(100vw-1rem)] sm:!max-w-[640px]">
-          {editingHarvester && <>
-            <DialogHeader><DialogTitle className="flex items-center gap-2 text-emerald-700"><Edit className="h-5 w-5" />Edit Harvester</DialogTitle></DialogHeader>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="space-y-1"><Label>Harvester Code</Label><Input value={editingHarvester.username} onChange={(e) => setEditingHarvester({ ...editingHarvester, username: e.target.value })} /></div>
-              <div className="space-y-1"><Label>Harvester Name</Label><Input value={editingHarvester.name} onChange={(e) => setEditingHarvester({ ...editingHarvester, name: e.target.value })} /></div>
-              <div className="space-y-1"><Label>Contact Number</Label><Input value={editingHarvester.contact ?? ""} onChange={(e) => setEditingHarvester({ ...editingHarvester, contact: e.target.value })} /></div>
-              <div className="space-y-1"><Label>Status</Label><Select value={editingHarvester.active ? "active" : "inactive"} onValueChange={(value) => setEditingHarvester({ ...editingHarvester, active: value === "active" })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="active">Active</SelectItem><SelectItem value="inactive">Inactive</SelectItem></SelectContent></Select></div>
-              <div className="space-y-1 sm:col-span-2"><Label>Address</Label><Textarea value={editingHarvester.remarks ?? ""} onChange={(e) => setEditingHarvester({ ...editingHarvester, remarks: e.target.value })} /></div>
-            </div>
-            <div className="flex justify-end gap-2 border-t pt-3"><Button variant="outline" onClick={() => setEditingHarvester(null)} disabled={saving}>Cancel</Button><Button className="bg-emerald-600 hover:bg-emerald-700" onClick={saveHarvesterEdit} disabled={saving}>Save Changes</Button></div>
-          </>}
-        </DialogContent>
-      </Dialog>
 
       <Dialog open={!!editingBeneficiary} onOpenChange={(open) => !open && setEditingBeneficiary(null)}>
         <DialogContent className="!max-w-[calc(100vw-1rem)] w-[calc(100vw-1rem)] sm:!max-w-[640px]">
