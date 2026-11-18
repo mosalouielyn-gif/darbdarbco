@@ -211,11 +211,14 @@ export function ManagerAdminDashboard({ user, onLogout }: Props) {
         user_id: Number(user.id) || undefined,
         user_name: user.name,
       });
-      setRestock((cur) => cur.map((r) => r.id === id ? mapRestockRow(saved) : r));
+      const updatedRow = mapRestockRow(saved);
+      setRestock((cur) => cur.map((r) => r.id === id ? updatedRow : r));
       setAudit((cur) => [{ ts: now(), user: user.name, role: user.role, action: "Approved", module: "Inventory", description: `Approved restock ${id}`, status: "Completed" }, ...cur]);
       toast.success(`${id} approved`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Unable to approve restock request.");
+      // Keep the confirmation open and let its handler know the save failed.
+      throw error;
     }
   };
   const returnRestock = async (id: string, reason: string) => {
@@ -1079,6 +1082,9 @@ function RestockRequests({ restock, onApprove, onReturn }: { restock: RestockRow
     try {
       await onApprove(row.id);
       setConfirmingApproval(null);
+    } catch {
+      // The dashboard displays the API error. Leave the dialog open so the
+      // user can retry or cancel without losing the request context.
     } finally {
       setApprovingId(null);
     }
@@ -1123,13 +1129,13 @@ function RestockRequests({ restock, onApprove, onReturn }: { restock: RestockRow
                   <TableCell><RestockBadge s={r.status} /></TableCell>
                   <TableCell>
                     <div className="flex gap-1">
-                      <button title="Approve" className="p-1.5 rounded bg-emerald-100 text-emerald-700 hover:bg-emerald-200 disabled:opacity-60 disabled:cursor-not-allowed" disabled={r.status !== "Pending Review" || approvingId === r.id || returningId === r.id} onClick={() => openApproveConfirmation(r)}>
+                      <button type="button" title="Approve" className="p-1.5 rounded bg-emerald-100 text-emerald-700 hover:bg-emerald-200 disabled:opacity-60 disabled:cursor-not-allowed" disabled={r.status !== "Pending Review" || approvingId === r.id || returningId === r.id} onClick={() => openApproveConfirmation(r)}>
                         {approvingId === r.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
                       </button>
-                      <button title="Return" className="p-1.5 rounded bg-amber-100 text-amber-700 hover:bg-amber-200 disabled:opacity-60 disabled:cursor-not-allowed" disabled={r.status !== "Pending Review" || approvingId === r.id || returningId === r.id} onClick={() => handleReturn(r)}>
+                      <button type="button" title="Return" className="p-1.5 rounded bg-amber-100 text-amber-700 hover:bg-amber-200 disabled:opacity-60 disabled:cursor-not-allowed" disabled={r.status !== "Pending Review" || approvingId === r.id || returningId === r.id} onClick={() => handleReturn(r)}>
                         {returningId === r.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Undo2 className="h-3.5 w-3.5" />}
                       </button>
-                      <button title="View" className="p-1.5 rounded bg-slate-100 text-slate-700 hover:bg-slate-200" onClick={() => setView(r)}>
+                      <button type="button" title="View" className="p-1.5 rounded bg-slate-100 text-slate-700 hover:bg-slate-200" onClick={() => setView(r)}>
                         <Eye className="h-3.5 w-3.5" />
                       </button>
                     </div>
@@ -1188,8 +1194,8 @@ function RestockRequests({ restock, onApprove, onReturn }: { restock: RestockRow
                 </div>
               </div>
               <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end [&>button]:w-full sm:[&>button]:w-auto">
-                <Button variant="outline" disabled={approvingId === confirmingApproval.id} onClick={() => setConfirmingApproval(null)}>Cancel</Button>
-                <Button className="bg-emerald-600 hover:bg-emerald-700" disabled={approvingId === confirmingApproval.id} onClick={handleApprove}>
+                <Button type="button" variant="outline" disabled={approvingId === confirmingApproval.id} onClick={() => setConfirmingApproval(null)}>Cancel</Button>
+                <Button type="button" className="bg-emerald-600 hover:bg-emerald-700" disabled={approvingId === confirmingApproval.id} onClick={handleApprove}>
                   {approvingId === confirmingApproval.id && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}
                   {approvingId === confirmingApproval.id ? "Approving..." : "Confirm Approval"}
                 </Button>
