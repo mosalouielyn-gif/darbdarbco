@@ -287,7 +287,6 @@ class PayrollSlipController extends Controller
 
         $values = [
             'slip_no' => $slipNo,
-            'batch_id' => $current?->batch_id ?? $this->batchId($payload['payroll_period'], $userId),
             'beneficiary_id' => $payload['beneficiary_id'],
             'payroll_period' => $payload['payroll_period'],
             'harvest_date' => $payload['harvest_date'] ?? null,
@@ -310,6 +309,10 @@ class PayrollSlipController extends Controller
             'prepared_by' => $current?->prepared_by ?? $userId,
         ];
 
+        if (Schema::hasTable('payroll_batches') && Schema::hasColumn('payroll_slips', 'batch_id')) {
+            $values['batch_id'] = $current?->batch_id ?? $this->batchId($payload['payroll_period'], $userId);
+        }
+
         $beneficiarySnapshot = $this->beneficiarySnapshot($payload);
         foreach ($beneficiarySnapshot as $column => $value) {
             if (Schema::hasColumn('payroll_slips', $column)) {
@@ -321,6 +324,16 @@ class PayrollSlipController extends Controller
             $values['production_record_id'] = $payload['production_record_id'] ?? null;
         } elseif (Schema::hasColumn('payroll_slips', 'production_box_record_id')) {
             $values['production_box_record_id'] = $payload['production_record_id'] ?? null;
+        }
+
+        foreach ([
+            'special_boxes' => 'special_product_boxes',
+            'gross_amount' => 'gross_income',
+            'net_amount' => 'net_income',
+        ] as $currentColumn => $legacyColumn) {
+            if (! Schema::hasColumn('payroll_slips', $currentColumn) && Schema::hasColumn('payroll_slips', $legacyColumn)) {
+                $values[$legacyColumn] = $values[$currentColumn];
+            }
         }
 
         if ($validationStatus === 'Submitted for Validation') {
@@ -336,7 +349,8 @@ class PayrollSlipController extends Controller
             }
         }
 
-        return $values;
+        $availableColumns = array_fill_keys(Schema::getColumnListing('payroll_slips'), true);
+        return array_intersect_key($values, $availableColumns);
     }
 
     private function putIfColumn(array &$values, string $column, mixed $value): void
