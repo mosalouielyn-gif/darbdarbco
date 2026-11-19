@@ -119,6 +119,13 @@
   --color-sidebar-ring: var(--sidebar-ring);
 }
 
+@layer components {
+  .production-clerk-number-input {
+    caret-color: #111827;
+    cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='22' viewBox='0 0 8 22'%3E%3Cpath d='M1 1h6M4 1v20M1 21h6' fill='none' stroke='%23ffffff' stroke-width='3'/%3E%3Cpath d='M1 1h6M4 1v20M1 21h6' fill='none' stroke='%23111827' stroke-width='1.5'/%3E%3C/svg%3E") 4 11, text;
+  }
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;

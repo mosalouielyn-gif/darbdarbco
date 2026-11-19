@@ -11,14 +11,14 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Textarea } from "../ui/textarea";
 import { DateInput } from "../ui/date-input";
 import {
-  LayoutDashboard, Wallet, FileText, History, Plus, Search, Eye, Edit,
+  LayoutDashboard, Wallet, Calculator, FileText, History, Plus, Search, Eye, Edit,
   Send, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Printer, Download, Save, X, Loader2,
 } from "lucide-react";
 import { User } from "../types";
 import { toast } from "sonner";
 import { jsPDF } from "jspdf";
 import { useAppData } from "../../lib/app-data-context";
-import { createPayrollSlip, submitPayrollSlip, updatePayrollSlip } from "../../lib/api";
+import { createPayrollSlip, fetchPayrollSlipStatistics, submitPayrollSlip, updatePayrollSlip, type PayrollSlipStatistics } from "../../lib/api";
 import { currentPayrollPeriodLabel, databaseDateKey, formatDatabaseDateTime, formatSystemDate, formatSystemDateTime, todaySystemDate } from "../../lib/date-time";
 import { usePersistentState } from "../../lib/use-persistent-state";
 
@@ -26,6 +26,7 @@ interface Props { user: User; onLogout: () => void }
 
 const NAV = [
   { id: "dashboard", label: "Dashboard", icon: <LayoutDashboard className="h-4 w-4" /> },
+  { id: "work", label: "Prepare Beneficiary Payroll", icon: <Calculator className="h-4 w-4" /> },
   { id: "beneficiary", label: "Beneficiary Payroll History", icon: <Wallet className="h-4 w-4" /> },
 ];
 
@@ -48,7 +49,13 @@ export function PayrollPersonnelDashboard({ user, onLogout }: Props) {
   };
 
   return (
-    <DarbcoLayout user={user} onLogout={onLogout} navItems={NAV} active={active} onChange={setActive}>
+    <DarbcoLayout
+      user={user}
+      onLogout={onLogout}
+      navItems={NAV}
+      active={active}
+      onChange={(id) => id === "work" ? openPreparePayroll() : setActive(id)}
+    >
       {active === "dashboard" && <Dashboard onNavigate={setActive} onPrepare={openPreparePayroll} />}
       {active === "work" && <BeneficiaryPayroll mode="work" user={user} beneficiaries={beneficiaries} productionRecords={productionRecords} creditTransactions={creditTransactions} payrollRecords={payrollRecords} setPayrollRecords={setPayrollRecords} prepareSignal={prepareSignal} />}
       {active === "beneficiary" && <BeneficiaryPayroll mode="history" user={user} beneficiaries={beneficiaries} productionRecords={productionRecords} creditTransactions={creditTransactions} payrollRecords={payrollRecords} setPayrollRecords={setPayrollRecords} prepareSignal={0} />}
@@ -57,6 +64,43 @@ export function PayrollPersonnelDashboard({ user, onLogout }: Props) {
 }
 
 function Dashboard({ onNavigate, onPrepare }: { onNavigate: (id: string) => void; onPrepare: () => void }) {
+  const [statistics, setStatistics] = useState<PayrollSlipStatistics | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    let refreshing = false;
+
+    const refreshStatistics = async () => {
+      if (refreshing || document.visibilityState === "hidden") {
+        return;
+      }
+
+      refreshing = true;
+      try {
+        const nextStatistics = await fetchPayrollSlipStatistics();
+        if (active) {
+          setStatistics(nextStatistics);
+        }
+      } catch {
+        // Keep the last successful database snapshot displayed when a refresh fails.
+      } finally {
+        refreshing = false;
+      }
+    };
+
+    void refreshStatistics();
+    const intervalId = window.setInterval(() => void refreshStatistics(), 15000);
+    window.addEventListener("focus", refreshStatistics);
+    document.addEventListener("visibilitychange", refreshStatistics);
+
+    return () => {
+      active = false;
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", refreshStatistics);
+      document.removeEventListener("visibilitychange", refreshStatistics);
+    };
+  }, []);
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -69,21 +113,21 @@ function Dashboard({ onNavigate, onPrepare }: { onNavigate: (id: string) => void
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <KpiCard
           label="Pending Payroll"
-          value="2"
+          value={statistics ? String(statistics.pending) : "—"}
           subtext="Awaiting preparation"
           color="amber"
           onClick={() => onNavigate("beneficiary")}
         />
         <KpiCard
           label="For Validation"
-          value="1"
+          value={statistics ? String(statistics.for_validation) : "—"}
           subtext="Submitted to Finance"
           color="violet"
           onClick={() => onNavigate("beneficiary")}
         />
         <KpiCard
           label="Approved Payroll"
-          value="3"
+          value={statistics ? String(statistics.approved) : "—"}
           subtext="Ready for release"
           color="emerald"
           onClick={() => onNavigate("beneficiary")}
@@ -174,6 +218,7 @@ type PayrollRecord = {
   beneficiaryContactNumber?: string;
   beneficiaryAddress?: string;
   productionRecordId?: number;
+  productionSources?: Array<{ sourceTable: string; id: number }>;
   harvestDate: string;
   totalBoxes: number;
   grossIncome: number;
@@ -287,19 +332,6 @@ function formatBeneficiaryDisplayName(name: string) {
   return `${lastNameParts.join(" ")}, ${[firstName, middleInitial].filter(Boolean).join(" ")}`;
 }
 
-function beneficiaryNameKey(name: string) {
-  return formatBeneficiaryDisplayName(name)
-    .toLowerCase()
-    .replace(/[.,]/g, " ")
-    .split(/\s+/)
-    .filter((part) => part && part.length > 1)
-    .join(" ");
-}
-
-function sameBeneficiaryName(left: string, right: string) {
-  return beneficiaryNameKey(left) === beneficiaryNameKey(right);
-}
-
 function mapPayrollSlip(row: any): PayrollRecord {
   const classABoxes = Number(row.class_a_boxes ?? 0);
   const classBBoxes = Number(row.class_b_boxes ?? 0);
@@ -321,6 +353,9 @@ function mapPayrollSlip(row: any): PayrollRecord {
     beneficiaryContactNumber: row.beneficiary_contact_number ?? row.contact_number ?? "",
     beneficiaryAddress: row.beneficiary_address ?? row.address ?? "",
     productionRecordId: Number(row.production_record_id ?? row.production_box_record_id) || undefined,
+    productionSources: Array.isArray(row.production_sources)
+      ? row.production_sources.map((source: any) => ({ sourceTable: String(source.source_table ?? ""), id: Number(source.id) })).filter((source: { sourceTable: string; id: number }) => source.sourceTable && source.id > 0)
+      : [],
     harvestDate: row.harvest_date ? String(row.harvest_date).slice(0, 10) : databaseDateKey(row.created_at ?? todaySystemDate()),
     totalBoxes: Number(row.total_boxes ?? classABoxes + classBBoxes + specialBoxes),
     grossIncome: Number(row.gross_amount ?? row.gross_income ?? 0),
@@ -402,11 +437,6 @@ function mapCreditTransaction(row: any): PayrollCreditMaterial {
   };
 }
 
-function beneficiaryAccountId(name: string) {
-  const normalized = name.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "-").replace(/^-|-$/g, "");
-  return normalized ? `BEN-${normalized}` : "";
-}
-
 function payrollPeriodRange(period: string): { start: Date; end: Date } | null {
   const match = period.match(/([A-Za-z]+)\s+(\d{1,2})-(\d{1,2}),\s*(\d{4})/);
   if (!match) return null;
@@ -429,6 +459,7 @@ function payrollPayload(record: PayrollRecord, user: User) {
     beneficiary_contact_number: record.beneficiaryContactNumber,
     beneficiary_address: record.beneficiaryAddress,
     production_record_id: record.productionRecordId,
+    production_sources: (record.productionSources ?? []).map((source) => ({ source_table: source.sourceTable, id: source.id })),
     payroll_period: record.period,
     harvest_date: record.harvestDate,
     class_a_boxes: record.classABoxes ?? 0,
@@ -546,9 +577,32 @@ function BeneficiaryPayroll({ mode, user, beneficiaries, productionRecords, cred
 
     try {
       const payload = payrollPayload(record, user);
-      const saved = existing
-        ? await updatePayrollSlip(existing.id, payload)
-        : await createPayrollSlip(payload);
+      let saved: any;
+      if (existing) {
+        saved = await updatePayrollSlip(existing.id, payload);
+      } else if (isSubmitted) {
+        const draft = await createPayrollSlip({
+          ...payload,
+          validation_status: "Draft",
+          approval_status: "Pending Approval",
+        });
+
+        try {
+          saved = await submitPayrollSlip(draft.id, {
+            user_id: currentUserId(user),
+            user_name: user.name,
+          });
+        } catch (error) {
+          const draftRecord = mapPayrollSlip(draft);
+          setPayrollRecords((current) => [draftRecord, ...current]);
+          createAuditRecord(draftRecord, "Created", `Payroll slip ${draftRecord.slipNo} created for ${draftRecord.beneficiary}.`);
+          setOpenPrepare(false);
+          setEditRecord(null);
+          throw new Error(`Draft saved, but it could not be submitted: ${error instanceof Error ? error.message : "Please submit it from the payroll work queue."}`);
+        }
+      } else {
+        saved = await createPayrollSlip(payload);
+      }
       const savedRecord = mapPayrollSlip(saved);
 
       setPayrollRecords((current) => {
@@ -796,12 +850,8 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, beneficiar
   const [selectedBeneficiary, setSelectedBeneficiary] = useState("");
   const currentPeriod = currentPayrollPeriodLabel();
   const [payrollPeriod, setPayrollPeriod] = useState(currentPeriod);
-  const [priceClassABig, setPriceClassABig] = useState("400");
-  const [priceClassASmall, setPriceClassASmall] = useState("400");
-  const [priceClassACp, setPriceClassACp] = useState("400");
-  const [priceClassBBig, setPriceClassBBig] = useState("350");
-  const [priceClassBSmall, setPriceClassBSmall] = useState("350");
-  const [priceClassBCp, setPriceClassBCp] = useState("350");
+  const [priceClassA, setPriceClassA] = useState("400");
+  const [priceClassB, setPriceClassB] = useState("350");
   const [priceSpecial, setPriceSpecial] = useState("300");
   const [savingAction, setSavingAction] = useState<"draft" | "submit" | null>(null);
 
@@ -809,7 +859,7 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, beneficiar
   useEffect(() => {
     if (editRecord && open) {
       // Map beneficiary name to ID
-      const beneficiary = beneficiaries.find(b => b.dbId === editRecord.beneficiaryId || b.name === editRecord.beneficiary);
+      const beneficiary = beneficiaries.find((item) => item.dbId === editRecord.beneficiaryId);
       setSelectedBeneficiary(beneficiary?.id || "");
       setPayrollPeriod(editRecord.period);
       setLaborCost(String(editRecord.laborCost ?? 0));
@@ -818,12 +868,8 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, beneficiar
         amount: String(deduction.amount),
       })));
       setShowProductionDetails(false);
-      setPriceClassABig(String(editRecord.classAPrice ?? 400));
-      setPriceClassASmall(String(editRecord.classAPrice ?? 400));
-      setPriceClassACp(String(editRecord.classAPrice ?? 400));
-      setPriceClassBBig(String(editRecord.classBPrice ?? 350));
-      setPriceClassBSmall(String(editRecord.classBPrice ?? 350));
-      setPriceClassBCp(String(editRecord.classBPrice ?? 350));
+      setPriceClassA(String(editRecord.classAPrice ?? 400));
+      setPriceClassB(String(editRecord.classBPrice ?? 350));
       setPriceSpecial(String(editRecord.specialPrice ?? 300));
     } else if (!open) {
       // Reset form when closing
@@ -841,30 +887,20 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, beneficiar
   const periodRange = payrollPeriodRange(payrollPeriod);
   const matchedProductionRecords = productionRecords.filter((record) => {
     if (!selectedBeneficiaryOption) return false;
-    const idMatches = !!selectedBeneficiaryId && !!record.beneficiaryId && record.beneficiaryId === selectedBeneficiaryId;
-    const nameMatches = sameBeneficiaryName(record.beneficiaryName, selectedBeneficiaryOption.name);
-    if (!idMatches && !nameMatches) return false;
-    if (!periodRange || !record.harvestDate) return true;
+    if (!selectedBeneficiaryId || !record.beneficiaryId || record.beneficiaryId !== selectedBeneficiaryId) return false;
+    if (!periodRange || !record.harvestDate) return false;
     const harvestDate = new Date(`${record.harvestDate}T00:00:00`);
     if (Number.isNaN(harvestDate.getTime())) return true;
     return harvestDate >= periodRange.start && harvestDate <= periodRange.end;
   });
 
-  const selectedBeneficiaryAccountId = selectedBeneficiaryOption ? beneficiaryAccountId(selectedBeneficiaryOption.name) : "";
   const creditMaterials = creditTransactions.filter((credit) => {
     if (!selectedBeneficiaryOption) return false;
 
-    const creditName = formatBeneficiaryDisplayName(credit.beneficiaryName).trim().toLowerCase();
-    const selectedName = selectedBeneficiaryOption.name.trim().toLowerCase();
     const creditAccount = credit.beneficiaryAccountId.trim().toUpperCase();
     const selectedCode = selectedBeneficiaryOption.code.trim().toUpperCase();
 
-    const hasPayrollDeduction = credit.deductionAmount > 0;
-    return (credit.remaining > 0 || hasPayrollDeduction) && (
-      creditName === selectedName
-      || creditAccount === selectedCode
-      || creditAccount === selectedBeneficiaryAccountId
-    );
+    return credit.remaining > 0 && creditAccount === selectedCode;
   });
 
   const classABoxes = matchedProductionRecords.reduce((sum, r) => sum + r.classA, 0);
@@ -878,36 +914,22 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, beneficiar
   const classBCpBoxes = matchedProductionRecords.reduce((sum, r) => sum + r.classB_cp, 0);
   const totalBoxes = matchedProductionRecords.reduce((sum, r) => sum + r.total, 0);
 
-  const rateClassABig = parseFloat(priceClassABig) || 0;
-  const rateClassASmall = parseFloat(priceClassASmall) || 0;
-  const rateClassACp = parseFloat(priceClassACp) || 0;
-  const rateClassBBig = parseFloat(priceClassBBig) || 0;
-  const rateClassBSmall = parseFloat(priceClassBSmall) || 0;
-  const rateClassBCp = parseFloat(priceClassBCp) || 0;
+  const rateClassA = parseFloat(priceClassA) || 0;
+  const rateClassB = parseFloat(priceClassB) || 0;
   const rateSpecial = parseFloat(priceSpecial) || 0;
 
-  const subtotalClassABig = classABigBoxes * rateClassABig;
-  const subtotalClassASmall = classASmallBoxes * rateClassASmall;
-  const subtotalClassACp = classACpBoxes * rateClassACp;
-  const subtotalClassBBig = classBBigBoxes * rateClassBBig;
-  const subtotalClassBSmall = classBSmallBoxes * rateClassBSmall;
-  const subtotalClassBCp = classBCpBoxes * rateClassBCp;
-  const subtotalA = subtotalClassABig + subtotalClassASmall + subtotalClassACp;
-  const subtotalB = subtotalClassBBig + subtotalClassBSmall + subtotalClassBCp;
+  const subtotalA = classABoxes * rateClassA;
+  const subtotalB = classBBoxes * rateClassB;
   const subtotalSpecial = specialBoxes * rateSpecial;
   const grossIncome = subtotalA + subtotalB + subtotalSpecial;
 
   const resetPayrollPrices = () => {
-    setPriceClassABig("400");
-    setPriceClassASmall("400");
-    setPriceClassACp("400");
-    setPriceClassBBig("350");
-    setPriceClassBSmall("350");
-    setPriceClassBCp("350");
+    setPriceClassA("400");
+    setPriceClassB("350");
     setPriceSpecial("300");
   };
 
-  const totalCreditDeductions = creditMaterials.reduce((sum, c) => sum + (c.deductionAmount > 0 ? c.deductionAmount : c.remaining), 0);
+  const totalCreditDeductions = creditMaterials.reduce((sum, c) => sum + c.remaining, 0);
   const previousBalance = 0;
   const laborCostAmount = Math.max(0, parseFloat(laborCost) || 0);
   const otherDeductionsTotal = otherDeductions.reduce((sum, d) => sum + (parseFloat(d.amount) || 0), 0);
@@ -973,7 +995,8 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, beneficiar
         beneficiaryCode: beneficiary.code,
         beneficiaryContactNumber: beneficiary.contactNumber,
         beneficiaryAddress: beneficiary.address,
-        productionRecordId: matchedProductionRecords[0]?.sourceTable === "production_records" ? matchedProductionRecords[0]?.dbId : undefined,
+        productionRecordId: matchedProductionRecords.length === 1 && matchedProductionRecords[0]?.sourceTable === "production_records" ? matchedProductionRecords[0]?.dbId : undefined,
+        productionSources: matchedProductionRecords.map((record) => ({ sourceTable: record.sourceTable, id: record.dbId })),
         harvestDate: matchedProductionRecords[0]?.harvestDate ?? today,
         totalBoxes,
         grossIncome,
@@ -982,8 +1005,8 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, beneficiar
         classABoxes,
         classBBoxes,
         specialBoxes,
-        classAPrice: rateClassABig,
-        classBPrice: rateClassBBig,
+        classAPrice: rateClassA,
+        classBPrice: rateClassB,
         specialPrice: rateSpecial,
         creditDeduction: totalCreditDeductions,
         previousBalance,
@@ -1218,52 +1241,20 @@ function PreparePayrollDialog({ open, onOpenChange, user, editRecord, beneficiar
                 </TableHeader>
                 <TableBody>
                   <TableRow>
-                    <TableCell>Class A - Big Hands</TableCell>
-                    <TableCell className="text-right">{classABigBoxes || "-"}</TableCell>
+                    <TableCell>Class A</TableCell>
+                    <TableCell className="text-right">{classABoxes || "-"}</TableCell>
                     <TableCell className="text-right">
-                      <CurrencyInput value={priceClassABig} onChange={setPriceClassABig} label="Class A Big Hands price" />
+                      <CurrencyInput value={priceClassA} onChange={setPriceClassA} label="Class A rate per box" />
                     </TableCell>
-                    <TableCell className="text-right">&#8369;{subtotalClassABig.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
+                    <TableCell className="text-right">&#8369;{subtotalA.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
                   </TableRow>
                   <TableRow>
-                    <TableCell>Class A - Small Hands</TableCell>
-                    <TableCell className="text-right">{classASmallBoxes || "-"}</TableCell>
+                    <TableCell>Class B</TableCell>
+                    <TableCell className="text-right">{classBBoxes || "-"}</TableCell>
                     <TableCell className="text-right">
-                      <CurrencyInput value={priceClassASmall} onChange={setPriceClassASmall} label="Class A Small Hands price" />
+                      <CurrencyInput value={priceClassB} onChange={setPriceClassB} label="Class B rate per box" />
                     </TableCell>
-                    <TableCell className="text-right">&#8369;{subtotalClassASmall.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
-                  </TableRow>
-                  <TableRow>
-                    <TableCell>Class A - CPs</TableCell>
-                    <TableCell className="text-right">{classACpBoxes || "-"}</TableCell>
-                    <TableCell className="text-right">
-                      <CurrencyInput value={priceClassACp} onChange={setPriceClassACp} label="Class A CPs price" />
-                    </TableCell>
-                    <TableCell className="text-right">&#8369;{subtotalClassACp.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
-                  </TableRow>
-                  <TableRow>
-                    <TableCell>Class B - Big Hands</TableCell>
-                    <TableCell className="text-right">{classBBigBoxes || "-"}</TableCell>
-                    <TableCell className="text-right">
-                      <CurrencyInput value={priceClassBBig} onChange={setPriceClassBBig} label="Class B Big Hands price" />
-                    </TableCell>
-                    <TableCell className="text-right">&#8369;{subtotalClassBBig.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
-                  </TableRow>
-                  <TableRow>
-                    <TableCell>Class B - Small Hands</TableCell>
-                    <TableCell className="text-right">{classBSmallBoxes || "-"}</TableCell>
-                    <TableCell className="text-right">
-                      <CurrencyInput value={priceClassBSmall} onChange={setPriceClassBSmall} label="Class B Small Hands price" />
-                    </TableCell>
-                    <TableCell className="text-right">&#8369;{subtotalClassBSmall.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
-                  </TableRow>
-                  <TableRow>
-                    <TableCell>Class B - CPs</TableCell>
-                    <TableCell className="text-right">{classBCpBoxes || "-"}</TableCell>
-                    <TableCell className="text-right">
-                      <CurrencyInput value={priceClassBCp} onChange={setPriceClassBCp} label="Class B CPs price" />
-                    </TableCell>
-                    <TableCell className="text-right">&#8369;{subtotalClassBCp.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
+                    <TableCell className="text-right">&#8369;{subtotalB.toLocaleString('en-US', { minimumFractionDigits: 2 })}</TableCell>
                   </TableRow>
                   <TableRow>
                     <TableCell>Special Product</TableCell>
@@ -1652,37 +1643,38 @@ function ViewPayrollSlipDialog({ slip, beneficiaries = [], productionRecords = [
   const classABoxes = slip.classABoxes ?? 0;
   const classBBoxes = slip.classBBoxes ?? 0;
   const specialBoxes = slip.specialBoxes ?? 0;
-  const beneficiaryRecord =
-    beneficiaries.find((beneficiary) => slip.beneficiaryId && beneficiary.dbId === slip.beneficiaryId) ??
-    beneficiaries.find((beneficiary) => sameBeneficiaryName(beneficiary.name, slip.beneficiary));
+  const beneficiaryRecord = beneficiaries.find((beneficiary) => slip.beneficiaryId && beneficiary.dbId === slip.beneficiaryId);
   const beneficiaryCode = slip.beneficiaryCode || beneficiaryRecord?.code || "-";
   const beneficiaryContactNumber = slip.beneficiaryContactNumber || beneficiaryRecord?.contactNumber || "-";
   const beneficiaryAddress = slip.beneficiaryAddress || beneficiaryRecord?.address || "-";
   const preparedByName = slip.preparedByName?.trim() || "-";
-  const sourceProductionRecord =
-    productionRecords.find((record) => slip.productionRecordId && record.dbId === slip.productionRecordId) ??
-    productionRecords.find((record) =>
-      sameBeneficiaryName(record.beneficiaryName, slip.beneficiary) &&
-      (!slip.harvestDate || record.harvestDate === slip.harvestDate)
-    ) ??
-    productionRecords.find((record) => sameBeneficiaryName(record.beneficiaryName, slip.beneficiary));
+  const sourceProductionRecords = productionRecords.filter((record) => {
+    if (!slip.beneficiaryId || record.beneficiaryId !== slip.beneficiaryId) return false;
+    if (slip.productionSources?.length) {
+      return slip.productionSources.some((source) => source.sourceTable === record.sourceTable && source.id === record.dbId);
+    }
+    return !!slip.productionRecordId && record.dbId === slip.productionRecordId;
+  });
+  const sourceTotal = (select: (record: PayrollProductionRecord) => number, fallback: number) => sourceProductionRecords.length
+    ? sourceProductionRecords.reduce((total, record) => total + select(record), 0)
+    : fallback;
 
   const productionData = {
-    refNo: sourceProductionRecord?.refNo ?? (slip.productionRecordId ? String(slip.productionRecordId) : "-"),
-    harvestDate: sourceProductionRecord?.harvestDate ?? slip.harvestDate,
+    refNo: sourceProductionRecords.length ? sourceProductionRecords.map((record) => record.refNo).join(", ") : (slip.productionRecordId ? String(slip.productionRecordId) : "-"),
+    harvestDate: sourceProductionRecords[0]?.harvestDate ?? slip.harvestDate,
     classA: {
-      total: sourceProductionRecord?.classA ?? classABoxes,
-      bigHands: sourceProductionRecord?.classA_big ?? classABoxes,
-      smallHands: sourceProductionRecord?.classA_small ?? 0,
-      cps: sourceProductionRecord?.classA_cp ?? 0,
+      total: sourceTotal((record) => record.classA, classABoxes),
+      bigHands: sourceTotal((record) => record.classA_big, classABoxes),
+      smallHands: sourceTotal((record) => record.classA_small, 0),
+      cps: sourceTotal((record) => record.classA_cp, 0),
     },
     classB: {
-      total: sourceProductionRecord?.classB ?? classBBoxes,
-      bigHands: sourceProductionRecord?.classB_big ?? classBBoxes,
-      smallHands: sourceProductionRecord?.classB_small ?? 0,
-      cps: sourceProductionRecord?.classB_cp ?? 0,
+      total: sourceTotal((record) => record.classB, classBBoxes),
+      bigHands: sourceTotal((record) => record.classB_big, classBBoxes),
+      smallHands: sourceTotal((record) => record.classB_small, 0),
+      cps: sourceTotal((record) => record.classB_cp, 0),
     },
-    special: sourceProductionRecord?.special ?? specialBoxes
+    special: sourceTotal((record) => record.special, specialBoxes),
   };
 
   // Pricing
@@ -1694,11 +1686,10 @@ function ViewPayrollSlipDialog({ slip, beneficiaries = [], productionRecords = [
   const subtotalClassA = productionData.classA.total * priceClassA;
   const subtotalClassB = productionData.classB.total * priceClassB;
   const subtotalSpecial = productionData.special * priceSpecial;
-  const computedGrossIncome = subtotalClassA + subtotalClassB + subtotalSpecial;
-  const grossIncome = computedGrossIncome > 0 ? computedGrossIncome : slip.grossIncome;
+  const grossIncome = slip.grossIncome;
 
   const materialDeductions = creditTransactions
-    .filter((credit) => sameBeneficiaryName(credit.beneficiaryName, slip.beneficiary))
+    .filter((credit) => beneficiaryCode !== "-" && credit.beneficiaryAccountId.trim().toUpperCase() === beneficiaryCode.trim().toUpperCase())
     .map((credit) => ({
       refNo: credit.refNo,
       dateIssued: credit.dateIssued,
@@ -1713,7 +1704,7 @@ function ViewPayrollSlipDialog({ slip, beneficiaries = [], productionRecords = [
 
   // Total material deductions (all materials, not filtered)
   const itemizedMaterialDeductionsTotal = materialDeductions.reduce((sum, m) => sum + m.deductionApplied, 0);
-  const totalMaterialDeductions = (slip.creditDeduction ?? 0) > 0 ? slip.creditDeduction ?? 0 : itemizedMaterialDeductionsTotal;
+  const totalMaterialDeductions = slip.creditDeduction ?? itemizedMaterialDeductionsTotal;
   const previousUnpaid = slip.previousBalance ?? 0;
   const laborCostAmount = slip.laborCost ?? 0;
   const otherAuthorizedDeductionsTotal = slip.otherDeductions ?? 0;
@@ -1723,9 +1714,8 @@ function ViewPayrollSlipDialog({ slip, beneficiaries = [], productionRecords = [
     : otherAuthorizedDeductionsTotal > 0
       ? [{ type: "Other Approved Deductions", amount: otherAuthorizedDeductionsTotal }]
       : [];
-  const computedTotalDeductions = totalMaterialDeductions + previousUnpaid + laborCostAmount + otherAuthorizedDeductionsTotal;
-  const totalDeductions = computedTotalDeductions > 0 ? computedTotalDeductions : slip.totalDeductions;
-  const netIncome = grossIncome - totalDeductions;
+  const totalDeductions = slip.totalDeductions;
+  const netIncome = slip.netIncome;
 
   // Validation checks
   const computedTotalBoxes = productionData.classA.total + productionData.classB.total + productionData.special;

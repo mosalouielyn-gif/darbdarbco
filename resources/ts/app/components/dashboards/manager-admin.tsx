@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { DarbcoLayout } from "../darbco-layout";
-import { Card, CardAction, CardContent, CardHeader, CardTitle } from "../ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Button } from "../ui/button";
 import { Badge } from "../ui/badge";
 import { Input } from "../ui/input";
@@ -24,6 +24,7 @@ import autoTable from "jspdf-autotable";
 import { Role, ROLE_LABELS, User } from "../types";
 import { toast } from "sonner";
 import { useAppData } from "../../lib/app-data-context";
+import { RestockHistory, type RestockHistoryRecord } from "../restock-history";
 import {
   approvePayrollSlipByManager,
   approveRestockRequest,
@@ -51,6 +52,7 @@ const NAV = [
   { id: "payroll", label: "Payroll Approvals", icon: <ClipboardCheck className="h-4 w-4" /> },
   { id: "payroll-history", label: "Payroll History", icon: <History className="h-4 w-4" /> },
   { id: "restock", label: "Restock Requests", icon: <PackagePlus className="h-4 w-4" /> },
+  { id: "restock-history", label: "Restock History", icon: <History className="h-4 w-4" /> },
   { id: "reports", label: "Reports", icon: <FileBarChart2 className="h-4 w-4" /> },
   { id: "audit", label: "Audit History", icon: <History className="h-4 w-4" /> },
   { id: "users", label: "User Management", icon: <Users className="h-4 w-4" /> },
@@ -70,6 +72,13 @@ interface RestockRow {
   id: string; item: string; category: string; currentStock: number; reorder: number;
   qty: number; requestedBy: string; date: string; status: "Pending Review" | "Approved" | "Completed" | "Returned";
   returnReason?: string;
+  reviewedBy?: string;
+  finalizedAt?: string;
+  actualQuantityReceived?: number | null;
+  deliveryReference?: string;
+  deliveryNotes?: string;
+  notes?: string;
+  reason?: string;
 }
 interface AuditRow {
   id?: string; ts: string; user: string; role?: string; action: "Validated" | "Submitted" | "Approved" | "Returned" | "Created" | "Updated" | "Activated" | "Deactivated" | "Deleted"; module: string; affectedRecord?: string; description: string; remarks?: string; status: "Completed" | "Returned";
@@ -138,7 +147,7 @@ export function ManagerAdminDashboard({ user, onLogout }: Props) {
   }, [data?.rolePermissions]);
 
   useEffect(() => {
-    if (data?.restockRequests?.length) {
+    if (Array.isArray(data?.restockRequests)) {
       setRestock(data.restockRequests.map(mapRestockRow));
     }
   }, [data?.restockRequests]);
@@ -173,8 +182,6 @@ export function ManagerAdminDashboard({ user, onLogout }: Props) {
     const row = payroll.find((item) => item.id === id);
     try {
       const saved = await approvePayrollSlipByManager(row?.dbId ?? id, {
-        user_id: Number(user.id) || undefined,
-        user_name: user.name,
         remarks: `Manager approved payroll ${id}.`,
       });
       const mapped = mapPayrollRow(saved);
@@ -212,6 +219,7 @@ export function ManagerAdminDashboard({ user, onLogout }: Props) {
         user_name: user.name,
       });
       const updatedRow = mapRestockRow(saved);
+      updatedRow.reviewedBy = user.name;
       setRestock((cur) => cur.map((r) => r.id === id ? updatedRow : r));
       setAudit((cur) => [{ ts: now(), user: user.name, role: user.role, action: "Approved", module: "Inventory", description: `Approved restock ${id}`, status: "Completed" }, ...cur]);
       toast.success(`${id} approved`);
@@ -229,7 +237,9 @@ export function ManagerAdminDashboard({ user, onLogout }: Props) {
         user_id: Number(user.id) || undefined,
         user_name: user.name,
       });
-      setRestock((cur) => cur.map((r) => r.id === id ? mapRestockRow(saved) : r));
+      const updatedRow = mapRestockRow(saved);
+      updatedRow.reviewedBy = user.name;
+      setRestock((cur) => cur.map((r) => r.id === id ? updatedRow : r));
       setAudit((cur) => [{ ts: now(), user: user.name, role: user.role, action: "Returned", module: "Inventory", description: `Returned restock ${id} - ${reason}`, status: "Returned" }, ...cur]);
       toast.success(`${id} returned`);
     } catch (error) {
@@ -239,10 +249,11 @@ export function ManagerAdminDashboard({ user, onLogout }: Props) {
 
   return (
     <DarbcoLayout user={user} onLogout={onLogout} navItems={NAV} active={active} onChange={setActive}>
-      {active === "dashboard" && <Dashboard goTo={setActive} payroll={payroll} restock={restock} audit={audit} inventoryItems={data?.inventoryItems || []} productionRecords={data?.productionRecords || []} userName={user.name} onApprovePayroll={approvePayroll} onReturnPayroll={returnPayroll} onApproveRestock={approveRestock} onReturnRestock={returnRestock} />}
+      {active === "dashboard" && <Dashboard goTo={setActive} payroll={payroll} restock={restock} audit={audit} inventoryItems={data?.inventoryItems || []} productionRecords={data?.productionRecords || []} userName={user.name} />}
       {active === "payroll" && <PayrollApprovals payroll={payroll} onApprove={approvePayroll} onReturn={returnPayroll} />}
       {active === "payroll-history" && <PayrollHistory payroll={payroll} />}
-      {active === "restock" && <RestockRequests restock={restock} onApprove={approveRestock} onReturn={returnRestock} />}
+      {active === "restock" && <RestockRequests restock={restock.filter((request) => request.status === "Pending Review" || request.status === "Approved")} onApprove={approveRestock} onReturn={returnRestock} />}
+      {active === "restock-history" && <RestockHistory records={restock.map(toRestockHistoryRecord).filter((record): record is RestockHistoryRecord => record !== null)} />}
       {active === "reports" && <Reports user={user} payroll={payroll} restock={restock} users={users} audit={audit} inventoryItems={data?.inventoryItems || []} productionRecords={data?.productionRecords || []} />}
       {active === "audit" && <AuditHistory audit={audit} />}
       {active === "users" && <UserManagement users={users} setUsers={setUsers} setAudit={setAudit} adminId={user.id} adminName={user.name} />}
@@ -362,7 +373,12 @@ function productionSpecial(row: any) {
 }
 
 function productionDate(row: any) {
-  return String(row.harvest_date ?? row.production_date ?? row.packing_date ?? "").slice(0, 10);
+  return String(row.packing_date ?? row.production_date ?? row.harvest_date ?? "").slice(0, 10);
+}
+
+function formatMonthLabel(month: string) {
+  return new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric", timeZone: SYSTEM_TIME_ZONE })
+    .format(new Date(`${month}-01T12:00:00`));
 }
 
 function productionSummaries(records: any[]): ProductionSummaryRow[] {
@@ -408,8 +424,8 @@ function mapRestockRow(row: any): RestockRow {
   return {
     dbId: Number(row.id) || undefined,
     id: String(row.request_no ?? row.id),
-    item: row.material_name ?? "",
-    category: row.category ?? "Not specified",
+    item: row.material_name ?? row.inventory_item_name ?? "",
+    category: row.category ?? row.inventory_category ?? "Not specified",
     currentStock: Number(row.current_quantity ?? 0),
     reorder: Number(row.minimum_stock ?? 0),
     qty: Number(row.requested_quantity ?? row.quantity ?? 0),
@@ -417,6 +433,37 @@ function mapRestockRow(row: any): RestockRow {
     date: formatDateLabel(databaseDateKey(row.requested_at ?? row.created_at ?? todaySystemDate())),
     status: row.status === "Pending" ? "Pending Review" : row.status === "Completed" ? "Completed" : row.status === "Rejected" ? "Returned" : row.status === "Returned" ? "Returned" : row.status === "Cancelled" ? "Returned" : "Approved",
     returnReason: row.review_notes ?? "",
+    reviewedBy: row.reviewed_by_name ?? "",
+    finalizedAt: row.delivery_at ?? row.reviewed_at ?? row.updated_at ?? "",
+    actualQuantityReceived: row.quantity_received === null || row.quantity_received === undefined ? null : Number(row.quantity_received),
+    deliveryReference: row.delivery_reference ?? "",
+    deliveryNotes: row.delivery_notes ?? "",
+    notes: row.notes ?? "",
+    reason: row.reason ?? "",
+  };
+}
+
+function toRestockHistoryRecord(request: RestockRow): RestockHistoryRecord | null {
+  if (request.status !== "Completed" && request.status !== "Returned") {
+    return null;
+  }
+
+  return {
+    id: request.id,
+    materialName: request.item || "N/A",
+    category: request.category || "N/A",
+    requestedQuantity: request.qty,
+    actualQuantityReceived: request.actualQuantityReceived,
+    requestedBy: request.requestedBy || "N/A",
+    approvedOrReturnedBy: request.reviewedBy || "N/A",
+    dateRequested: request.date || "N/A",
+    dateFinalized: request.finalizedAt ? formatDateLabel(databaseDateKey(request.finalizedAt)) : "N/A",
+    finalStatus: request.status,
+    reason: request.reason ?? "N/A",
+    notes: request.notes || "N/A",
+    approvalOrReturnReason: request.status === "Returned" ? request.returnReason || "N/A" : "N/A",
+    deliveryReference: request.deliveryReference || "N/A",
+    deliveryNotes: request.deliveryNotes || "N/A",
   };
 }
 
@@ -451,242 +498,104 @@ function inventoryStatusCounts(inventoryItems: any[], restock: RestockRow[]) {
   }, { lowStock: 0, outOfStock: 0 });
 }
 
-function Dashboard({ goTo, payroll, restock, audit, inventoryItems, productionRecords, userName, onApprovePayroll, onReturnPayroll, onApproveRestock, onReturnRestock }: {
+function inventoryAttentionItems(inventoryItems: any[]) {
+  return inventoryItems.map((item) => {
+    const quantity = numericValue(item, ["onHand", "on_hand", "current_quantity", "quantity", "qty"]);
+    const minimum = numericValue(item, ["minimumStock", "minimum_stock", "reorder", "reorder_point"]);
+    const stock = String(item.status || item.stock_status || "").toLowerCase();
+    const status = stock.includes("out") || quantity <= 0 ? "Out of stock" : stock.includes("low") || (minimum > 0 && quantity <= minimum) ? "Low stock" : null;
+
+    return { name: String(item.name ?? item.item_name ?? "Inventory item"), quantity, minimum, unit: String(item.unit ?? ""), status };
+  }).filter((item) => item.status !== null)
+    .sort((left, right) => (left.status === "Out of stock" ? 0 : 1) - (right.status === "Out of stock" ? 0 : 1) || left.quantity - right.quantity);
+}
+
+function Dashboard({ goTo, payroll, restock, audit, inventoryItems, productionRecords, userName }: {
   goTo: (id: string) => void;
   payroll: PayrollRow[]; restock: RestockRow[]; audit: AuditRow[]; inventoryItems: any[]; productionRecords: any[]; userName: string;
-  onApprovePayroll: (id: string) => void; onReturnPayroll: (id: string, reason: string) => void;
-  onApproveRestock: (id: string) => void; onReturnRestock: (id: string, reason: string) => void;
 }) {
-  const pendingPay = payroll.filter((r) => r.status === "Validated");
-  const pendingPayAmount = pendingPay.reduce((s, r) => s + r.net, 0);
-  const pendingRestock = restock.filter((r) => r.status === "Pending Review");
-  const pendingRestockAmount = pendingRestock.reduce((sum, r) => sum + r.qty, 0);
-  const approvedThisWeek = payroll.filter((r) => r.status === "Approved").length + restock.filter((r) => r.status === "Approved").length;
+  const pendingPay = payroll.filter((row) => row.status === "Validated");
+  const pendingRestock = restock.filter((row) => row.status === "Pending Review");
   const inventoryCounts = inventoryStatusCounts(inventoryItems, restock);
+  const inventoryAlerts = inventoryAttentionItems(inventoryItems).slice(0, 5);
+  const todayKey = todaySystemDate();
+  const currentMonth = todayKey.slice(0, 7);
   const productionRows = productionSummaries(productionRecords);
-  const productionToday = productionRows[0]?.total ?? 0;
-  const monthlyProduction = productionRows.slice(0, 31).reverse().map((row) => ({ day: row.date.slice(5), boxes: row.total }));
-  const monthlyTotal = monthlyProduction.reduce((sum, row) => sum + row.boxes, 0);
-
-  const donutData = [
-    { name: "Approved", value: payroll.filter((r) => r.status === "Approved").length, color: "#10b981" },
-    { name: "Pending", value: pendingPay.length, color: "#f59e0b" },
-    { name: "Returned", value: payroll.filter((r) => r.status === "Returned").length, color: "#ef4444" },
+  const todayProduction = productionRows.find((row) => row.date === todayKey) ?? { date: todayKey, first: "", last: "", classA: 0, classB: 0, special: 0, total: 0 };
+  const productionMix = [
+    { name: "Class A", value: todayProduction.classA, color: "#059669" },
+    { name: "Class B", value: todayProduction.classB, color: "#d97706" },
+    { name: "Special Product", value: todayProduction.special, color: "#7c3aed" },
   ];
-  const donutTotal = donutData.reduce((s, d) => s + d.value, 0);
-  const recentAccountChanges = audit.filter((a) => a.module === "Users").slice(0, 4);
+  const productionMixTotal = productionMix.reduce((sum, item) => sum + item.value, 0);
+  const monthlyProduction = productionRows.filter((row) => row.date.startsWith(currentMonth)).slice().reverse();
+  const monthlyTotal = monthlyProduction.reduce((sum, row) => sum + row.total, 0);
+  const donutData = [
+    { name: "Approved", value: payroll.filter((row) => row.status === "Approved").length, color: "#10b981" },
+    { name: "Pending", value: pendingPay.length, color: "#f59e0b" },
+    { name: "Returned", value: payroll.filter((row) => row.status === "Returned").length, color: "#ef4444" },
+  ];
+  const donutTotal = donutData.reduce((sum, item) => sum + item.value, 0);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       <div>
         <h1 className="flex items-center gap-2"><LayoutDashboard className="h-6 w-6 text-emerald-700" />Dashboard</h1>
-        <p className="text-muted-foreground">Welcome back, {userName} — overview of farm operations and approval queue.</p>
+        <p className="text-muted-foreground">Welcome back, {userName}. Here is an overview of today's operations and approvals.</p>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-6 gap-4">
-        <Kpi color="amber" icon={<AlertTriangle className="h-4 w-4" />} value={String(inventoryCounts.lowStock)} label="Low-Stock Items" sub="Manager monitoring" onClick={() => goTo("reports")} />
-        <Kpi color="red" icon={<AlertTriangle className="h-4 w-4" />} value={String(inventoryCounts.outOfStock)} label="Out-of-Stock Items" sub="Critical inventory" onClick={() => goTo("reports")} />
-        <Kpi color="amber" icon={<Wallet className="h-4 w-4" />} value={String(pendingPay.length)} label="Pending Payroll Approvals" sub={`₱${pendingPayAmount.toLocaleString()}.00`} onClick={() => goTo("payroll")} />
-        <Kpi color="amber" icon={<AlertTriangle className="h-4 w-4" />} value={String(pendingRestock.length)} label="Pending Restock Requests" sub={`${pendingRestockAmount.toLocaleString()} units`} onClick={() => goTo("restock")} />
-        <Kpi color="emerald" icon={<TrendingUp className="h-4 w-4" />} value={String(productionToday)} label="Production Today" sub="Boxes from production records" onClick={() => goTo("reports")} />
-        <Kpi color="emerald" icon={<CheckCircle2 className="h-4 w-4" />} value={String(approvedThisWeek)} label="Approved This Week" sub="Transactions from database" onClick={() => goTo("audit")} />
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <Kpi color="emerald" icon={<TrendingUp className="h-4 w-4" />} value={todayProduction.total.toLocaleString()} label="Total Production" sub="Boxes produced today" onClick={() => goTo("reports")} />
+        <Kpi color="amber" icon={<Wallet className="h-4 w-4" />} value={String(pendingPay.length)} label="Pending Payroll" sub="Awaiting Manager/Admin approval" onClick={() => goTo("payroll")} />
+        <Kpi color="amber" icon={<PackagePlus className="h-4 w-4" />} value={String(pendingRestock.length)} label="Pending Restock Requests" sub="Awaiting review" onClick={() => goTo("restock")} />
+        <Kpi color={inventoryCounts.outOfStock > 0 || inventoryCounts.lowStock > 0 ? "red" : "emerald"} icon={<AlertTriangle className="h-4 w-4" />} value={String(inventoryCounts.lowStock + inventoryCounts.outOfStock)} label="Low-Stock Items" sub={inventoryCounts.outOfStock + " out of stock | " + inventoryCounts.lowStock + " low"} onClick={() => goTo("reports")} />
       </div>
 
-      <ProductionSummary records={productionRows} />
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card>
-          <CardHeader className="flex-row items-center justify-between pb-2">
-            <CardTitle className="text-base flex items-center gap-2"><TrendingUp className="h-4 w-4 text-emerald-700" />Monthly Production (Boxes)</CardTitle>
-            <Badge className="bg-emerald-100 text-emerald-800">{monthlyTotal.toLocaleString()} boxes</Badge>
-          </CardHeader>
-          <CardContent className="h-64">
-            <ResponsiveContainer>
-              <LineChart data={monthlyProduction}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="day" /><YAxis /><Tooltip />
-                <Line type="monotone" dataKey="boxes" stroke="#047857" strokeWidth={2} dot={{ r: 3 }} />
-              </LineChart>
-            </ResponsiveContainer>
+          <CardHeader className="flex-row items-center justify-between pb-2"><div><CardTitle className="flex items-center gap-2 text-base"><TrendingUp className="h-4 w-4 text-emerald-700" />Production Overview</CardTitle><p className="mt-1 text-xs text-muted-foreground">Today's box mix by classification</p></div><Badge className="bg-emerald-100 text-emerald-800">{todayProduction.total.toLocaleString()} total boxes</Badge></CardHeader>
+          <CardContent className="grid grid-cols-1 items-center gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
+            <div className="relative h-48 min-w-0">
+              {productionMixTotal > 0 ? <><ResponsiveContainer><PieChart><Pie data={productionMix} dataKey="value" nameKey="name" innerRadius={52} outerRadius={78} paddingAngle={2}>{productionMix.map((item) => <Cell key={item.name} fill={item.color} />)}</Pie><Tooltip formatter={(value, name) => [Number(value).toLocaleString() + " boxes", name]} /></PieChart></ResponsiveContainer><div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center"><span className="text-2xl font-semibold text-slate-900">{todayProduction.total.toLocaleString()}</span><span className="text-xs text-muted-foreground">Total boxes</span></div></> : <div className="flex h-full items-center justify-center rounded-lg bg-slate-50 text-sm text-muted-foreground">No production recorded today.</div>}
+            </div>
+            <div className="space-y-3">{productionMix.map((item) => { const percentage = productionMixTotal ? Math.round((item.value / productionMixTotal) * 100) : 0; return <div key={item.name} className="flex items-center justify-between gap-3 rounded-lg border bg-white px-3 py-2.5"><div className="flex min-w-0 items-center gap-2.5"><span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: item.color }} /><span className="truncate text-sm">{item.name}</span></div><div className="shrink-0 text-right"><span className="font-semibold">{item.value.toLocaleString()}</span><span className="ml-2 text-xs text-muted-foreground">{percentage}%</span></div></div>; })}</div>
           </CardContent>
         </Card>
 
         <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-base">Payroll Approvals (This Month)</CardTitle></CardHeader>
-          <CardContent className="h-64 relative">
-            <ResponsiveContainer>
-              <PieChart>
-                <Pie data={donutData} dataKey="value" nameKey="name" innerRadius={60} outerRadius={90} paddingAngle={2}>
-                  {donutData.map((d) => <Cell key={`cell-${d.name}`} fill={d.color} />)}
-                </Pie>
-                <Tooltip />
-              </PieChart>
-            </ResponsiveContainer>
-            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-              <div className="text-2xl">{donutTotal}</div>
-              <div className="text-xs text-muted-foreground">Total</div>
+          <CardHeader className="pb-2"><CardTitle className="text-base">Payroll Overview</CardTitle><p className="mt-1 text-xs text-muted-foreground">Draft slips are excluded from pending approvals.</p></CardHeader>
+          <CardContent className="grid grid-cols-1 items-center gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
+            <div className="relative h-48 min-w-0">
+              {donutTotal > 0 ? <><ResponsiveContainer><PieChart><Pie data={donutData} dataKey="value" nameKey="name" innerRadius={52} outerRadius={78} paddingAngle={2}>{donutData.map((item) => <Cell key={item.name} fill={item.color} />)}</Pie><Tooltip /></PieChart></ResponsiveContainer><div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center"><span className="text-2xl font-semibold text-slate-900">{donutTotal}</span><span className="text-xs text-muted-foreground">Payrolls</span></div></> : <div className="flex h-full items-center justify-center rounded-lg bg-slate-50 text-sm text-muted-foreground">No payroll records yet.</div>}
             </div>
-            <div className="flex justify-center gap-4 text-xs">
-              {donutData.map((d) => (
-                <div key={d.name} className="flex items-center gap-1.5">
-                  <span className="h-2.5 w-2.5 rounded-full" style={{ background: d.color }} />
-                  <span>{d.name} ({d.value})</span>
-                </div>
-              ))}
-            </div>
+            <div className="space-y-3">{donutData.map((item) => <div key={item.name} className="flex items-center justify-between gap-3 rounded-lg border bg-white px-3 py-2.5"><div className="flex items-center gap-2.5"><span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.color }} /><span className="text-sm">{item.name}</span></div><span className="font-semibold">{item.value}</span></div>)}</div>
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <Card>
+          <CardHeader className="flex-row items-center justify-between pb-2"><div><CardTitle className="flex items-center gap-2 text-base"><TrendingUp className="h-4 w-4 text-emerald-700" />Monthly Production</CardTitle><p className="mt-1 text-xs text-muted-foreground">Daily box totals for {formatMonthLabel(currentMonth)}</p></div><Badge className="bg-emerald-100 text-emerald-800">{monthlyTotal.toLocaleString()} boxes</Badge></CardHeader>
+          <CardContent className="h-64">{monthlyProduction.length > 0 ? <ResponsiveContainer><BarChart data={monthlyProduction}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="date" tickFormatter={(date) => String(date).slice(5)} /><YAxis allowDecimals={false} /><Tooltip labelFormatter={(date) => formatSystemDate(String(date))} formatter={(value) => [Number(value).toLocaleString() + " boxes", "Production"]} /><Bar dataKey="total" name="Production" fill="#047857" radius={[4, 4, 0, 0]} /></BarChart></ResponsiveContainer> : <div className="flex h-full items-center justify-center rounded-lg bg-slate-50 text-sm text-muted-foreground">No production records this month.</div>}</CardContent>
+        </Card>
+
+        <Card className="h-fit self-start">
+          <CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-base"><AlertTriangle className="h-4 w-4 text-amber-600" />Inventory Attention</CardTitle><p className="mt-1 text-xs text-muted-foreground">Items to monitor and active restock requests.</p></CardHeader>
+          <CardContent className="space-y-2">
+            <div className="grid grid-cols-3 gap-2 text-center"><div className="rounded-lg border bg-amber-50 px-2 py-1.5"><div className="text-lg font-semibold text-amber-800">{inventoryCounts.lowStock}</div><div className="text-xs text-muted-foreground">Low stock</div></div><div className="rounded-lg border bg-red-50 px-2 py-1.5"><div className="text-lg font-semibold text-red-700">{inventoryCounts.outOfStock}</div><div className="text-xs text-muted-foreground">Out of stock</div></div><div className="rounded-lg border bg-emerald-50 px-2 py-1.5"><div className="text-lg font-semibold text-emerald-800">{pendingRestock.length}</div><div className="text-xs text-muted-foreground">Awaiting review</div></div></div>
+            {inventoryAlerts.length > 0 ? <ul className="divide-y rounded-lg border">{inventoryAlerts.map((item) => <li key={item.name} className="flex items-center justify-between gap-3 px-3 py-2"><span className="min-w-0 truncate text-sm font-medium">{item.name}</span><span className="shrink-0 text-right text-xs text-muted-foreground">{item.quantity.toLocaleString()} {item.unit}<Badge className={item.status === "Out of stock" ? "ml-2 bg-red-100 text-red-800" : "ml-2 bg-amber-100 text-amber-800"}>{item.status}</Badge></span></li>)}</ul> : <div className="rounded-lg border bg-slate-50 px-3 py-4 text-center text-sm text-muted-foreground">No inventory items need attention.</div>}
           </CardContent>
         </Card>
       </div>
 
       <Card>
-        <CardHeader className="flex-row items-center justify-between pb-2">
-          <CardTitle className="text-base flex items-center gap-2"><History className="h-4 w-4 text-emerald-700" />Recent Activity</CardTitle>
-        </CardHeader>
+        <CardHeader className="flex-row items-center justify-between pb-2"><CardTitle className="flex items-center gap-2 text-base"><History className="h-4 w-4 text-emerald-700" />Recent Activity</CardTitle></CardHeader>
         <CardContent>
-          <ul className="space-y-3">
-            {audit.slice(0, 6).map((a, i) => (
-              <li key={i} className="flex gap-3">
-                <span className="mt-1.5 h-2 w-2 rounded-full bg-emerald-500 shrink-0" />
-                <div className="flex-1">
-                  <div>{a.description}</div>
-                  <div className="text-xs text-muted-foreground">{a.ts} • {a.user} • {a.module}</div>
-                </div>
-              </li>
-            ))}
-          </ul>
-          <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:justify-end [&>button]:w-full sm:[&>button]:w-auto">
-            <Button variant="link" className="text-emerald-700" onClick={() => goTo("audit")}>View full audit history →</Button>
-          </div>
+          {audit.length > 0 ? <ul className="space-y-2.5">{audit.slice(0, 5).map((item, index) => <li key={item.ts + "-" + (item.affectedRecord || item.description) + "-" + index} className="flex gap-3"><span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-emerald-500" /><div className="flex-1"><div className="text-sm">{item.description}</div><div className="text-xs text-muted-foreground">{formatAuditTimestamp(item.ts) || "Time unavailable"} - {item.user} - {item.module}</div></div></li>)}</ul> : <div className="rounded-lg border bg-slate-50 px-3 py-4 text-center text-sm text-muted-foreground">No recent activity recorded.</div>}
+          <div className="mt-3 flex justify-end"><Button variant="link" className="text-emerald-700" onClick={() => goTo("audit")}>View full Audit History</Button></div>
         </CardContent>
       </Card>
-
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base flex items-center gap-2"><Users className="h-4 w-4 text-emerald-700" />Recent Account Changes</CardTitle>
-          <CardAction>
-            <Button variant="link" className="h-auto p-0 text-emerald-700" onClick={() => goTo("audit")}>View audit logs</Button>
-          </CardAction>
-        </CardHeader>
-        <CardContent>
-          {recentAccountChanges.length === 0 ? (
-            <div className="rounded-md border bg-slate-50 p-3 text-sm text-muted-foreground">No recent account changes recorded.</div>
-          ) : (
-            <ul className="space-y-3">
-              {recentAccountChanges.map((a) => (
-                <li key={`${a.ts}-${a.affectedRecord || a.description}`} className="flex gap-3">
-                  <span className="mt-1.5 h-2 w-2 rounded-full bg-sky-500 shrink-0" />
-                  <div className="flex-1">
-                    <div>{a.description}</div>
-                    <div className="text-xs text-muted-foreground">{a.ts} - {a.user} - {a.action}</div>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* hidden: silence unused */}
-      <div className="hidden">{onReturnPayroll && onApproveRestock && onReturnRestock ? "" : ""}</div>
     </div>
-  );
-}
-
-function ProductionSummary({ records }: { records: ProductionSummaryRow[] }) {
-  const [viewDay, setViewDay] = useState<ProductionSummaryRow | null>(null);
-  const today = records[0] ?? { date: "", first: "", last: "", classA: 0, classB: 0, special: 0, total: 0 };
-  const totalToday = today.total;
-  const pct = (n: number) => totalToday ? `${Math.round((n / totalToday) * 100)}%` : "0%";
-  const dateLabel = today.date ? formatSystemDate(today.date, { month: "short", day: "2-digit", year: "numeric" }) : "No production records";
-
-  return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
-        <SummaryCard color="emerald" icon={<TrendingUp className="h-4 w-4" />} label="Total Boxes Today" value={String(totalToday)} sub="100%" />
-        <SummaryCard color="emerald" icon={<CheckCircle2 className="h-4 w-4" />} label="Class A Boxes" value={String(today.classA)} sub={pct(today.classA)} />
-        <SummaryCard color="amber" icon={<CheckCircle2 className="h-4 w-4" />} label="Class B Boxes" value={String(today.classB)} sub={pct(today.classB)} />
-        <SummaryCard color="violet" icon={<CheckCircle2 className="h-4 w-4" />} label="Special Product Boxes" value={String(today.special)} sub={pct(today.special)} />
-        <SummaryCard color="sky" icon={<History className="h-4 w-4" />} label="Date" value={dateLabel} sub="Today" />
-      </div>
-
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base flex items-center gap-2"><TrendingUp className="h-4 w-4 text-emerald-700" />Daily Boxes Records</CardTitle>
-          <p className="text-xs text-muted-foreground">View-only summary. The Manager / Admin cannot edit production records.</p>
-        </CardHeader>
-        <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Date</TableHead><TableHead>First Box Out</TableHead><TableHead>Last Box Out</TableHead>
-                <TableHead className="text-right">Total Class A</TableHead>
-                <TableHead className="text-right">Total Class B</TableHead>
-                <TableHead className="text-right">Total Special Product</TableHead>
-                <TableHead className="text-right">Total Boxes</TableHead>
-                <TableHead>Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {records.map((r) => (
-                <TableRow key={r.date}>
-                  <TableCell>{r.date}</TableCell>
-                  <TableCell className="text-xs">{r.first}</TableCell>
-                  <TableCell className="text-xs">{r.last}</TableCell>
-                  <TableCell className="text-right">{r.classA}</TableCell>
-                  <TableCell className="text-right">{r.classB}</TableCell>
-                  <TableCell className="text-right">{r.special}</TableCell>
-                  <TableCell className="text-right"><strong>{r.total}</strong></TableCell>
-                  <TableCell>
-                    <button className="p-1.5 rounded bg-slate-100 text-slate-700 hover:bg-slate-200" title="View" onClick={() => setViewDay(r)}>
-                      <Eye className="h-3.5 w-3.5" />
-                    </button>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
-
-      <Dialog open={!!viewDay} onOpenChange={(open) => !open && setViewDay(null)}>
-        <DialogContent className="!max-w-[calc(100vw-1rem)] w-[calc(100vw-1rem)] sm:!max-w-[560px]">
-          {viewDay && (
-            <>
-              <DialogHeader><DialogTitle>Daily Boxes Record — {viewDay.date}</DialogTitle></DialogHeader>
-              <div className="grid grid-cols-2 gap-3 p-3 bg-slate-50 rounded-md">
-                <Field label="Date" value={viewDay.date} />
-                <Field label="First Box Out" value={viewDay.first} />
-                <Field label="Last Box Out" value={viewDay.last} />
-                <Field label="Class A Boxes" value={String(viewDay.classA)} />
-                <Field label="Class B Boxes" value={String(viewDay.classB)} />
-                <Field label="Special Product Boxes" value={String(viewDay.special)} />
-                <Field label="Total Boxes" value={String(viewDay.total)} />
-              </div>
-              <div className="flex flex-col gap-2 sm:flex-row sm:justify-end [&>button]:w-full sm:[&>button]:w-auto"><Button variant="outline" onClick={() => setViewDay(null)}>Close</Button></div>
-            </>
-          )}
-        </DialogContent>
-      </Dialog>
-    </div>
-  );
-}
-
-function SummaryCard({ color, icon, label, value, sub }: { color: "emerald" | "amber" | "violet" | "sky"; icon: React.ReactNode; label: string; value: string; sub: string }) {
-  const map = {
-    emerald: "bg-emerald-100 text-emerald-700",
-    amber: "bg-amber-100 text-amber-700",
-    violet: "bg-violet-100 text-violet-700",
-    sky: "bg-sky-100 text-sky-700",
-  };
-  return (
-    <Card>
-      <CardContent className="p-4">
-        <div className={`inline-flex h-9 w-9 rounded-full items-center justify-center ${map[color]}`}>{icon}</div>
-        <div className="mt-2 text-xl">{value}</div>
-        <div className="text-muted-foreground text-xs">{label}</div>
-        <div className="text-xs text-emerald-700">{sub}</div>
-      </CardContent>
-    </Card>
   );
 }
 
@@ -1099,44 +1008,59 @@ function RestockRequests({ restock, onApprove, onReturn }: { restock: RestockRow
   };
 
   return (
-    <div className="space-y-4">
-      <div>
-        <h1 className="flex items-center gap-2"><PackagePlus className="h-6 w-6 text-emerald-700" />Restock Requests</h1>
-        <p className="text-muted-foreground">Review inventory replenishment requests submitted by the Bookkeeper.</p>
+    <div className="space-y-5">
+      <div className="space-y-1">
+        <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight"><PackagePlus className="h-6 w-6 text-emerald-700" />Restock Requests</h1>
+        <p className="text-sm text-muted-foreground">Review inventory replenishment requests submitted by the Bookkeeper.</p>
       </div>
 
-      <Card>
-        <CardContent className="p-4">
-          <Table>
+      <Card className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+        <CardContent className="p-0">
+          <Table className="table-fixed min-w-[1380px]">
+            <colgroup>
+              <col className="w-[190px]" />
+              <col className="w-[260px]" />
+              <col className="w-[110px]" />
+              <col className="w-[110px]" />
+              <col className="w-[120px]" />
+              <col className="w-[150px]" />
+              <col className="w-[170px]" />
+              <col className="w-[150px]" />
+              <col className="w-[120px]" />
+            </colgroup>
             <TableHeader>
-              <TableRow>
-                <TableHead>Item</TableHead><TableHead>Category</TableHead>
-                <TableHead className="text-right">Current Stock</TableHead><TableHead className="text-right">Reorder Point</TableHead>
-                <TableHead className="text-right">Requested Qty</TableHead><TableHead>Requested By</TableHead>
-                <TableHead>Date</TableHead><TableHead>Status</TableHead><TableHead>Action</TableHead>
+              <TableRow className="bg-slate-50/80 hover:bg-slate-50/80">
+                <TableHead className="h-12 px-4 font-semibold text-slate-700">Item</TableHead><TableHead className="h-12 px-4 font-semibold text-slate-700">Category</TableHead>
+                <TableHead className="h-12 px-4 text-right font-semibold text-slate-700">Current Stock</TableHead><TableHead className="h-12 px-4 text-right font-semibold text-slate-700">Reorder Point</TableHead>
+                <TableHead className="h-12 px-4 text-right font-semibold text-slate-700">Requested Qty</TableHead><TableHead className="h-12 px-4 font-semibold text-slate-700">Requested By</TableHead>
+                <TableHead className="h-12 px-4 font-semibold text-slate-700">Date</TableHead><TableHead className="h-12 px-4 text-center font-semibold text-slate-700">Status</TableHead><TableHead className="h-12 px-4 text-center font-semibold text-slate-700">Action</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {restock.map((r) => (
+              {restock.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={9} className="h-24 text-center text-sm text-muted-foreground">No active restock requests.</TableCell>
+                </TableRow>
+              ) : restock.map((r) => (
                 <TableRow key={r.id}>
-                  <TableCell>{r.item}</TableCell>
-                  <TableCell className="text-xs">{r.category}</TableCell>
-                  <TableCell className="text-right">{r.currentStock}</TableCell>
-                  <TableCell className="text-right">{r.reorder}</TableCell>
-                  <TableCell className="text-right">{r.qty.toLocaleString()}</TableCell>
-                  <TableCell>{r.requestedBy}</TableCell>
-                  <TableCell>{r.date}</TableCell>
-                  <TableCell><RestockBadge s={r.status} /></TableCell>
-                  <TableCell>
-                    <div className="flex gap-1">
-                      <button type="button" title="Approve" className="p-1.5 rounded bg-emerald-100 text-emerald-700 hover:bg-emerald-200 disabled:opacity-60 disabled:cursor-not-allowed" disabled={r.status !== "Pending Review" || approvingId === r.id || returningId === r.id} onClick={() => openApproveConfirmation(r)}>
-                        {approvingId === r.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+                  <TableCell className="px-4 py-3 font-medium text-slate-900">{r.item}</TableCell>
+                  <TableCell className="truncate px-4 py-3 text-slate-600" title={r.category}>{r.category}</TableCell>
+                  <TableCell className="px-4 py-3 text-right tabular-nums">{r.currentStock}</TableCell>
+                  <TableCell className="px-4 py-3 text-right tabular-nums">{r.reorder}</TableCell>
+                  <TableCell className="px-4 py-3 text-right font-medium tabular-nums">{r.qty.toLocaleString()}</TableCell>
+                  <TableCell className="truncate px-4 py-3" title={r.requestedBy}>{r.requestedBy}</TableCell>
+                  <TableCell className="px-4 py-3 text-slate-600">{r.date}</TableCell>
+                  <TableCell className="px-4 py-3 text-center"><RestockBadge s={r.status} /></TableCell>
+                  <TableCell className="px-4 py-3">
+                    <div className="flex items-center justify-center gap-2">
+                      <button type="button" title="Approve" aria-label={`Approve ${r.id}`} className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-emerald-50 text-emerald-700 transition-colors hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60" disabled={r.status !== "Pending Review" || approvingId === r.id || returningId === r.id} onClick={() => openApproveConfirmation(r)}>
+                        {approvingId === r.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
                       </button>
-                      <button type="button" title="Return" className="p-1.5 rounded bg-amber-100 text-amber-700 hover:bg-amber-200 disabled:opacity-60 disabled:cursor-not-allowed" disabled={r.status !== "Pending Review" || approvingId === r.id || returningId === r.id} onClick={() => handleReturn(r)}>
-                        {returningId === r.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Undo2 className="h-3.5 w-3.5" />}
+                      <button type="button" title="Return" aria-label={`Return ${r.id}`} className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-amber-50 text-amber-700 transition-colors hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60" disabled={r.status !== "Pending Review" || approvingId === r.id || returningId === r.id} onClick={() => handleReturn(r)}>
+                        {returningId === r.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Undo2 className="h-4 w-4" />}
                       </button>
-                      <button type="button" title="View" className="p-1.5 rounded bg-slate-100 text-slate-700 hover:bg-slate-200" onClick={() => setView(r)}>
-                        <Eye className="h-3.5 w-3.5" />
+                      <button type="button" title="View" aria-label={`View ${r.id}`} className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-slate-100 text-slate-700 transition-colors hover:bg-slate-200" onClick={() => setView(r)}>
+                        <Eye className="h-4 w-4" />
                       </button>
                     </div>
                   </TableCell>

@@ -2,8 +2,10 @@
 
 namespace Database\Seeders;
 
+use App\Models\User;
 use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
+use Illuminate\Support\Facades\Hash;
 
 class DatabaseSeeder extends Seeder
 {
@@ -14,6 +16,19 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
-        // Intentionally empty; use real database users instead of demo accounts.
+        if (! app()->environment(['local', 'testing'])) {
+            return;
+        }
+
+        User::query()->firstOrCreate(
+            ['email' => 'clerk@darbco.coop'],
+            [
+                'name' => 'DARBCO Production Clerk',
+                'username' => 'maria.santos',
+                'password' => Hash::make('clerk123'),
+                'role' => 'production_clerk',
+                'active' => true,
+            ],
+        );
     }
 }

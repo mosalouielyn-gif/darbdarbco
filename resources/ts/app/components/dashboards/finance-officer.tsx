@@ -39,12 +39,35 @@ const PRICES = { A: 320, B: 240, special: 480 };
 type FoStatus = "Submitted to Finance" | "Returned for Correction" | "Validated by Finance" | "Pending Manager Approval" | "Approved";
 
 interface MaterialCredit {
-  date: string; material: string; qty: number; unit: string; unitPrice: number; status: "Unpaid" | "Partially Paid";
+  id: number; date: string; material: string; qty: number; unit: string; unitPrice: number; remainingBalance: number; status: string;
 }
 interface OtherDeduction { type: string; amount: number }
 
 interface ProductionSource {
   classA: number; classB: number; special: number;
+}
+
+interface ProductionSourceDetail {
+  sourceTable: string;
+  id: number;
+  recordNo: string;
+  beneficiaryId: number;
+  productionDate: string;
+  classA: number;
+  classB: number;
+  special: number;
+  matched: boolean;
+  errors: string[];
+}
+
+interface FinancialReconciliation {
+  status: "matched" | "mismatch";
+  message: string;
+  calculatedGrossAmount: number;
+  outstandingCreditBalance: number;
+  calculatedTotalDeductions: number;
+  calculatedNetAmount: number;
+  errors: string[];
 }
 
 interface FoSlip {
@@ -62,11 +85,16 @@ interface FoSlip {
   classA: number; classB: number; special: number;
   classAPrice?: number; classBPrice?: number; specialPrice?: number;
   materialCredits: MaterialCredit[];
+  creditDeduction: number;
   laborDescription: string; laborAmount: number; laborRemarks: string; laborEncodedBy: string; laborDateEncoded: string;
   prevBalance: number;
   otherDeductions: OtherDeduction[];
   // Source-of-truth from Production Clerk (for verification)
   productionSource: ProductionSource;
+  productionSourceDetails: ProductionSourceDetail[];
+  productionReconciliationStatus: "matched" | "mismatch";
+  productionReconciliationMessage: string;
+  financialReconciliation: FinancialReconciliation;
   returnReason?: { category: string; reason: string; remarks?: string; returnedBy: string; dateReturned: string };
 }
 
@@ -83,23 +111,25 @@ interface ValidationActivity {
 
 const SEED: FoSlip[] = [];
 
-function currentUserId(user: User) {
-  const id = Number(user.id);
-  return Number.isFinite(id) ? id : undefined;
-}
-
-function financeStatus(row: any): FoStatus {
+function financeStatus(row: any): FoStatus | null {
   if (row.approval_status === "Approved") return "Approved";
   if (row.approval_status === "Pending Manager Approval") return "Pending Manager Approval";
   if (row.validation_status === "Validated") return "Pending Manager Approval";
   if (row.validation_status === "Returned for Correction") return "Returned for Correction";
-  return "Submitted to Finance";
+  if (row.validation_status === "Submitted for Validation") return "Submitted to Finance";
+  return null;
 }
 
-function mapPayrollSlip(row: any): FoSlip {
+function mapPayrollSlip(row: any): FoSlip | null {
+  const status = financeStatus(row);
+  if (!status) return null;
+
   const classA = Number(row.class_a_boxes ?? 0);
   const classB = Number(row.class_b_boxes ?? 0);
   const special = Number(row.special_boxes ?? row.special_product_boxes ?? 0);
+  const sourceReconciliation = row.production_reconciliation ?? {};
+  const sourceQuantities = sourceReconciliation.source_quantities ?? {};
+  const financial = sourceReconciliation.financial ?? {};
   const creditDeduction = Number(row.credit_deduction ?? row.material_deduction ?? 0);
   const previousBalance = Number(row.previous_balance ?? 0);
   const laborAmount = Number(row.labor_cost ?? 0);
@@ -114,28 +144,33 @@ function mapPayrollSlip(row: any): FoSlip {
   return {
     dbId: Number(row.id) || undefined,
     slipNo: String(row.slip_no ?? row.id),
-    productionRecordId: String(row.production_record_id ?? row.production_box_record_id ?? "N/A"),
+    productionRecordId: Array.isArray(row.production_sources) && row.production_sources.length > 0
+      ? row.production_sources.map((source: any) => `${source.source_table} #${source.id}`).join(", ")
+      : String(row.production_record_id ?? row.production_box_record_id ?? "N/A"),
     beneficiaryId: String(row.beneficiary_id ?? ""),
     beneficiaryName: row.beneficiary_name ?? "",
     payrollPeriod: row.payroll_period ?? "",
     harvestDate: String(row.harvest_date ?? "").slice(0, 10),
     preparedBy: row.prepared_by_name ?? String(row.prepared_by ?? ""),
     dateSubmitted: formatDatabaseDateTime(row.submitted_at ?? row.created_at),
-    status: financeStatus(row),
+    status,
     classA,
     classB,
     special,
-    classAPrice: Number(row.class_a_price ?? PRICES.A),
-    classBPrice: Number(row.class_b_price ?? PRICES.B),
-    specialPrice: Number(row.special_price ?? PRICES.special),
-    materialCredits: creditDeduction > 0 ? [{
-      date: String(row.harvest_date ?? "").slice(0, 10),
-      material: "Material credit deduction",
-      qty: 1,
-      unit: "lot",
-      unitPrice: creditDeduction,
-      status: "Unpaid",
-    }] : [],
+    classAPrice: Number(row.class_a_price ?? 0),
+    classBPrice: Number(row.class_b_price ?? 0),
+    specialPrice: Number(row.special_price ?? 0),
+    materialCredits: (Array.isArray(financial.credit_transactions) ? financial.credit_transactions : []).map((credit: any) => ({
+      id: Number(credit.id),
+      date: String(credit.credit_date ?? "").slice(0, 10),
+      material: String(credit.material_name ?? "Material credit"),
+      qty: Number(credit.quantity ?? 0),
+      unit: String(credit.unit ?? ""),
+      unitPrice: Number(credit.unit_cost ?? 0),
+      remainingBalance: Number(credit.remaining_balance ?? 0),
+      status: String(credit.status ?? "Pending"),
+    })),
+    creditDeduction,
     laborDescription: laborAmount > 0 ? "Payroll labor cost" : "No labor cost recorded",
     laborAmount,
     laborRemarks: "",
@@ -147,7 +182,34 @@ function mapPayrollSlip(row: any): FoSlip {
       : otherDeductionAmount > 0
         ? [{ type: "Other Approved Deductions", amount: otherDeductionAmount }]
         : [],
-    productionSource: { classA, classB, special },
+    productionSource: {
+      classA: Number(sourceQuantities.class_a_boxes ?? 0),
+      classB: Number(sourceQuantities.class_b_boxes ?? 0),
+      special: Number(sourceQuantities.special_boxes ?? 0),
+    },
+    productionSourceDetails: (Array.isArray(sourceReconciliation.source_records) ? sourceReconciliation.source_records : []).map((source: any) => ({
+      sourceTable: String(source.source_table ?? ""),
+      id: Number(source.id),
+      recordNo: String(source.record_no ?? source.id),
+      beneficiaryId: Number(source.beneficiary_id ?? 0),
+      productionDate: String(source.production_date ?? "N/A"),
+      classA: Number(source.class_a_boxes ?? 0),
+      classB: Number(source.class_b_boxes ?? 0),
+      special: Number(source.special_boxes ?? 0),
+      matched: Boolean(source.matched),
+      errors: Array.isArray(source.errors) ? source.errors.map(String) : [],
+    })),
+    productionReconciliationStatus: sourceReconciliation.status === "matched" ? "matched" : "mismatch",
+    productionReconciliationMessage: String(sourceReconciliation.message ?? "Independent production source details are unavailable."),
+    financialReconciliation: {
+      status: financial.status === "matched" ? "matched" : "mismatch",
+      message: String(financial.message ?? "Independent financial reconciliation is unavailable."),
+      calculatedGrossAmount: Number(financial.calculated_gross_amount ?? 0),
+      outstandingCreditBalance: Number(financial.outstanding_credit_balance ?? 0),
+      calculatedTotalDeductions: Number(financial.calculated_total_deductions ?? 0),
+      calculatedNetAmount: Number(financial.calculated_net_amount ?? 0),
+      errors: Array.isArray(financial.errors) ? financial.errors.map(String) : [],
+    },
     returnReason: row.return_reason ? {
       category: row.return_category ?? "Correction",
       reason: row.return_reason,
@@ -156,6 +218,10 @@ function mapPayrollSlip(row: any): FoSlip {
       dateReturned: formatDatabaseDateTime(row.returned_at ?? row.validated_at ?? row.updated_at),
     } : undefined,
   };
+}
+
+function mapFinancePayrollSlips(rows: any[]): FoSlip[] {
+  return rows.map(mapPayrollSlip).filter((slip): slip is FoSlip => slip !== null);
 }
 
 function mapValidationActivity(row: any): ValidationActivity | null {
@@ -181,7 +247,7 @@ function compute(s: FoSlip) {
   const subB = s.classB * priceB;
   const subSpecial = s.special * priceSpecial;
   const gross = subA + subB + subSpecial;
-  const matTotal = s.materialCredits.reduce((sum, d) => sum + d.qty * d.unitPrice, 0);
+  const matTotal = s.creditDeduction;
   const otherTotal = s.otherDeductions.reduce((sum, d) => sum + d.amount, 0);
   const totalDed = matTotal + s.laborAmount + s.prevBalance + otherTotal;
   const net = gross - totalDed;
@@ -243,13 +309,13 @@ type ManualAssessmentValue = "Matched" | "Not Matched";
 export function FinanceOfficerDashboard({ user, onLogout }: Props) {
   const { data } = useAppData();
   const [active, setActive] = usePersistentState("darbco.financeOfficer.active", "dashboard");
-  const [slips, setSlips] = useState<FoSlip[]>((data?.payrollSlips ?? []).map(mapPayrollSlip));
+  const [slips, setSlips] = useState<FoSlip[]>(mapFinancePayrollSlips(data?.payrollSlips ?? []));
   const [reviewSlip, setReviewSlip] = useState<FoSlip | null>(null);
   const [reviewReadOnly, setReviewReadOnly] = useState(false);
   const [validationActivities, setValidationActivities] = useState<ValidationActivity[]>((data?.auditLogs ?? []).map(mapValidationActivity).filter(Boolean) as ValidationActivity[]);
 
   useEffect(() => {
-    setSlips((data?.payrollSlips ?? []).map(mapPayrollSlip));
+    setSlips(mapFinancePayrollSlips(data?.payrollSlips ?? []));
     setValidationActivities((data?.auditLogs ?? []).map(mapValidationActivity).filter(Boolean) as ValidationActivity[]);
   }, [data?.payrollSlips, data?.auditLogs]);
 
@@ -262,16 +328,16 @@ export function FinanceOfficerDashboard({ user, onLogout }: Props) {
     setReviewReadOnly(false);
   };
 
-  const validate = async (slipNo: string) => {
+  const validate = async (slipNo: string, manualAssessments: Array<{ key: string; result: ManualAssessmentValue }>) => {
     const slip = slips.find((item) => item.slipNo === slipNo);
     if (!slip) return;
     try {
       const saved = await validatePayrollSlip(slip.dbId ?? slip.slipNo, {
-        user_id: currentUserId(user),
-        user_name: user.name,
+        manual_assessments: manualAssessments,
         remarks: "Payroll validated and forwarded to Manager approval.",
       });
       const mapped = mapPayrollSlip(saved);
+      if (!mapped) throw new Error("The payroll slip was saved with an unsupported validation status.");
       setSlips((cur) => cur.map((s) => s.slipNo === slipNo ? mapped : s));
       setValidationActivities((current) => [
         {
@@ -293,17 +359,22 @@ export function FinanceOfficerDashboard({ user, onLogout }: Props) {
     }
   };
 
-  const returnSlip = async (slipNo: string, payload: { category: string; reason: string; remarks?: string }) => {
+  const returnSlip = async (slipNo: string, payload: {
+    category: string;
+    reason: string;
+    remarks?: string;
+    manual_assessments: Array<{ key: string; result: ManualAssessmentValue }>;
+  }) => {
     const slip = slips.find((item) => item.slipNo === slipNo);
     if (!slip) return;
     try {
       const saved = await returnPayrollSlipForCorrection(slip.dbId ?? slip.slipNo, {
         ...payload,
-        user_id: currentUserId(user),
-        user_name: user.name,
       });
+      const mappedSlip = mapPayrollSlip(saved);
+      if (!mappedSlip) throw new Error("The payroll slip was saved with an unsupported validation status.");
       const mapped = {
-        ...mapPayrollSlip(saved),
+        ...mappedSlip,
         returnReason: { ...payload, returnedBy: user.name, dateReturned: currentSystemDateTime() },
       };
       setSlips((cur) => cur.map((s) => s.slipNo === slipNo ? mapped : s));
@@ -438,9 +509,8 @@ function Dashboard({ slips, activities, goTo, onReview }: { slips: FoSlip[]; act
       </div>
 
       <Card>
-        <CardHeader className="flex-row items-center justify-between pb-2">
+        <CardHeader className="pb-2">
           <CardTitle className="text-base flex items-center gap-2"><ClipboardList className="h-4 w-4 text-emerald-700" />Payroll Slips for Validation</CardTitle>
-          <Button variant="link" className="text-emerald-700" onClick={() => goTo("pending")}>Open Pending Validation →</Button>
         </CardHeader>
         <CardContent>
           <SlipTable slips={pending} onReview={onReview} />
@@ -592,8 +662,13 @@ function ValidationDetailsDialog({ slip, readOnly = false, onClose, onValidate, 
   slip: FoSlip | null;
   readOnly?: boolean;
   onClose: () => void;
-  onValidate: (slipNo: string) => void | Promise<void>;
-  onReturn: (slipNo: string, payload: { category: string; reason: string; remarks?: string }) => void | Promise<void>;
+  onValidate: (slipNo: string, manualAssessments: Array<{ key: string; result: ManualAssessmentValue }>) => void | Promise<void>;
+  onReturn: (slipNo: string, payload: {
+    category: string;
+    reason: string;
+    remarks?: string;
+    manual_assessments: Array<{ key: string; result: ManualAssessmentValue }>;
+  }) => void | Promise<void>;
 }) {
   const [showReturn, setShowReturn] = useState(false);
   const [retCategory, setRetCategory] = useState("");
@@ -623,6 +698,8 @@ function ValidationDetailsDialog({ slip, readOnly = false, onClose, onValidate, 
 
   if (!slip || !c) return null;
   const financeCanAct = !readOnly && canFinanceAct(slip.status);
+  const independentChecksMatched = slip.productionReconciliationStatus === "matched"
+    && slip.financialReconciliation.status === "matched";
 
   const closeAndReset = () => {
     if (returning || validating) return;
@@ -642,13 +719,17 @@ function ValidationDetailsDialog({ slip, readOnly = false, onClose, onValidate, 
     }
     setValidating(true);
     try {
-      await onValidate(slip.slipNo);
+      await onValidate(slip.slipNo, MANUAL_ASSESSMENT_ITEMS.map((item) => ({ key: item.id, result: "Matched" })));
     } finally {
       setValidating(false);
     }
   };
 
   const submitReturn = async () => {
+    if (hasIncompleteAssessment) {
+      toast.error("Complete every manual assessment item before returning payroll.");
+      return;
+    }
     if (!hasMismatchAssessment) {
       toast.error("Mark at least one manual assessment item as Not Matched before returning payroll.");
       return;
@@ -657,7 +738,11 @@ function ValidationDetailsDialog({ slip, readOnly = false, onClose, onValidate, 
     if (!retReason.trim()) { toast.error("Reason for return is required"); return; }
     setReturning(true);
     try {
-      await onReturn(slip.slipNo, { category: retCategory, reason: retReason, remarks: retRemarks });
+      const manualAssessments = MANUAL_ASSESSMENT_ITEMS.map((item) => ({
+        key: item.id,
+        result: assessments[item.id] as ManualAssessmentValue,
+      }));
+      await onReturn(slip.slipNo, { category: retCategory, reason: retReason, remarks: retRemarks, manual_assessments: manualAssessments });
       setShowReturn(false); setRetCategory(""); setRetReason(""); setRetRemarks("");
     } finally {
       setReturning(false);
@@ -706,6 +791,10 @@ function ValidationDetailsDialog({ slip, readOnly = false, onClose, onValidate, 
 
           {/* Section B */}
           <SectionCard title="Section B — Production Records Verification" tone="amber">
+            <div className={`rounded-md border p-3 text-sm ${slip.productionReconciliationStatus === "matched" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-red-200 bg-red-50 text-red-800"}`}>
+              <div className="font-semibold">Independent source reconciliation: {slip.productionReconciliationStatus === "matched" ? "Matched" : "Mismatch"}</div>
+              <div>{slip.productionReconciliationMessage}</div>
+            </div>
             <Table>
               <TableHeader>
                 <TableRow>
@@ -731,6 +820,22 @@ function ValidationDetailsDialog({ slip, readOnly = false, onClose, onValidate, 
                 })}
               </TableBody>
             </Table>
+            {slip.productionSourceDetails.length > 0 && (
+              <div className="space-y-2">
+                <div className="text-sm font-semibold">Linked Production Clerk Source Records</div>
+                {slip.productionSourceDetails.map((source) => (
+                  <div key={`${source.sourceTable}-${source.id}`} className="rounded-md border p-3 text-xs">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="font-medium">{source.sourceTable} #{source.id}{source.recordNo ? ` (${source.recordNo})` : ""}</span>
+                      <span>Beneficiary ID {source.beneficiaryId} · Production date {source.productionDate || "N/A"}</span>
+                      <Badge className={source.matched ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"}>{source.matched ? "Matched" : "Mismatch"}</Badge>
+                    </div>
+                    <div className="mt-1 text-muted-foreground">Class A: {source.classA} · Class B: {source.classB} · Special Product: {source.special}</div>
+                    {source.errors.length > 0 && <div className="mt-1 text-red-700">{source.errors.join("; ")}</div>}
+                  </div>
+                ))}
+              </div>
+            )}
             <div className="text-xs text-muted-foreground">Production figures are read-only. If a mismatch exists, return the slip for correction.</div>
           </SectionCard>
 
@@ -828,10 +933,19 @@ function ValidationDetailsDialog({ slip, readOnly = false, onClose, onValidate, 
 
           {/* Section G */}
           <SectionCard title="Section G — Payroll Summary" tone="emerald">
+            <div className={`mb-3 rounded-md border p-3 text-sm ${slip.financialReconciliation.status === "matched" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-red-200 bg-red-50 text-red-800"}`}>
+              <div className="font-semibold">Independent financial reconciliation: {slip.financialReconciliation.status === "matched" ? "Matched" : "Mismatch"}</div>
+              <div>{slip.financialReconciliation.message}</div>
+              {slip.financialReconciliation.errors.length > 0 && (
+                <ul className="mt-1 list-disc pl-5">{slip.financialReconciliation.errors.map((error, index) => <li key={index}>{error}</li>)}</ul>
+              )}
+            </div>
             <Table>
               <TableBody>
                 <TableRow><TableCell>Gross Income</TableCell><TableCell className="text-right">₱{c.gross.toLocaleString()}</TableCell></TableRow>
+                <TableRow><TableCell>Independently Recalculated Gross</TableCell><TableCell className="text-right">₱{slip.financialReconciliation.calculatedGrossAmount.toLocaleString()}</TableCell></TableRow>
                 <TableRow><TableCell>Material Credit Deductions</TableCell><TableCell className="text-right text-red-600">−₱{c.matTotal.toLocaleString()}</TableCell></TableRow>
+                <TableRow><TableCell>Current Outstanding Credit Balance</TableCell><TableCell className="text-right">₱{slip.financialReconciliation.outstandingCreditBalance.toLocaleString()}</TableCell></TableRow>
                 <TableRow><TableCell>Labor Cost</TableCell><TableCell className="text-right text-red-600">−₱{slip.laborAmount.toLocaleString()}</TableCell></TableRow>
                 <TableRow><TableCell>Previous Unpaid Balance</TableCell><TableCell className="text-right text-red-600">−₱{slip.prevBalance.toLocaleString()}</TableCell></TableRow>
                 <TableRow><TableCell>Other Authorized Deductions</TableCell><TableCell className="text-right text-red-600">−₱{c.otherTotal.toLocaleString()}</TableCell></TableRow>
@@ -842,7 +956,9 @@ function ValidationDetailsDialog({ slip, readOnly = false, onClose, onValidate, 
                   </TableRow>
                 ))}
                 <TableRow className="border-t-2"><TableCell><strong>Total Deductions</strong></TableCell><TableCell className="text-right"><strong className="text-red-600">−₱{c.totalDed.toLocaleString()}</strong></TableCell></TableRow>
+                <TableRow><TableCell>Independently Recalculated Deductions</TableCell><TableCell className="text-right">−₱{slip.financialReconciliation.calculatedTotalDeductions.toLocaleString()}</TableCell></TableRow>
                 <TableRow className="bg-emerald-50"><TableCell><strong>Net Income</strong></TableCell><TableCell className="text-right"><strong className="text-emerald-800">₱{c.net.toLocaleString()}</strong></TableCell></TableRow>
+                <TableRow><TableCell>Independently Recalculated Net Income</TableCell><TableCell className="text-right">₱{slip.financialReconciliation.calculatedNetAmount.toLocaleString()}</TableCell></TableRow>
               </TableBody>
             </Table>
           </SectionCard>
@@ -903,17 +1019,20 @@ function ValidationDetailsDialog({ slip, readOnly = false, onClose, onValidate, 
             <div className="flex flex-wrap justify-end gap-2 pt-2 border-t">
               <Button variant="outline" onClick={() => toast.success("Slip sent to printer")}><Printer className="h-4 w-4 mr-1" />Print</Button>
               <Button variant="outline" className="border-red-300 text-red-700 hover:bg-red-50"
-                disabled={!financeCanAct || !hasMismatchAssessment || returning || validating}
+                disabled={!financeCanAct || hasIncompleteAssessment || !hasMismatchAssessment || returning || validating}
                 onClick={() => setShowReturn(true)}>
                 {returning ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Undo2 className="h-4 w-4 mr-1" />}Return for Correction
               </Button>
               <Button className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50"
-                disabled={!allManuallyMatched || !financeCanAct || validating || returning}
+                disabled={!allManuallyMatched || !independentChecksMatched || !financeCanAct || validating || returning}
                 onClick={submitValidation}>
                 {validating ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <CheckCircle2 className="h-4 w-4 mr-1" />}Validate Payroll
               </Button>
               <Button variant="outline" disabled={returning || validating} onClick={closeAndReset}>Cancel</Button>
             </div>
+          )}
+          {!readOnly && financeCanAct && !independentChecksMatched && (
+            <div className="text-sm text-red-700">Independent production and financial checks must match before this payroll can be validated. Return it for correction if source data is incomplete or inconsistent.</div>
           )}
         </div>
 

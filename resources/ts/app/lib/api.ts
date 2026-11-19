@@ -7,6 +7,7 @@ export interface AppData {
   dailyBoxes: any[];
   inventoryItems: any[];
   stockTransactions: any[];
+  salesReceipts: any[];
   borrowedMaterials: any[];
   creditTransactions: any[];
   restockRequests: any[];
@@ -15,6 +16,12 @@ export interface AppData {
   users: any[];
   harvesters: any[];
   rolePermissions: any[];
+}
+
+export interface PayrollSlipStatistics {
+  pending: number;
+  for_validation: number;
+  approved: number;
 }
 
 export interface MaintenanceTable {
@@ -29,6 +36,7 @@ export interface MaintenanceTable {
 
 export interface HarvestRecordInput {
   harvest_date: string;
+  beneficiary_id: number;
   beneficiary_name: string;
   harvester_name: string;
   buligs_11_weeks: number;
@@ -42,6 +50,7 @@ export interface HarvestRecordInput {
 
 export interface ProductionBoxRecordInput {
   production_date: string;
+  beneficiary_id: number;
   beneficiary_name: string;
   class_a_big_hands: number;
   class_a_small_hands: number;
@@ -50,14 +59,6 @@ export interface ProductionBoxRecordInput {
   class_b_small_hands: number;
   class_b_cps: number;
   special_product: number;
-  defects_11_weeks: number;
-  defects_12_weeks: number;
-  defects_13_weeks: number;
-  defects_14_weeks: number;
-  rejects_11_weeks: number;
-  rejects_12_weeks: number;
-  rejects_13_weeks: number;
-  rejects_14_weeks: number;
   user_id?: number;
   user_name?: string;
   edit_reason?: string;
@@ -109,10 +110,53 @@ const jsonHeaders = {
   "Content-Type": "application/json",
 };
 
+function csrfHeaders() {
+  const token = document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]')?.content;
+
+  if (!token) {
+    throw new Error("Your security token is missing. Refresh the page and try again.");
+  }
+
+  return { ...jsonHeaders, "X-CSRF-TOKEN": token };
+}
+
+async function apiFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
+  const method = (init.method ?? "GET").toUpperCase();
+  const headers = new Headers(init.headers);
+
+  if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
+    const token = document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]')?.content;
+    if (!token) {
+      throw new Error("Your security token is missing. Refresh the page and try again.");
+    }
+    headers.set("X-CSRF-TOKEN", token);
+  }
+
+  const response = await fetch(input, {
+    ...init,
+    credentials: "same-origin",
+    headers,
+  });
+
+  const requestUrl = input instanceof Request ? input.url : input.toString();
+  if (response.status === 401 && !requestUrl.includes("/api/session") && typeof window !== "undefined") {
+    window.dispatchEvent(new Event("darbco:session-expired"));
+  }
+
+  return response;
+}
+
+function updateCsrfToken(token?: string) {
+  if (token) {
+    document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]')?.setAttribute("content", token);
+  }
+}
+
 export async function login(email: string, password: string): Promise<User> {
-  const response = await fetch("/api/login", {
+  const response = await apiFetch("/api/login", {
     method: "POST",
-    headers: jsonHeaders,
+    credentials: "same-origin",
+    headers: csrfHeaders(),
     body: JSON.stringify({ email, password }),
   });
 
@@ -123,11 +167,44 @@ export async function login(email: string, password: string): Promise<User> {
     throw new Error(message);
   }
 
+  return fetchCurrentSession();
+}
+
+export async function fetchCurrentSession(): Promise<User> {
+  const response = await apiFetch("/api/session", {
+    headers: { "Accept": "application/json" },
+    credentials: "same-origin",
+    cache: "no-store",
+  });
+
+  const payload = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(payload?.message || "Your session has expired. Please sign in again.");
+  }
+
+  updateCsrfToken(payload?.csrf_token);
   return payload.user;
 }
 
+export async function logout(): Promise<void> {
+  const response = await apiFetch("/api/logout", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: csrfHeaders(),
+    body: JSON.stringify({}),
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload?.message || "Unable to end the current session.");
+  }
+
+  updateCsrfToken(payload?.csrf_token);
+}
+
 export async function verifyAdminPassword(userId: string | number, email: string, password: string): Promise<void> {
-  const response = await fetch("/api/admin/verify-password", {
+  const response = await apiFetch("/api/admin/verify-password", {
     method: "POST",
     headers: jsonHeaders,
     body: JSON.stringify({ user_id: Number(userId), email, password }),
@@ -146,7 +223,7 @@ export async function fetchAppData(role?: string): Promise<AppData> {
   if (role) query.set("role", role);
   query.set("_", String(Date.now()));
   const url = `/api/app-data?${query.toString()}`;
-  const response = await fetch(url, {
+  const response = await apiFetch(url, {
     headers: { "Accept": "application/json" },
     cache: "no-store",
   });
@@ -158,8 +235,21 @@ export async function fetchAppData(role?: string): Promise<AppData> {
   return response.json();
 }
 
+export async function fetchPayrollSlipStatistics(): Promise<PayrollSlipStatistics> {
+  const response = await apiFetch(`/api/payroll-slips/statistics?_=${Date.now()}`, {
+    headers: { "Accept": "application/json" },
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    throw new Error("Unable to load payroll statistics.");
+  }
+
+  return response.json();
+}
+
 export async function fetchMaintenanceTables(): Promise<{ tables: MaintenanceTable[]; protected_users: number[] }> {
-  const response = await fetch(`/api/database-maintenance/tables?_=${Date.now()}`, {
+  const response = await apiFetch(`/api/database-maintenance/tables?_=${Date.now()}`, {
     headers: { "Accept": "application/json" },
     cache: "no-store",
   });
@@ -174,7 +264,7 @@ export async function deleteMaintenanceTable(
   table: string,
   payload: { confirmation: string; user_id?: number; user_name?: string },
 ): Promise<{ table: string; deleted: number; remaining: number }> {
-  const response = await fetch(`/api/database-maintenance/tables/${encodeURIComponent(table)}`, {
+  const response = await apiFetch(`/api/database-maintenance/tables/${encodeURIComponent(table)}`, {
     method: "DELETE",
     headers: jsonHeaders,
     body: JSON.stringify(payload),
@@ -189,7 +279,7 @@ export async function deleteMaintenanceTable(
 export async function deleteAllMaintenanceTables(
   payload: { confirmation: string; user_id?: number; user_name?: string },
 ): Promise<{ deleted: number; tables: MaintenanceTable[] }> {
-  const response = await fetch("/api/database-maintenance/tables", {
+  const response = await apiFetch("/api/database-maintenance/tables", {
     method: "DELETE",
     headers: jsonHeaders,
     body: JSON.stringify(payload),
@@ -202,7 +292,7 @@ export async function deleteAllMaintenanceTables(
 }
 
 export async function fetchHarvestRecords(): Promise<any[]> {
-  const response = await fetch("/api/harvest-records", {
+  const response = await apiFetch("/api/harvest-records", {
     headers: { "Accept": "application/json" },
   });
 
@@ -214,7 +304,7 @@ export async function fetchHarvestRecords(): Promise<any[]> {
 }
 
 export async function createHarvestRecord(record: HarvestRecordInput): Promise<any> {
-  const response = await fetch("/api/harvest-records", {
+  const response = await apiFetch("/api/harvest-records", {
     method: "POST",
     headers: jsonHeaders,
     body: JSON.stringify(record),
@@ -230,7 +320,7 @@ export async function createHarvestRecord(record: HarvestRecordInput): Promise<a
 }
 
 export async function updateHarvestRecord(id: number, record: HarvestRecordInput): Promise<any> {
-  const response = await fetch(`/api/harvest-records/${id}`, {
+  const response = await apiFetch(`/api/harvest-records/${id}`, {
     method: "PUT",
     headers: jsonHeaders,
     body: JSON.stringify(record),
@@ -246,7 +336,7 @@ export async function updateHarvestRecord(id: number, record: HarvestRecordInput
 }
 
 export async function deleteHarvestRecord(id: number, user: { user_id?: number; user_name?: string }): Promise<void> {
-  const response = await fetch(`/api/harvest-records/${id}`, {
+  const response = await apiFetch(`/api/harvest-records/${id}`, {
     method: "DELETE",
     headers: jsonHeaders,
     body: JSON.stringify(user),
@@ -259,7 +349,7 @@ export async function deleteHarvestRecord(id: number, user: { user_id?: number; 
 }
 
 export async function fetchProductionBoxRecords(): Promise<any[]> {
-  const response = await fetch("/api/production-box-records", {
+  const response = await apiFetch("/api/production-box-records", {
     headers: { "Accept": "application/json" },
   });
 
@@ -271,7 +361,7 @@ export async function fetchProductionBoxRecords(): Promise<any[]> {
 }
 
 export async function createProductionBoxRecord(record: ProductionBoxRecordInput): Promise<any> {
-  const response = await fetch("/api/production-box-records", {
+  const response = await apiFetch("/api/production-box-records", {
     method: "POST",
     headers: jsonHeaders,
     body: JSON.stringify(record),
@@ -287,7 +377,7 @@ export async function createProductionBoxRecord(record: ProductionBoxRecordInput
 }
 
 export async function updateProductionBoxRecord(id: number, record: ProductionBoxRecordInput): Promise<any> {
-  const response = await fetch(`/api/production-box-records/${id}`, {
+  const response = await apiFetch(`/api/production-box-records/${id}`, {
     method: "PUT",
     headers: jsonHeaders,
     body: JSON.stringify(record),
@@ -303,7 +393,7 @@ export async function updateProductionBoxRecord(id: number, record: ProductionBo
 }
 
 export async function deleteProductionBoxRecord(id: number, user: { user_id?: number; user_name?: string }): Promise<void> {
-  const response = await fetch(`/api/production-box-records/${id}`, {
+  const response = await apiFetch(`/api/production-box-records/${id}`, {
     method: "DELETE",
     headers: jsonHeaders,
     body: JSON.stringify(user),
@@ -316,7 +406,7 @@ export async function deleteProductionBoxRecord(id: number, user: { user_id?: nu
 }
 
 export async function createUserAccount(account: UserAccountInput): Promise<any> {
-  const response = await fetch("/api/users", {
+  const response = await apiFetch("/api/users", {
     method: "POST",
     headers: jsonHeaders,
     body: JSON.stringify(account),
@@ -332,7 +422,7 @@ export async function createUserAccount(account: UserAccountInput): Promise<any>
 }
 
 export async function updateUserAccount(id: string | number, account: UserAccountInput): Promise<any> {
-  const response = await fetch(`/api/users/${id}`, {
+  const response = await apiFetch(`/api/users/${id}`, {
     method: "PUT",
     headers: jsonHeaders,
     body: JSON.stringify(account),
@@ -351,7 +441,7 @@ export async function updateUserAccountStatus(
   id: string | number,
   payload: { active: boolean; admin_id?: number; admin_name?: string; remarks?: string },
 ): Promise<any> {
-  const response = await fetch(`/api/users/${id}/status`, {
+  const response = await apiFetch(`/api/users/${id}/status`, {
     method: "PUT",
     headers: jsonHeaders,
     body: JSON.stringify(payload),
@@ -367,7 +457,7 @@ export async function updateUserAccountStatus(
 }
 
 export async function createBeneficiary(beneficiary: BeneficiaryInput): Promise<any> {
-  const response = await fetch("/api/beneficiaries", {
+  const response = await apiFetch("/api/beneficiaries", {
     method: "POST",
     headers: jsonHeaders,
     body: JSON.stringify(beneficiary),
@@ -383,7 +473,7 @@ export async function createBeneficiary(beneficiary: BeneficiaryInput): Promise<
 }
 
 export async function updateBeneficiary(id: string | number, beneficiary: BeneficiaryInput): Promise<any> {
-  const response = await fetch(`/api/beneficiaries/${id}`, {
+  const response = await apiFetch(`/api/beneficiaries/${id}`, {
     method: "PUT",
     headers: jsonHeaders,
     body: JSON.stringify(beneficiary),
@@ -402,7 +492,7 @@ export async function updateBeneficiaryStatus(
   id: string | number,
   payload: { active: boolean; admin_id?: number; admin_name?: string; remarks?: string },
 ): Promise<any> {
-  const response = await fetch(`/api/beneficiaries/${id}/status`, {
+  const response = await apiFetch(`/api/beneficiaries/${id}/status`, {
     method: "PUT",
     headers: jsonHeaders,
     body: JSON.stringify(payload),
@@ -418,7 +508,7 @@ export async function updateBeneficiaryStatus(
 }
 
 export async function createInventoryItem(item: InventoryItemInput): Promise<any> {
-  const response = await fetch("/api/inventory-items", {
+  const response = await apiFetch("/api/inventory-items", {
     method: "POST",
     headers: jsonHeaders,
     body: JSON.stringify(item),
@@ -434,7 +524,7 @@ export async function createInventoryItem(item: InventoryItemInput): Promise<any
 }
 
 export async function updateInventoryItem(id: string | number, item: InventoryItemInput): Promise<any> {
-  const response = await fetch(`/api/inventory-items/${id}`, {
+  const response = await apiFetch(`/api/inventory-items/${id}`, {
     method: "PUT",
     headers: jsonHeaders,
     body: JSON.stringify(item),
@@ -453,7 +543,7 @@ export async function updateInventoryItemStatus(
   id: string | number,
   payload: { active: boolean; user_id?: number; user_name?: string; remarks?: string },
 ): Promise<any> {
-  const response = await fetch(`/api/inventory-items/${id}/status`, {
+  const response = await apiFetch(`/api/inventory-items/${id}/status`, {
     method: "PUT",
     headers: jsonHeaders,
     body: JSON.stringify(payload),
@@ -483,7 +573,7 @@ export async function stockInInventoryItem(
     user_name?: string;
   },
 ): Promise<any> {
-  const response = await fetch(`/api/inventory-items/${id}/stock-in`, {
+  const response = await apiFetch(`/api/inventory-items/${id}/stock-in`, {
     method: "POST",
     headers: jsonHeaders,
     body: JSON.stringify(payload),
@@ -517,7 +607,7 @@ export async function releaseInventoryItem(
     user_name?: string;
   },
 ): Promise<any> {
-  const response = await fetch(`/api/inventory-items/${id}/release`, {
+  const response = await apiFetch(`/api/inventory-items/${id}/release`, {
     method: "POST",
     headers: jsonHeaders,
     body: JSON.stringify(payload),
@@ -532,6 +622,31 @@ export async function releaseInventoryItem(
   return data;
 }
 
+export async function createSalesCheckout(payload: {
+  items: { inventory_item_id: number; quantity: number }[];
+  customer_type: "registered" | "walk-in";
+  customer_name?: string;
+  beneficiary_id?: number;
+  payment_method: "Cash" | "Beneficiary Credit";
+  user_id?: number;
+  user_name?: string;
+}): Promise<any> {
+  const response = await apiFetch("/api/sales/checkouts", {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify(payload),
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const validationMessage = data?.errors && Object.values(data.errors).flat()[0];
+    throw new Error(data?.message || validationMessage || "Unable to save sales checkout.");
+  }
+
+  return data.receipt;
+}
+
 export async function adjustInventoryItem(
   id: string | number,
   payload: {
@@ -543,7 +658,7 @@ export async function adjustInventoryItem(
     user_name?: string;
   },
 ): Promise<any> {
-  const response = await fetch(`/api/inventory-items/${id}/adjust`, {
+  const response = await apiFetch(`/api/inventory-items/${id}/adjust`, {
     method: "POST",
     headers: jsonHeaders,
     body: JSON.stringify(payload),
@@ -567,7 +682,7 @@ export async function returnBorrowedMaterial(
     user_name?: string;
   },
 ): Promise<any> {
-  const response = await fetch(`/api/borrowed-materials/${id}/return`, {
+  const response = await apiFetch(`/api/borrowed-materials/${id}/return`, {
     method: "POST",
     headers: jsonHeaders,
     body: JSON.stringify(payload),
@@ -592,7 +707,7 @@ export async function deductCreditTransaction(
     user_name?: string;
   },
 ): Promise<any> {
-  const response = await fetch(`/api/credit-transactions/${id}/deduct`, {
+  const response = await apiFetch(`/api/credit-transactions/${id}/deduct`, {
     method: "POST",
     headers: jsonHeaders,
     body: JSON.stringify(payload),
@@ -639,7 +754,7 @@ export interface PayrollSlipInput {
 }
 
 export async function createPayrollSlip(payload: PayrollSlipInput): Promise<any> {
-  const response = await fetch("/api/payroll-slips", {
+  const response = await apiFetch("/api/payroll-slips", {
     method: "POST",
     headers: jsonHeaders,
     body: JSON.stringify(payload),
@@ -650,7 +765,7 @@ export async function createPayrollSlip(payload: PayrollSlipInput): Promise<any>
 }
 
 export async function updatePayrollSlip(id: string | number, payload: PayrollSlipInput): Promise<any> {
-  const response = await fetch(`/api/payroll-slips/${id}`, {
+  const response = await apiFetch(`/api/payroll-slips/${id}`, {
     method: "PUT",
     headers: jsonHeaders,
     body: JSON.stringify(payload),
@@ -661,7 +776,7 @@ export async function updatePayrollSlip(id: string | number, payload: PayrollSli
 }
 
 export async function submitPayrollSlip(id: string | number, payload: { user_id?: number; user_name?: string }): Promise<any> {
-  const response = await fetch(`/api/payroll-slips/${id}/submit`, {
+  const response = await apiFetch(`/api/payroll-slips/${id}/submit`, {
     method: "PUT",
     headers: jsonHeaders,
     body: JSON.stringify(payload),
@@ -672,7 +787,7 @@ export async function submitPayrollSlip(id: string | number, payload: { user_id?
 }
 
 export async function deletePayrollSlip(id: string | number, payload: { user_id?: number; user_name?: string }): Promise<any> {
-  const response = await fetch(`/api/payroll-slips/${id}`, {
+  const response = await apiFetch(`/api/payroll-slips/${id}`, {
     method: "DELETE",
     headers: jsonHeaders,
     body: JSON.stringify(payload),
@@ -682,8 +797,11 @@ export async function deletePayrollSlip(id: string | number, payload: { user_id?
   return data;
 }
 
-export async function validatePayrollSlip(id: string | number, payload: { user_id?: number; user_name?: string; remarks?: string }): Promise<any> {
-  const response = await fetch(`/api/payroll-slips/${id}/validate`, {
+export async function validatePayrollSlip(
+  id: string | number,
+  payload: { manual_assessments: Array<{ key: string; result: "Matched" | "Not Matched" }>; remarks?: string },
+): Promise<any> {
+  const response = await apiFetch(`/api/payroll-slips/${id}/validate`, {
     method: "PUT",
     headers: jsonHeaders,
     body: JSON.stringify(payload),
@@ -695,9 +813,14 @@ export async function validatePayrollSlip(id: string | number, payload: { user_i
 
 export async function returnPayrollSlipForCorrection(
   id: string | number,
-  payload: { category: string; reason: string; remarks?: string; user_id?: number; user_name?: string },
+  payload: {
+    category: string;
+    reason: string;
+    remarks?: string;
+    manual_assessments: Array<{ key: string; result: "Matched" | "Not Matched" }>;
+  },
 ): Promise<any> {
-  const response = await fetch(`/api/payroll-slips/${id}/return`, {
+  const response = await apiFetch(`/api/payroll-slips/${id}/return`, {
     method: "PUT",
     headers: jsonHeaders,
     body: JSON.stringify(payload),
@@ -709,11 +832,12 @@ export async function returnPayrollSlipForCorrection(
 
 export async function approvePayrollSlipByManager(
   id: string | number,
-  payload: { user_id?: number; user_name?: string; remarks?: string },
+  payload: { remarks?: string },
 ): Promise<any> {
-  const response = await fetch(`/api/payroll-slips/${id}/manager-approve`, {
+  const response = await apiFetch(`/api/payroll-slips/${id}/manager-approve`, {
     method: "PUT",
-    headers: jsonHeaders,
+    credentials: "same-origin",
+    headers: csrfHeaders(),
     body: JSON.stringify(payload),
   });
   const data = await response.json().catch(() => ({}));
@@ -725,7 +849,7 @@ export async function returnPayrollSlipByManager(
   id: string | number,
   payload: { reason: string; remarks?: string; user_id?: number; user_name?: string },
 ): Promise<any> {
-  const response = await fetch(`/api/payroll-slips/${id}/manager-return`, {
+  const response = await apiFetch(`/api/payroll-slips/${id}/manager-return`, {
     method: "PUT",
     headers: jsonHeaders,
     body: JSON.stringify(payload),
@@ -741,7 +865,7 @@ export async function updateRolePermissions(payload: {
   user_id?: number;
   user_name?: string;
 }): Promise<any[]> {
-  const response = await fetch("/api/role-permissions", {
+  const response = await apiFetch("/api/role-permissions", {
     method: "PUT",
     headers: jsonHeaders,
     body: JSON.stringify(payload),
@@ -766,7 +890,7 @@ export interface RestockRequestInput {
 }
 
 export async function createRestockRequest(payload: RestockRequestInput): Promise<any> {
-  const response = await fetch("/api/restock-requests", {
+  const response = await apiFetch("/api/restock-requests", {
     method: "POST",
     headers: jsonHeaders,
     body: JSON.stringify(payload),
@@ -777,7 +901,7 @@ export async function createRestockRequest(payload: RestockRequestInput): Promis
 }
 
 export async function updateRestockRequest(id: string | number, payload: RestockRequestInput): Promise<any> {
-  const response = await fetch(`/api/restock-requests/${id}`, {
+  const response = await apiFetch(`/api/restock-requests/${id}`, {
     method: "PUT",
     headers: jsonHeaders,
     body: JSON.stringify(payload),
@@ -788,7 +912,7 @@ export async function updateRestockRequest(id: string | number, payload: Restock
 }
 
 export async function cancelRestockRequest(id: string | number, payload: { user_id?: number; user_name?: string }): Promise<any> {
-  const response = await fetch(`/api/restock-requests/${id}/cancel`, {
+  const response = await apiFetch(`/api/restock-requests/${id}/cancel`, {
     method: "PUT",
     headers: jsonHeaders,
     body: JSON.stringify(payload),
@@ -799,7 +923,7 @@ export async function cancelRestockRequest(id: string | number, payload: { user_
 }
 
 export async function approveRestockRequest(id: string | number, payload: { user_id?: number; user_name?: string; review_notes?: string }): Promise<any> {
-  const response = await fetch(`/api/restock-requests/${id}/approve`, {
+  const response = await apiFetch(`/api/restock-requests/${id}/approve`, {
     method: "PUT",
     headers: jsonHeaders,
     body: JSON.stringify(payload),
@@ -819,7 +943,7 @@ export async function confirmRestockDelivery(
     user_name?: string;
   },
 ): Promise<any> {
-  const response = await fetch(`/api/restock-requests/${id}/confirm-delivery`, {
+  const response = await apiFetch(`/api/restock-requests/${id}/confirm-delivery`, {
     method: "PUT",
     headers: jsonHeaders,
     body: JSON.stringify(payload),
@@ -830,7 +954,7 @@ export async function confirmRestockDelivery(
 }
 
 export async function returnRestockRequest(id: string | number, payload: { reason: string; user_id?: number; user_name?: string }): Promise<any> {
-  const response = await fetch(`/api/restock-requests/${id}/return`, {
+  const response = await apiFetch(`/api/restock-requests/${id}/return`, {
     method: "PUT",
     headers: jsonHeaders,
     body: JSON.stringify(payload),

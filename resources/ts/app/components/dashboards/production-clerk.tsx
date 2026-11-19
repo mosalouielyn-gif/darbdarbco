@@ -53,6 +53,7 @@ const productionRecords: ProductionRecord[] = [];
 interface HarvestRecord {
   id: number;
   date: string;
+  beneficiaryId: number | null;
   beneficiary: string;
   harvester: string;
   w11: number;
@@ -65,6 +66,7 @@ interface HarvestRecord {
 interface ProductionRecord {
   id: number;
   date: string;
+  beneficiaryId: number | null;
   beneficiary: string;
   classA_big: number;
   classA_small: number;
@@ -73,14 +75,6 @@ interface ProductionRecord {
   classB_small: number;
   classB_cp: number;
   special: number;
-  defects_11: number;
-  defects_12: number;
-  defects_13: number;
-  defects_14: number;
-  rejects_11: number;
-  rejects_12: number;
-  rejects_13: number;
-  rejects_14: number;
   editReason?: string;
 }
 
@@ -115,11 +109,9 @@ function Dashboard({ goToTab, productionData, harvestData, beneficiariesCount }:
   const dailyProduction = getDailyProduction(productionData);
   const classificationBreakdown = getClassificationBreakdown(productionData);
   const harvestBuligs = getHarvestBuligs(harvestData);
-  const quality = getQualityAnalysis(productionData);
   const hasDailyProduction = dailyProduction.some((row) => row.v > 0);
   const hasClassificationData = classificationBreakdown.some((row) => row.value > 0);
   const hasHarvestData = harvestBuligs.some((row) => row.v > 0);
-  const hasQualityData = quality.some((row) => row.defects > 0 || row.rejects > 0);
 
   return (
     <div className="space-y-6">
@@ -195,20 +187,6 @@ function Dashboard({ goToTab, productionData, harvestData, beneficiariesCount }:
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-base">Quality Analysis (by Age)</CardTitle></CardHeader>
-          <CardContent className="space-y-2 pt-2">
-            {hasQualityData ? quality.map((q) => (
-              <div key={q.age} className="flex items-center justify-between gap-3 text-sm">
-                <span className="text-muted-foreground">{q.age}</span>
-                <div className="flex flex-wrap justify-end gap-x-3 gap-y-1">
-                  <span className="text-amber-600 font-medium">Defects: {q.defects}</span>
-                  <span className="text-red-600 font-medium">Rejects: {q.rejects}</span>
-                </div>
-              </div>
-            )) : <EmptyDashboardState message="No defects or rejects recorded yet." compact />}
-          </CardContent>
-        </Card>
       </div>
 
     </div>
@@ -275,31 +253,6 @@ function getHarvestBuligs(records: HarvestRecord[]) {
     ...item,
     pct: highest > 0 ? Math.round((item.v / highest) * 100) : 0,
   }));
-}
-
-function getQualityAnalysis(records: ProductionRecord[]) {
-  return [
-    {
-      age: "11 weeks",
-      defects: records.reduce((sum, record) => sum + record.defects_11, 0),
-      rejects: records.reduce((sum, record) => sum + record.rejects_11, 0),
-    },
-    {
-      age: "12 weeks",
-      defects: records.reduce((sum, record) => sum + record.defects_12, 0),
-      rejects: records.reduce((sum, record) => sum + record.rejects_12, 0),
-    },
-    {
-      age: "13 weeks",
-      defects: records.reduce((sum, record) => sum + record.defects_13, 0),
-      rejects: records.reduce((sum, record) => sum + record.rejects_13, 0),
-    },
-    {
-      age: "14 weeks",
-      defects: records.reduce((sum, record) => sum + record.defects_14, 0),
-      rejects: records.reduce((sum, record) => sum + record.rejects_14, 0),
-    },
-  ];
 }
 
 function getDashboardMetrics(productionData: ProductionRecord[], harvestData: HarvestRecord[], beneficiariesCount: number) {
@@ -369,7 +322,7 @@ function ProductionRecords({ tab, setTab, user }: { tab: string; setTab: (t: str
   const buttonLabel = tab === "harvest" ? "New Harvest Record" : "New Production Record";
   const beneficiaryRows = masterBeneficiaries.length > 0 ? masterBeneficiaries : (data?.beneficiaries ?? []);
   const harvesterRows = masterHarvesters.length > 0 ? masterHarvesters : (data?.harvesters ?? []);
-  const beneficiaryOptions = getBeneficiaryOptions(beneficiaryRows, harvestData, productionData);
+  const beneficiaryOptions = getBeneficiaryOptions(beneficiaryRows);
   const harvesterOptions = getHarvesterOptions(harvesterRows, harvestData);
 
   React.useEffect(() => {
@@ -380,7 +333,7 @@ function ProductionRecords({ tab, setTab, user }: { tab: string; setTab: (t: str
   const refreshMasterLists = async (showError = true) => {
     setRefreshingMasters(true);
     try {
-      const latest = await fetchAppData("manager_admin");
+      const latest = await fetchAppData("production_clerk");
       setMasterBeneficiaries(latest.beneficiaries ?? []);
       const harvesterUsers = (latest.users ?? []).filter((account: any) => account.role === "harvester");
       setMasterHarvesters(harvesterUsers.length > 0 ? harvesterUsers : (latest.harvesters ?? []));
@@ -846,15 +799,112 @@ function SearchableSelect({ value, options, placeholder, searchPlaceholder, empt
   );
 }
 
-function getBeneficiaryOptions(sourceRows: any[], harvestData: HarvestRecord[], productionData: ProductionRecord[]) {
-  const activeRows = sourceRows.filter(isActiveMasterRow);
-  const names = [
-    ...activeRows.map((row) => formatBeneficiaryDisplayName(row.name ?? row.full_name ?? row.beneficiary_name ?? row.beneficiary ?? "")),
-    ...(activeRows.length === 0 ? harvestData.map((record) => formatBeneficiaryDisplayName(record.beneficiary)) : []),
-    ...(activeRows.length === 0 ? productionData.map((record) => formatBeneficiaryDisplayName(record.beneficiary)) : []),
-  ];
+interface BeneficiaryOption {
+  id: number;
+  name: string;
+  code: string;
+}
 
-  return Array.from(new Set(names.map((name) => name.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+function BeneficiarySelect({ value, options, placeholder, searchPlaceholder, emptyMessage, loading, onChange, onOpen }: {
+  value: number | null;
+  options: BeneficiaryOption[];
+  placeholder: string;
+  searchPlaceholder: string;
+  emptyMessage: string;
+  loading?: boolean;
+  onChange: (option: BeneficiaryOption) => void;
+  onOpen?: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const containerRef = React.useRef<HTMLDivElement | null>(null);
+  const selected = options.find((option) => option.id === value);
+  const filteredOptions = options.filter((option) => `${option.name} ${option.code}`.toLowerCase().includes(query.toLowerCase().trim()));
+
+  React.useEffect(() => {
+    if (!open) return;
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", closeOnOutsideClick);
+    return () => document.removeEventListener("mousedown", closeOnOutsideClick);
+  }, [open]);
+
+  return (
+    <div className="relative" ref={containerRef}>
+      <Button
+        type="button"
+        variant="outline"
+        role="combobox"
+        aria-expanded={open}
+        onClick={() => {
+          const nextOpen = !open;
+          setOpen(nextOpen);
+          if (nextOpen) {
+            setQuery("");
+            onOpen?.();
+          }
+        }}
+        className="h-9 w-full justify-between bg-white px-3 font-normal"
+      >
+        <span className={cn("truncate", !selected && "text-muted-foreground")}>{selected?.name || placeholder}</span>
+        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+      </Button>
+      {open && (
+        <div className="absolute left-0 right-0 top-[calc(100%+0.25rem)] z-[120] rounded-md border bg-white p-2 shadow-lg">
+          <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={searchPlaceholder} className="h-9" autoFocus />
+          <div className="mt-2 max-h-56 overflow-y-auto">
+            {loading && filteredOptions.length === 0 ? (
+              <div className="px-3 py-4 text-center text-sm text-muted-foreground">Refreshing list...</div>
+            ) : filteredOptions.length === 0 ? (
+              <div className="px-3 py-4 text-center text-sm text-muted-foreground">{emptyMessage}</div>
+            ) : filteredOptions.map((option) => (
+              <button
+                type="button"
+                key={option.id}
+                className="flex w-full items-center gap-2 rounded-sm px-3 py-2 text-left text-sm hover:bg-emerald-50"
+                onClick={() => {
+                  onChange(option);
+                  setOpen(false);
+                  setQuery("");
+                }}
+              >
+                <Check className={cn("h-4 w-4 shrink-0", option.id === value ? "opacity-100" : "opacity-0")} />
+                <span className="min-w-0 flex-1 truncate">{option.name}</span>
+                {option.code && <span className="shrink-0 text-xs text-muted-foreground">{option.code}</span>}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function getBeneficiaryOptions(sourceRows: any[]): BeneficiaryOption[] {
+  return sourceRows
+    .filter(isActiveMasterRow)
+    .map((row) => ({
+      id: Number(row.id),
+      name: formatBeneficiaryDisplayName(row.name ?? row.full_name ?? row.beneficiary_name ?? row.beneficiary ?? ""),
+      code: String(row.code ?? row.beneficiary_code ?? "").trim(),
+    }))
+    .filter((option) => Number.isInteger(option.id) && option.id > 0 && option.name.length > 0)
+    .sort((a, b) => a.name.localeCompare(b.name) || a.code.localeCompare(b.code) || a.id - b.id);
+}
+
+function withExistingBeneficiary(options: BeneficiaryOption[], record?: HarvestRecord | ProductionRecord | null): BeneficiaryOption[] {
+  if (!record?.beneficiaryId || options.some((option) => option.id === record.beneficiaryId)) {
+    return options;
+  }
+
+  return [...options, {
+    id: record.beneficiaryId,
+    name: formatBeneficiaryDisplayName(record.beneficiary),
+    code: "",
+  }];
 }
 
 function getHarvesterOptions(sourceRows: any[], harvestData: HarvestRecord[]) {
@@ -897,6 +947,7 @@ function mapHarvestRecord(record: any): HarvestRecord {
   return {
     id: Number(record.id),
     date,
+    beneficiaryId: record.beneficiary_id == null ? null : Number(record.beneficiary_id),
     beneficiary: record.beneficiary_name || record.beneficiary || "",
     harvester: record.harvester_name || record.harvester || "",
     w11: Number(record.buligs_11_weeks ?? record.w11 ?? 0),
@@ -912,6 +963,7 @@ function mapProductionRecord(record: any): ProductionRecord {
   return {
     id: Number(record.id),
     date,
+    beneficiaryId: record.beneficiary_id == null ? null : Number(record.beneficiary_id),
     beneficiary: record.beneficiary_name || record.beneficiary || "",
     classA_big: Number(record.class_a_big_hands ?? record.classA_big ?? 0),
     classA_small: Number(record.class_a_small_hands ?? record.classA_small ?? 0),
@@ -920,14 +972,6 @@ function mapProductionRecord(record: any): ProductionRecord {
     classB_small: Number(record.class_b_small_hands ?? record.classB_small ?? 0),
     classB_cp: Number(record.class_b_cps ?? record.classB_cp ?? 0),
     special: Number(record.special_product ?? record.special_total ?? record.special ?? 0),
-    defects_11: Number(record.defects_11_weeks ?? record.defects_11 ?? 0),
-    defects_12: Number(record.defects_12_weeks ?? record.defects_12 ?? 0),
-    defects_13: Number(record.defects_13_weeks ?? record.defects_13 ?? 0),
-    defects_14: Number(record.defects_14_weeks ?? record.defects_14 ?? 0),
-    rejects_11: Number(record.rejects_11_weeks ?? record.rejects_11 ?? 0),
-    rejects_12: Number(record.rejects_12_weeks ?? record.rejects_12 ?? 0),
-    rejects_13: Number(record.rejects_13_weeks ?? record.rejects_13 ?? 0),
-    rejects_14: Number(record.rejects_14_weeks ?? record.rejects_14 ?? 0),
   };
 }
 
@@ -942,6 +986,7 @@ function userAuditPayload(user: User) {
 function toHarvestPayload(record: HarvestRecord, user: User): HarvestRecordInput {
   return {
     harvest_date: parseDateInput(record.date),
+    beneficiary_id: Number(record.beneficiaryId),
     beneficiary_name: record.beneficiary.trim(),
     harvester_name: record.harvester.trim(),
     buligs_11_weeks: record.w11,
@@ -955,6 +1000,7 @@ function toHarvestPayload(record: HarvestRecord, user: User): HarvestRecordInput
 function toProductionPayload(record: ProductionRecord, user: User): ProductionBoxRecordInput {
   return {
     production_date: parseDateInput(record.date),
+    beneficiary_id: Number(record.beneficiaryId),
     beneficiary_name: record.beneficiary.trim(),
     class_a_big_hands: record.classA_big,
     class_a_small_hands: record.classA_small,
@@ -963,14 +1009,6 @@ function toProductionPayload(record: ProductionRecord, user: User): ProductionBo
     class_b_small_hands: record.classB_small,
     class_b_cps: record.classB_cp,
     special_product: record.special,
-    defects_11_weeks: record.defects_11,
-    defects_12_weeks: record.defects_12,
-    defects_13_weeks: record.defects_13,
-    defects_14_weeks: record.defects_14,
-    rejects_11_weeks: record.rejects_11,
-    rejects_12_weeks: record.rejects_12,
-    rejects_13_weeks: record.rejects_13,
-    rejects_14_weeks: record.rejects_14,
     edit_reason: record.editReason?.trim(),
     ...userAuditPayload(user),
   };
@@ -1057,36 +1095,55 @@ function HarvestDetailsDialog({ record, onOpenChange }: {
   record: HarvestRecord | null;
   onOpenChange: (open: boolean) => void;
 }) {
-  const rows = record ? [
-    ["Harvest Date", record.date],
-    ["Beneficiary", record.beneficiary],
-    ["Harvester", record.harvester],
-    ["11 weeks", record.w11],
-    ["12 weeks", record.w12],
-    ["13 weeks", record.w13],
-    ["14 weeks", record.w14],
-    ["Total Buligs", record.total],
-  ] : [];
-
   return (
     <Dialog open={!!record} onOpenChange={onOpenChange}>
-      <DialogContent className="w-[calc(100vw-1rem)] max-h-[90dvh] overflow-y-auto sm:max-w-2xl">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-emerald-700">
-            <FileText className="h-5 w-5" />Harvest Record Details
-          </DialogTitle>
+      <DialogContent className="w-[calc(100vw-1rem)] max-h-[90dvh] overflow-y-auto rounded-xl sm:max-w-2xl">
+        <DialogHeader className="border-b border-slate-200 pb-4 pr-8 text-left">
+          <div className="flex items-center gap-3">
+            <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700">
+              <ClipboardList className="size-5" aria-hidden="true" />
+            </span>
+            <div className="space-y-1">
+              <DialogTitle className="text-lg font-semibold text-slate-900">Harvest Record Details</DialogTitle>
+              <p className="text-sm text-slate-500">Harvest and maturity summary</p>
+            </div>
+          </div>
         </DialogHeader>
         {record && (
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            {rows.map(([label, value]) => (
-              <div key={String(label)} className="rounded-md border bg-slate-50 p-3">
-                <div className="text-xs text-muted-foreground">{label}</div>
-                <div className="font-medium">{value}</div>
+          <div className="space-y-5">
+            <div className="rounded-xl border border-emerald-100 bg-emerald-50/70 p-4 sm:p-5">
+              <p className="text-xs font-medium uppercase tracking-wide text-emerald-800">Beneficiary</p>
+              <p className="mt-1 break-words text-lg font-semibold text-slate-900">{record.beneficiary}</p>
+            </div>
+
+            <section className="space-y-3" aria-labelledby="harvest-information-heading">
+              <DetailSectionHeading id="harvest-information-heading">Harvest Information</DetailSectionHeading>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <DetailValueCard label="Harvest Date" value={record.date} />
+                <DetailValueCard label="Harvester" value={record.harvester} />
               </div>
-            ))}
+            </section>
+
+            <section className="space-y-3" aria-labelledby="buligs-by-age-heading">
+              <DetailSectionHeading id="buligs-by-age-heading">Buligs by Maturity Age</DetailSectionHeading>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <DetailValueCard label="11 weeks" value={record.w11} />
+                <DetailValueCard label="12 weeks" value={record.w12} />
+                <DetailValueCard label="13 weeks" value={record.w13} />
+                <DetailValueCard label="14 weeks" value={record.w14} />
+              </div>
+            </section>
+
+            <div className="flex items-center justify-between gap-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3.5">
+              <div>
+                <p className="text-sm font-semibold text-emerald-900">Total Buligs</p>
+                <p className="text-xs text-emerald-800/80">Recorded across all maturity ages</p>
+              </div>
+              <p className="text-2xl font-bold tabular-nums text-emerald-700">{record.total}</p>
+            </div>
           </div>
         )}
-        <div className="flex justify-end">
+        <div className="flex justify-end border-t border-slate-200 pt-4">
           <Button variant="outline" onClick={() => onOpenChange(false)}>Close</Button>
         </div>
       </DialogContent>
@@ -1098,45 +1155,59 @@ function ProductionDetailsDialog({ record, onOpenChange }: {
   record: ProductionRecord | null;
   onOpenChange: (open: boolean) => void;
 }) {
-  const rows = record ? [
-    ["Date", record.date],
-    ["Beneficiary", record.beneficiary],
-    ["Class A - Big Hands", record.classA_big],
-    ["Class A - Small Hands", record.classA_small],
-    ["Class A - CPs", record.classA_cp],
-    ["Class B - Big Hands", record.classB_big],
-    ["Class B - Small Hands", record.classB_small],
-    ["Class B - CPs", record.classB_cp],
-    ["Special Product", record.special],
-    ["Defects - 11 weeks", record.defects_11],
-    ["Defects - 12 weeks", record.defects_12],
-    ["Defects - 13 weeks", record.defects_13],
-    ["Defects - 14 weeks", record.defects_14],
-    ["Rejects - 11 weeks", record.rejects_11],
-    ["Rejects - 12 weeks", record.rejects_12],
-    ["Rejects - 13 weeks", record.rejects_13],
-    ["Rejects - 14 weeks", record.rejects_14],
-  ] : [];
-
   return (
     <Dialog open={!!record} onOpenChange={onOpenChange}>
-      <DialogContent className="w-[calc(100vw-1rem)] max-h-[90dvh] overflow-y-auto sm:max-w-2xl">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-emerald-700">
-            <FileText className="h-5 w-5" />Production Record Details
-          </DialogTitle>
+      <DialogContent className="w-[calc(100vw-1rem)] max-h-[90dvh] overflow-y-auto rounded-xl sm:max-w-2xl">
+        <DialogHeader className="border-b border-slate-200 pb-4 pr-8 text-left">
+          <div className="flex items-center gap-3">
+            <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700">
+              <Boxes className="size-5" aria-hidden="true" />
+            </span>
+            <div className="space-y-1">
+              <DialogTitle className="text-lg font-semibold text-slate-900">Production Record Details</DialogTitle>
+              <p className="text-sm text-slate-500">Production quantity summary</p>
+            </div>
+          </div>
         </DialogHeader>
         {record && (
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            {rows.map(([label, value]) => (
-              <div key={String(label)} className="rounded-md border bg-slate-50 p-3">
-                <div className="text-xs text-muted-foreground">{label}</div>
-                <div className="font-medium">{value}</div>
+          <div className="space-y-4">
+            <div className="flex flex-col gap-3 rounded-xl border border-emerald-100 bg-emerald-50/70 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5">
+              <div className="min-w-0">
+                <p className="text-xs font-medium uppercase tracking-wide text-emerald-800">Beneficiary</p>
+                <p className="mt-1 break-words text-lg font-semibold text-slate-900">{record.beneficiary}</p>
               </div>
-            ))}
+              <div className="shrink-0 border-t border-emerald-200 pt-3 sm:border-l sm:border-t-0 sm:pl-5 sm:pt-0">
+                <p className="text-xs font-medium text-slate-500">Production Date</p>
+                <p className="mt-1 text-sm font-semibold text-slate-900">{record.date}</p>
+              </div>
+            </div>
+
+            <DetailGroup title="Class A Boxes" tone="emerald">
+              <DetailValueCard label="Big Hands" value={record.classA_big} className="border-emerald-100 bg-white/80" />
+              <DetailValueCard label="Small Hands" value={record.classA_small} className="border-emerald-100 bg-white/80" />
+              <DetailValueCard label="CPs" value={record.classA_cp} className="border-emerald-100 bg-white/80" />
+            </DetailGroup>
+
+            <DetailGroup title="Class B Boxes" tone="amber">
+              <DetailValueCard label="Big Hands" value={record.classB_big} className="border-amber-100 bg-white/80" />
+              <DetailValueCard label="Small Hands" value={record.classB_small} className="border-amber-100 bg-white/80" />
+              <DetailValueCard label="CPs" value={record.classB_cp} className="border-amber-100 bg-white/80" />
+            </DetailGroup>
+
+            <DetailGroup title="Special Product" tone="violet">
+              <DetailValueCard label="Total Boxes / Quantity" value={record.special} className="border-violet-100 bg-white/80" />
+            </DetailGroup>
+
+            <div className="flex items-center justify-between gap-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3.5">
+              <div>
+                <p className="text-sm font-semibold text-emerald-900">Total Production</p>
+                <p className="text-xs text-emerald-800/80">Class A, Class B, and Special Product</p>
+              </div>
+              <p className="text-2xl font-bold tabular-nums text-emerald-700">{totalProductionBoxes(record)}</p>
+            </div>
           </div>
         )}
-        <div className="flex justify-end">
+        <div className="flex justify-end border-t border-slate-200 pt-4">
           <Button variant="outline" onClick={() => onOpenChange(false)}>Close</Button>
         </div>
       </DialogContent>
@@ -1144,11 +1215,39 @@ function ProductionDetailsDialog({ record, onOpenChange }: {
   );
 }
 
+function DetailSectionHeading({ id, children }: { id: string; children: React.ReactNode }) {
+  return <h3 id={id} className="text-sm font-semibold text-slate-900">{children}</h3>;
+}
+
+function DetailValueCard({ label, value, className }: { label: string; value: string | number; className?: string }) {
+  return (
+    <div className={cn("min-w-0 rounded-xl border border-slate-200 bg-slate-50 p-3.5", className)}>
+      <p className="text-xs font-medium text-slate-500">{label}</p>
+      <p className="mt-1 break-words text-sm font-semibold tabular-nums text-slate-900">{value}</p>
+    </div>
+  );
+}
+
+function DetailGroup({ title, tone, children }: { title: string; tone: "emerald" | "amber" | "violet"; children: React.ReactNode }) {
+  const toneStyles = {
+    emerald: "border-emerald-200 bg-emerald-50/70 text-emerald-800",
+    amber: "border-amber-200 bg-amber-50/80 text-amber-800",
+    violet: "border-violet-200 bg-violet-50/70 text-violet-800",
+  };
+
+  return (
+    <section className={cn("space-y-3 rounded-xl border p-4", toneStyles[tone])}>
+      <h3 className="text-sm font-semibold">{title}</h3>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">{children}</div>
+    </section>
+  );
+}
+
 function HarvestDialog({ open, onOpenChange, record, beneficiaryOptions, harvesterOptions, refreshingOptions, onRefreshOptions, onSave }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   record?: HarvestRecord | null;
-  beneficiaryOptions: string[];
+  beneficiaryOptions: BeneficiaryOption[];
   harvesterOptions: string[];
   refreshingOptions?: boolean;
   onRefreshOptions?: () => void;
@@ -1158,6 +1257,7 @@ function HarvestDialog({ open, onOpenChange, record, beneficiaryOptions, harvest
   const [form, setForm] = useState<HarvestRecord>({
     id: record?.id ?? 0,
     date: record?.date ?? formatDateLabel(today),
+    beneficiaryId: record?.beneficiaryId ?? null,
     beneficiary: record?.beneficiary ?? "",
     harvester: record?.harvester ?? "",
     w11: record?.w11 ?? 0,
@@ -1174,6 +1274,7 @@ function HarvestDialog({ open, onOpenChange, record, beneficiaryOptions, harvest
     setForm({
       id: record?.id ?? 0,
       date: record?.date ?? formatDateLabel(today),
+      beneficiaryId: record?.beneficiaryId ?? null,
       beneficiary: record?.beneficiary ?? "",
       harvester: record?.harvester ?? "",
       w11: record?.w11 ?? 0,
@@ -1192,8 +1293,8 @@ function HarvestDialog({ open, onOpenChange, record, beneficiaryOptions, harvest
 
   const submit = async () => {
     if (isSaving) return;
-    if (!form.beneficiary.trim() || !form.harvester.trim()) {
-      toast.error("Beneficiary and harvester are required");
+    if (form.beneficiaryId === null || !form.harvester.trim()) {
+      toast.error("Select a registered beneficiary and harvester.");
       return;
     }
     try {
@@ -1223,15 +1324,15 @@ function HarvestDialog({ open, onOpenChange, record, beneficiaryOptions, harvest
             </div>
             <div className="space-y-1">
               <Label>Beneficiary Name <span className="text-red-500">*</span></Label>
-              <SearchableSelect
-                value={form.beneficiary}
-                options={beneficiaryOptions}
+              <BeneficiarySelect
+                value={form.beneficiaryId}
+                options={withExistingBeneficiary(beneficiaryOptions, record)}
                 placeholder="Select beneficiary"
                 searchPlaceholder="Search beneficiaries..."
                 emptyMessage="No beneficiary found."
                 loading={refreshingOptions}
                 onOpen={onRefreshOptions}
-                onChange={(beneficiary) => setForm({ ...form, beneficiary })}
+                onChange={(beneficiary) => setForm({ ...form, beneficiaryId: beneficiary.id, beneficiary: beneficiary.name })}
               />
             </div>
             <div className="space-y-1 md:col-span-2">
@@ -1254,19 +1355,19 @@ function HarvestDialog({ open, onOpenChange, record, beneficiaryOptions, harvest
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               <div className="space-y-1">
                 <Label className="text-sm text-muted-foreground">11 weeks</Label>
-                <Input type="number" value={form.w11} onChange={(e) => updateCount("w11", e.target.value)} placeholder="0" className="bg-white" />
+                <Input type="number" value={form.w11 || ""} onChange={(e) => updateCount("w11", e.target.value)} placeholder="0" className="bg-white production-clerk-number-input" />
               </div>
               <div className="space-y-1">
                 <Label className="text-sm text-muted-foreground">12 weeks</Label>
-                <Input type="number" value={form.w12} onChange={(e) => updateCount("w12", e.target.value)} placeholder="0" className="bg-white" />
+                <Input type="number" value={form.w12 || ""} onChange={(e) => updateCount("w12", e.target.value)} placeholder="0" className="bg-white production-clerk-number-input" />
               </div>
               <div className="space-y-1">
                 <Label className="text-sm text-muted-foreground">13 weeks</Label>
-                <Input type="number" value={form.w13} onChange={(e) => updateCount("w13", e.target.value)} placeholder="0" className="bg-white" />
+                <Input type="number" value={form.w13 || ""} onChange={(e) => updateCount("w13", e.target.value)} placeholder="0" className="bg-white production-clerk-number-input" />
               </div>
               <div className="space-y-1">
                 <Label className="text-sm text-muted-foreground">14 weeks</Label>
-                <Input type="number" value={form.w14} onChange={(e) => updateCount("w14", e.target.value)} placeholder="0" className="bg-white" />
+                <Input type="number" value={form.w14 || ""} onChange={(e) => updateCount("w14", e.target.value)} placeholder="0" className="bg-white production-clerk-number-input" />
               </div>
             </div>
           </div>
@@ -1291,17 +1392,17 @@ function ProductionBoxesDialog({ open, onOpenChange, record, beneficiaryOptions,
   open: boolean;
   onOpenChange: (open: boolean) => void;
   record?: ProductionRecord | null;
-  beneficiaryOptions: string[];
+  beneficiaryOptions: BeneficiaryOption[];
   refreshingOptions?: boolean;
   onRefreshOptions?: () => void;
   onSave: (record: ProductionRecord) => void | Promise<void>;
 }) {
   const today = todayLocalDate();
-  const uniqueBeneficiaries = Array.from(new Set(beneficiaryOptions.filter(Boolean)));
   const blank = (): ProductionRecord => ({
     id: record?.id ?? 0,
     date: record?.date ?? formatDateLabel(today),
-    beneficiary: record?.beneficiary ?? uniqueBeneficiaries[0] ?? "",
+    beneficiaryId: record?.beneficiaryId ?? null,
+    beneficiary: record?.beneficiary ?? "",
     classA_big: record?.classA_big ?? 0,
     classA_small: record?.classA_small ?? 0,
     classA_cp: record?.classA_cp ?? 0,
@@ -1309,14 +1410,6 @@ function ProductionBoxesDialog({ open, onOpenChange, record, beneficiaryOptions,
     classB_small: record?.classB_small ?? 0,
     classB_cp: record?.classB_cp ?? 0,
     special: record?.special ?? 0,
-    defects_11: record?.defects_11 ?? 0,
-    defects_12: record?.defects_12 ?? 0,
-    defects_13: record?.defects_13 ?? 0,
-    defects_14: record?.defects_14 ?? 0,
-    rejects_11: record?.rejects_11 ?? 0,
-    rejects_12: record?.rejects_12 ?? 0,
-    rejects_13: record?.rejects_13 ?? 0,
-    rejects_14: record?.rejects_14 ?? 0,
     editReason: "",
   });
   const [form, setForm] = useState<ProductionRecord>(blank);
@@ -1335,8 +1428,8 @@ function ProductionBoxesDialog({ open, onOpenChange, record, beneficiaryOptions,
 
   const submit = async () => {
     if (isSaving) return;
-    if (!form.beneficiary.trim()) {
-      toast.error("Beneficiary name is required");
+    if (form.beneficiaryId === null) {
+      toast.error("Select a registered beneficiary.");
       return;
     }
     if (record && !form.editReason?.trim()) {
@@ -1367,15 +1460,15 @@ function ProductionBoxesDialog({ open, onOpenChange, record, beneficiaryOptions,
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
             <div className="space-y-1">
               <Label>Harvest Beneficiary <span className="text-red-500">*</span></Label>
-              <SearchableSelect
-                value={form.beneficiary}
-                options={uniqueBeneficiaries}
+              <BeneficiarySelect
+                value={form.beneficiaryId}
+                options={withExistingBeneficiary(beneficiaryOptions, record)}
                 placeholder="Select beneficiary"
                 searchPlaceholder="Search beneficiaries..."
                 emptyMessage="No beneficiary found."
                 loading={refreshingOptions}
                 onOpen={onRefreshOptions}
-                onChange={(beneficiary) => setForm({ ...form, beneficiary })}
+                onChange={(beneficiary) => setForm({ ...form, beneficiaryId: beneficiary.id, beneficiary: beneficiary.name })}
               />
             </div>
             <div className="space-y-1">
@@ -1389,15 +1482,15 @@ function ProductionBoxesDialog({ open, onOpenChange, record, beneficiaryOptions,
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div className="space-y-1">
                 <Label className="text-sm">Big Hands</Label>
-                <Input type="number" value={form.classA_big} onChange={(e) => setNumber("classA_big", e.target.value)} placeholder="0" className="bg-white" />
+                <Input type="number" value={form.classA_big || ""} onChange={(e) => setNumber("classA_big", e.target.value)} placeholder="0" className="bg-white production-clerk-number-input" />
               </div>
               <div className="space-y-1">
                 <Label className="text-sm">Small Hands</Label>
-                <Input type="number" value={form.classA_small} onChange={(e) => setNumber("classA_small", e.target.value)} placeholder="0" className="bg-white" />
+                <Input type="number" value={form.classA_small || ""} onChange={(e) => setNumber("classA_small", e.target.value)} placeholder="0" className="bg-white production-clerk-number-input" />
               </div>
               <div className="space-y-1">
                 <Label className="text-sm">CPs</Label>
-                <Input type="number" value={form.classA_cp} onChange={(e) => setNumber("classA_cp", e.target.value)} placeholder="0" className="bg-white" />
+                <Input type="number" value={form.classA_cp || ""} onChange={(e) => setNumber("classA_cp", e.target.value)} placeholder="0" className="bg-white production-clerk-number-input" />
               </div>
             </div>
           </div>
@@ -1407,15 +1500,15 @@ function ProductionBoxesDialog({ open, onOpenChange, record, beneficiaryOptions,
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div className="space-y-1">
                 <Label className="text-sm">Big Hands</Label>
-                <Input type="number" value={form.classB_big} onChange={(e) => setNumber("classB_big", e.target.value)} placeholder="0" className="bg-white" />
+                <Input type="number" value={form.classB_big || ""} onChange={(e) => setNumber("classB_big", e.target.value)} placeholder="0" className="bg-white production-clerk-number-input" />
               </div>
               <div className="space-y-1">
                 <Label className="text-sm">Small Hands</Label>
-                <Input type="number" value={form.classB_small} onChange={(e) => setNumber("classB_small", e.target.value)} placeholder="0" className="bg-white" />
+                <Input type="number" value={form.classB_small || ""} onChange={(e) => setNumber("classB_small", e.target.value)} placeholder="0" className="bg-white production-clerk-number-input" />
               </div>
               <div className="space-y-1">
                 <Label className="text-sm">CPs</Label>
-                <Input type="number" value={form.classB_cp} onChange={(e) => setNumber("classB_cp", e.target.value)} placeholder="0" className="bg-white" />
+                <Input type="number" value={form.classB_cp || ""} onChange={(e) => setNumber("classB_cp", e.target.value)} placeholder="0" className="bg-white production-clerk-number-input" />
               </div>
             </div>
           </div>
@@ -1424,51 +1517,7 @@ function ProductionBoxesDialog({ open, onOpenChange, record, beneficiaryOptions,
             <Label className="text-base text-violet-700">Special Product</Label>
             <div className="space-y-1">
               <Label className="text-sm">Total Boxes / Quantity</Label>
-              <Input type="number" value={form.special} onChange={(e) => setNumber("special", e.target.value)} placeholder="0" className="bg-white" />
-            </div>
-          </div>
-
-          <div className="border rounded-md p-4 space-y-3 bg-orange-50">
-            <Label className="text-base text-orange-700">Defects (by age)</Label>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <div className="space-y-1">
-                <Label className="text-sm">11 weeks</Label>
-                <Input type="number" value={form.defects_11} onChange={(e) => setNumber("defects_11", e.target.value)} placeholder="0" className="bg-white" />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-sm">12 weeks</Label>
-                <Input type="number" value={form.defects_12} onChange={(e) => setNumber("defects_12", e.target.value)} placeholder="0" className="bg-white" />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-sm">13 weeks</Label>
-                <Input type="number" value={form.defects_13} onChange={(e) => setNumber("defects_13", e.target.value)} placeholder="0" className="bg-white" />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-sm">14 weeks</Label>
-                <Input type="number" value={form.defects_14} onChange={(e) => setNumber("defects_14", e.target.value)} placeholder="0" className="bg-white" />
-              </div>
-            </div>
-          </div>
-
-          <div className="border rounded-md p-4 space-y-3 bg-red-50">
-            <Label className="text-base text-red-700">Rejects (by age)</Label>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <div className="space-y-1">
-                <Label className="text-sm">11 weeks</Label>
-                <Input type="number" value={form.rejects_11} onChange={(e) => setNumber("rejects_11", e.target.value)} placeholder="0" className="bg-white" />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-sm">12 weeks</Label>
-                <Input type="number" value={form.rejects_12} onChange={(e) => setNumber("rejects_12", e.target.value)} placeholder="0" className="bg-white" />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-sm">13 weeks</Label>
-                <Input type="number" value={form.rejects_13} onChange={(e) => setNumber("rejects_13", e.target.value)} placeholder="0" className="bg-white" />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-sm">14 weeks</Label>
-                <Input type="number" value={form.rejects_14} onChange={(e) => setNumber("rejects_14", e.target.value)} placeholder="0" className="bg-white" />
-              </div>
+              <Input type="number" value={form.special || ""} onChange={(e) => setNumber("special", e.target.value)} placeholder="0" className="bg-white production-clerk-number-input" />
             </div>
           </div>
 

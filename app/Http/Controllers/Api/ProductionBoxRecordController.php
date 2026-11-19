@@ -7,6 +7,8 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 
 class ProductionBoxRecordController extends Controller
 {
@@ -104,14 +106,6 @@ class ProductionBoxRecordController extends Controller
             'class_b_small_hands',
             'class_b_cps',
             'special_product',
-            'defects_11_weeks',
-            'defects_12_weeks',
-            'defects_13_weeks',
-            'defects_14_weeks',
-            'rejects_11_weeks',
-            'rejects_12_weeks',
-            'rejects_13_weeks',
-            'rejects_14_weeks',
             'created_by',
             'created_at',
             'updated_at',
@@ -126,9 +120,9 @@ class ProductionBoxRecordController extends Controller
 
     private function validatedPayload(Request $request): array
     {
-        return $request->validate([
+        $payload = $request->validate([
             'production_date' => ['required', 'date'],
-            'beneficiary_name' => ['required', 'string', 'max:255'],
+            'beneficiary_id' => ['required', 'integer', Rule::exists('beneficiaries', 'id')],
             'class_a_big_hands' => ['required', 'integer', 'min:0'],
             'class_a_small_hands' => ['required', 'integer', 'min:0'],
             'class_a_cps' => ['required', 'integer', 'min:0'],
@@ -136,27 +130,37 @@ class ProductionBoxRecordController extends Controller
             'class_b_small_hands' => ['required', 'integer', 'min:0'],
             'class_b_cps' => ['required', 'integer', 'min:0'],
             'special_product' => ['required', 'integer', 'min:0'],
-            'defects_11_weeks' => ['required', 'integer', 'min:0'],
-            'defects_12_weeks' => ['required', 'integer', 'min:0'],
-            'defects_13_weeks' => ['required', 'integer', 'min:0'],
-            'defects_14_weeks' => ['required', 'integer', 'min:0'],
-            'rejects_11_weeks' => ['required', 'integer', 'min:0'],
-            'rejects_12_weeks' => ['required', 'integer', 'min:0'],
-            'rejects_13_weeks' => ['required', 'integer', 'min:0'],
-            'rejects_14_weeks' => ['required', 'integer', 'min:0'],
             'user_id' => ['nullable', 'integer'],
             'user_name' => ['nullable', 'string', 'max:255'],
             'edit_reason' => ['nullable', 'string'],
+        ], [
+            'beneficiary_id.required' => 'Select a registered beneficiary.',
+            'beneficiary_id.integer' => 'Select a valid registered beneficiary.',
+            'beneficiary_id.exists' => 'The selected beneficiary is not registered.',
         ]);
+
+        $nameColumn = Schema::hasColumn('beneficiaries', 'full_name') ? 'full_name' : 'name';
+        $beneficiaryName = DB::table('beneficiaries')
+            ->where('id', $payload['beneficiary_id'])
+            ->value($nameColumn);
+
+        if (! is_string($beneficiaryName) || trim($beneficiaryName) === '') {
+            throw ValidationException::withMessages([
+                'beneficiary_id' => 'Select a valid registered beneficiary.',
+            ]);
+        }
+
+        $payload['beneficiary_name'] = $beneficiaryName;
+
+        return $payload;
     }
 
     private function recordValues(array $payload, bool $creating = true): array
     {
-        $beneficiaryId = $this->resolveBeneficiaryId($payload['beneficiary_name']);
         $createdBy = $this->resolveUserId($payload['user_id'] ?? null, $payload['user_name'] ?? null);
         $values = [
             'production_date' => $payload['production_date'],
-            'beneficiary_id' => $beneficiaryId,
+            'beneficiary_id' => (int) $payload['beneficiary_id'],
             'class_a_big_hands' => $payload['class_a_big_hands'],
             'class_a_small_hands' => $payload['class_a_small_hands'],
             'class_a_cps' => $payload['class_a_cps'],
@@ -164,14 +168,6 @@ class ProductionBoxRecordController extends Controller
             'class_b_small_hands' => $payload['class_b_small_hands'],
             'class_b_cps' => $payload['class_b_cps'],
             'special_product' => $payload['special_product'],
-            'defects_11_weeks' => $payload['defects_11_weeks'],
-            'defects_12_weeks' => $payload['defects_12_weeks'],
-            'defects_13_weeks' => $payload['defects_13_weeks'],
-            'defects_14_weeks' => $payload['defects_14_weeks'],
-            'rejects_11_weeks' => $payload['rejects_11_weeks'],
-            'rejects_12_weeks' => $payload['rejects_12_weeks'],
-            'rejects_13_weeks' => $payload['rejects_13_weeks'],
-            'rejects_14_weeks' => $payload['rejects_14_weeks'],
             'updated_at' => now(),
         ];
 
@@ -186,43 +182,6 @@ class ProductionBoxRecordController extends Controller
         }
 
         return $values;
-    }
-
-    private function resolveBeneficiaryId(string $name): ?int
-    {
-        if (! Schema::hasTable('beneficiaries')) {
-            return null;
-        }
-
-        $nameColumn = Schema::hasColumn('beneficiaries', 'full_name') ? 'full_name' : (Schema::hasColumn('beneficiaries', 'name') ? 'name' : null);
-        if (! $nameColumn) {
-            return null;
-        }
-
-        $existing = DB::table('beneficiaries')->where($nameColumn, $name)->value('id');
-        if ($existing) {
-            return (int) $existing;
-        }
-
-        $values = [$nameColumn => $name];
-        $code = 'BEN-'.now()->format('ymdHis');
-        if (Schema::hasColumn('beneficiaries', 'code')) {
-            $values['code'] = $code;
-        }
-        if (Schema::hasColumn('beneficiaries', 'beneficiary_code')) {
-            $values['beneficiary_code'] = $code;
-        }
-        if (Schema::hasColumn('beneficiaries', 'active')) {
-            $values['active'] = true;
-        }
-        if (Schema::hasColumn('beneficiaries', 'created_at')) {
-            $values['created_at'] = now();
-        }
-        if (Schema::hasColumn('beneficiaries', 'updated_at')) {
-            $values['updated_at'] = now();
-        }
-
-        return (int) DB::table('beneficiaries')->insertGetId($values);
     }
 
     private function nextRecordNo(): string
@@ -325,27 +284,25 @@ class ProductionBoxRecordController extends Controller
             'class_b_small_hands' => 'Class B Small Hands',
             'class_b_cps' => 'Class B CPs',
             'special_product' => 'Special Product',
-            'defects_11_weeks' => 'Defects 11 Weeks',
-            'defects_12_weeks' => 'Defects 12 Weeks',
-            'defects_13_weeks' => 'Defects 13 Weeks',
-            'defects_14_weeks' => 'Defects 14 Weeks',
-            'rejects_11_weeks' => 'Rejects 11 Weeks',
-            'rejects_12_weeks' => 'Rejects 12 Weeks',
-            'rejects_13_weeks' => 'Rejects 13 Weeks',
-            'rejects_14_weeks' => 'Rejects 14 Weeks',
         ];
     }
 
     private function resolveUserId(?int $userId, ?string $userName): ?int
     {
-        if (! Schema::hasTable('users')) return null;
-        if ($userId && DB::table('users')->where('id', $userId)->exists()) return $userId;
+        if (! Schema::hasTable('users')) {
+            return null;
+        }
+        if ($userId && DB::table('users')->where('id', $userId)->exists()) {
+            return $userId;
+        }
 
         if ($userName) {
             $nameColumn = Schema::hasColumn('users', 'full_name') ? 'full_name' : (Schema::hasColumn('users', 'name') ? 'name' : null);
             if ($nameColumn) {
                 $matched = DB::table('users')->where($nameColumn, $userName)->value('id');
-                if ($matched) return (int) $matched;
+                if ($matched) {
+                    return (int) $matched;
+                }
             }
         }
 

@@ -145,7 +145,15 @@ class InventoryItemController extends Controller
             'reference_no' => ['required', 'string', 'max:255'],
             'stock_date' => ['required', 'date'],
             'release_type' => ['required', 'string', 'max:50'],
-            'beneficiary_id' => ['nullable', 'integer'],
+            'beneficiary_id' => [
+                'nullable',
+                'integer',
+                Rule::requiredIf(fn (): bool => $request->input('release_type') === 'credit'),
+                Rule::exists('beneficiaries', 'id')->where(function ($query): void {
+                    $activeColumn = Schema::hasColumn('beneficiaries', 'is_active') ? 'is_active' : 'active';
+                    $query->where($activeColumn, 1);
+                }),
+            ],
             'beneficiary_account_id' => ['nullable', 'string', 'max:255'],
             'beneficiary' => ['nullable', 'string', 'max:255'],
             'purpose' => ['nullable', 'string'],
@@ -157,6 +165,31 @@ class InventoryItemController extends Controller
         ]);
 
         $item = DB::transaction(function () use ($id, $payload) {
+            if (($payload['release_type'] ?? '') === 'credit') {
+                $activeColumn = Schema::hasColumn('beneficiaries', 'is_active') ? 'is_active' : 'active';
+                $nameColumn = Schema::hasColumn('beneficiaries', 'full_name') ? 'full_name' : 'name';
+                $codeColumn = Schema::hasColumn('beneficiaries', 'code') ? 'code' : 'beneficiary_code';
+                $beneficiary = DB::table('beneficiaries')
+                    ->where('id', $payload['beneficiary_id'])
+                    ->where($activeColumn, 1)
+                    ->lockForUpdate()
+                    ->first();
+
+                abort_if(! $beneficiary, 422, 'Select an active registered beneficiary for a credit release.');
+                abort_if(! is_string($beneficiary->{$codeColumn}) || trim($beneficiary->{$codeColumn}) === '', 422, 'The selected beneficiary has no registered beneficiary code.');
+                abort_if(! Schema::hasTable('credit_transactions'), 500, 'Beneficiary credit storage is not available. Contact an administrator.');
+
+                $payload['beneficiary'] = $beneficiary->{$nameColumn};
+                $payload['beneficiary_account_id'] = trim($beneficiary->{$codeColumn});
+
+                $referenceExists = (Schema::hasTable('stock_transactions')
+                    && DB::table('stock_transactions')->where('reference_no', $payload['reference_no'])->exists())
+                    || (Schema::hasTable('inventory_transactions')
+                        && DB::table('inventory_transactions')->where('reference_no', $payload['reference_no'])->exists());
+
+                abort_if($referenceExists, 409, 'This release reference has already been used.');
+            }
+
             $current = DB::table('inventory_items')->where('id', $id)->lockForUpdate()->first();
             abort_if(! $current, 404, 'Inventory item not found.');
 
@@ -326,6 +359,7 @@ class InventoryItemController extends Controller
             ];
 
             DB::table('stock_transactions')->insert($values);
+
             return;
         }
 
@@ -388,6 +422,7 @@ class InventoryItemController extends Controller
             ];
 
             DB::table('stock_transactions')->insert($values);
+
             return;
         }
 
@@ -439,6 +474,7 @@ class InventoryItemController extends Controller
             }
 
             DB::table('stock_transactions')->insert($values);
+
             return;
         }
 
@@ -545,6 +581,7 @@ class InventoryItemController extends Controller
     private function beneficiaryAccountId(string $name): string
     {
         $normalized = strtoupper(trim(preg_replace('/[^A-Za-z0-9]+/', '-', $name), '-'));
+
         return $normalized !== '' ? "BEN-{$normalized}" : '';
     }
 
@@ -567,6 +604,7 @@ class InventoryItemController extends Controller
                 'recorded_by' => $userId,
                 'txn_at' => $payload['stock_date'],
             ]);
+
             return;
         }
 

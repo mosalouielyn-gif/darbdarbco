@@ -7,6 +7,8 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 
 class HarvestRecordController extends Controller
 {
@@ -108,7 +110,7 @@ class HarvestRecordController extends Controller
     {
         $payload = $request->validate([
             'harvest_date' => ['required', 'date'],
-            'beneficiary_name' => ['required', 'string', 'max:255'],
+            'beneficiary_id' => ['required', 'integer', Rule::exists('beneficiaries', 'id')],
             'harvester_name' => ['required', 'string', 'max:255'],
             'buligs_11_weeks' => ['required', 'integer', 'min:0'],
             'buligs_12_weeks' => ['required', 'integer', 'min:0'],
@@ -116,7 +118,24 @@ class HarvestRecordController extends Controller
             'buligs_14_weeks' => ['required', 'integer', 'min:0'],
             'user_id' => ['nullable', 'integer'],
             'user_name' => ['nullable', 'string', 'max:255'],
+        ], [
+            'beneficiary_id.required' => 'Select a registered beneficiary.',
+            'beneficiary_id.integer' => 'Select a valid registered beneficiary.',
+            'beneficiary_id.exists' => 'The selected beneficiary is not registered.',
         ]);
+
+        $nameColumn = Schema::hasColumn('beneficiaries', 'full_name') ? 'full_name' : 'name';
+        $beneficiaryName = DB::table('beneficiaries')
+            ->where('id', $payload['beneficiary_id'])
+            ->value($nameColumn);
+
+        if (! is_string($beneficiaryName) || trim($beneficiaryName) === '') {
+            throw ValidationException::withMessages([
+                'beneficiary_id' => 'Select a valid registered beneficiary.',
+            ]);
+        }
+
+        $payload['beneficiary_name'] = $beneficiaryName;
 
         $payload['total_buligs'] = $payload['buligs_11_weeks']
             + $payload['buligs_12_weeks']
@@ -128,11 +147,10 @@ class HarvestRecordController extends Controller
 
     private function recordValues(array $payload, bool $creating = true): array
     {
-        $beneficiaryId = $this->resolveBeneficiaryId($payload['beneficiary_name']);
         $createdBy = $this->resolveUserId($payload['user_id'] ?? null, $payload['user_name'] ?? null);
         $values = [
             'harvest_date' => $payload['harvest_date'],
-            'beneficiary_id' => $beneficiaryId,
+            'beneficiary_id' => (int) $payload['beneficiary_id'],
             'beneficiary_name' => $payload['beneficiary_name'],
             'harvester_name' => $payload['harvester_name'],
             'buligs_11_weeks' => $payload['buligs_11_weeks'],
@@ -149,43 +167,6 @@ class HarvestRecordController extends Controller
         }
 
         return $values;
-    }
-
-    private function resolveBeneficiaryId(string $name): ?int
-    {
-        if (! Schema::hasTable('beneficiaries')) {
-            return null;
-        }
-
-        $nameColumn = Schema::hasColumn('beneficiaries', 'full_name') ? 'full_name' : (Schema::hasColumn('beneficiaries', 'name') ? 'name' : null);
-        if (! $nameColumn) {
-            return null;
-        }
-
-        $existing = DB::table('beneficiaries')->where($nameColumn, $name)->value('id');
-        if ($existing) {
-            return (int) $existing;
-        }
-
-        $values = [$nameColumn => $name];
-        $code = 'BEN-'.now()->format('ymdHis');
-        if (Schema::hasColumn('beneficiaries', 'code')) {
-            $values['code'] = $code;
-        }
-        if (Schema::hasColumn('beneficiaries', 'beneficiary_code')) {
-            $values['beneficiary_code'] = $code;
-        }
-        if (Schema::hasColumn('beneficiaries', 'active')) {
-            $values['active'] = true;
-        }
-        if (Schema::hasColumn('beneficiaries', 'created_at')) {
-            $values['created_at'] = now();
-        }
-        if (Schema::hasColumn('beneficiaries', 'updated_at')) {
-            $values['updated_at'] = now();
-        }
-
-        return (int) DB::table('beneficiaries')->insertGetId($values);
     }
 
     private function recordAudit(?int $userId, ?string $userName, string $action, string $description): void
@@ -241,14 +222,20 @@ class HarvestRecordController extends Controller
 
     private function resolveUserId(?int $userId, ?string $userName): ?int
     {
-        if (! Schema::hasTable('users')) return null;
-        if ($userId && DB::table('users')->where('id', $userId)->exists()) return $userId;
+        if (! Schema::hasTable('users')) {
+            return null;
+        }
+        if ($userId && DB::table('users')->where('id', $userId)->exists()) {
+            return $userId;
+        }
 
         if ($userName) {
             $nameColumn = Schema::hasColumn('users', 'full_name') ? 'full_name' : (Schema::hasColumn('users', 'name') ? 'name' : null);
             if ($nameColumn) {
                 $matched = DB::table('users')->where($nameColumn, $userName)->value('id');
-                if ($matched) return (int) $matched;
+                if ($matched) {
+                    return (int) $matched;
+                }
             }
         }
 
