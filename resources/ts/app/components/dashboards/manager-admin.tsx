@@ -38,6 +38,7 @@ import {
   updateBeneficiary,
   updateBeneficiaryStatus,
   updateRolePermissions,
+  updateHarvester,
   updateUserAccount,
   updateUserAccountStatus,
   verifyAdminPassword,
@@ -70,6 +71,7 @@ interface PayrollRow {
 interface RestockRow {
   dbId?: number;
   id: string; item: string; category: string; currentStock: number; reorder: number;
+  currentStockAtRequest: number | null; minimumStockAtRequest: number | null;
   qty: number; requestedBy: string; date: string; status: "Pending Review" | "Approved" | "Completed" | "Returned";
   returnReason?: string;
   reviewedBy?: string;
@@ -428,6 +430,8 @@ function mapRestockRow(row: any): RestockRow {
     category: row.category ?? row.inventory_category ?? "Not specified",
     currentStock: Number(row.current_quantity ?? 0),
     reorder: Number(row.minimum_stock ?? 0),
+    currentStockAtRequest: row.current_quantity_at_request == null ? null : Number(row.current_quantity_at_request),
+    minimumStockAtRequest: row.minimum_stock_at_request == null ? null : Number(row.minimum_stock_at_request),
     qty: Number(row.requested_quantity ?? row.quantity ?? 0),
     requestedBy: row.requested_by_name ?? "Inventory Bookkeeper",
     date: formatDateLabel(databaseDateKey(row.requested_at ?? row.created_at ?? todaySystemDate())),
@@ -1016,51 +1020,50 @@ function RestockRequests({ restock, onApprove, onReturn }: { restock: RestockRow
 
       <Card className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
         <CardContent className="p-0">
-          <Table className="table-fixed min-w-[1380px]">
+          <Table className="table-fixed min-w-[882px]">
             <colgroup>
-              <col className="w-[190px]" />
-              <col className="w-[260px]" />
-              <col className="w-[110px]" />
-              <col className="w-[110px]" />
-              <col className="w-[120px]" />
+              <col className="w-[265px]" />
               <col className="w-[150px]" />
-              <col className="w-[170px]" />
-              <col className="w-[150px]" />
+              <col className="w-[110px]" />
+              <col className="w-[105px]" />
               <col className="w-[120px]" />
+              <col className="w-[132px]" />
             </colgroup>
             <TableHeader>
               <TableRow className="bg-slate-50/80 hover:bg-slate-50/80">
-                <TableHead className="h-12 px-4 font-semibold text-slate-700">Item</TableHead><TableHead className="h-12 px-4 font-semibold text-slate-700">Category</TableHead>
-                <TableHead className="h-12 px-4 text-right font-semibold text-slate-700">Current Stock</TableHead><TableHead className="h-12 px-4 text-right font-semibold text-slate-700">Reorder Point</TableHead>
-                <TableHead className="h-12 px-4 text-right font-semibold text-slate-700">Requested Qty</TableHead><TableHead className="h-12 px-4 font-semibold text-slate-700">Requested By</TableHead>
-                <TableHead className="h-12 px-4 font-semibold text-slate-700">Date</TableHead><TableHead className="h-12 px-4 text-center font-semibold text-slate-700">Status</TableHead><TableHead className="h-12 px-4 text-center font-semibold text-slate-700">Action</TableHead>
+                <TableHead className="h-12 px-4 font-semibold text-slate-700">Material / Request</TableHead>
+                <TableHead className="h-12 px-4 font-semibold text-slate-700">Date</TableHead>
+                <TableHead className="h-12 px-4 text-right font-semibold text-slate-700">Stock</TableHead>
+                <TableHead className="h-12 px-4 text-right font-semibold text-slate-700">Req. Qty</TableHead>
+                <TableHead className="h-12 px-4 text-center font-semibold text-slate-700">Status</TableHead>
+                <TableHead className="h-12 px-2 text-center font-semibold text-slate-700">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {restock.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={9} className="h-24 text-center text-sm text-muted-foreground">No active restock requests.</TableCell>
+                  <TableCell colSpan={6} className="h-24 text-center text-sm text-muted-foreground">No active restock requests.</TableCell>
                 </TableRow>
               ) : restock.map((r) => (
                 <TableRow key={r.id}>
-                  <TableCell className="px-4 py-3 font-medium text-slate-900">{r.item}</TableCell>
-                  <TableCell className="truncate px-4 py-3 text-slate-600" title={r.category}>{r.category}</TableCell>
-                  <TableCell className="px-4 py-3 text-right tabular-nums">{r.currentStock}</TableCell>
-                  <TableCell className="px-4 py-3 text-right tabular-nums">{r.reorder}</TableCell>
+                  <TableCell className="whitespace-normal px-4 py-3">
+                    <div className="break-words font-medium text-slate-900">{r.item}</div>
+                    <div className="break-all text-xs text-muted-foreground">{r.id}</div>
+                  </TableCell>
+                  <TableCell className="px-4 py-3 text-sm text-slate-600">{r.date}</TableCell>
+                  <TableCell className="px-4 py-3 text-right tabular-nums">{r.currentStockAtRequest ?? "N/A"}</TableCell>
                   <TableCell className="px-4 py-3 text-right font-medium tabular-nums">{r.qty.toLocaleString()}</TableCell>
-                  <TableCell className="truncate px-4 py-3" title={r.requestedBy}>{r.requestedBy}</TableCell>
-                  <TableCell className="px-4 py-3 text-slate-600">{r.date}</TableCell>
                   <TableCell className="px-4 py-3 text-center"><RestockBadge s={r.status} /></TableCell>
-                  <TableCell className="px-4 py-3">
+                  <TableCell className="px-2 py-3">
                     <div className="flex items-center justify-center gap-2">
+                      <button type="button" title="View" aria-label={`View ${r.id}`} className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-slate-100 text-slate-700 transition-colors hover:bg-slate-200" onClick={() => setView(r)}>
+                        <Eye className="h-4 w-4" />
+                      </button>
                       <button type="button" title="Approve" aria-label={`Approve ${r.id}`} className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-emerald-50 text-emerald-700 transition-colors hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60" disabled={r.status !== "Pending Review" || approvingId === r.id || returningId === r.id} onClick={() => openApproveConfirmation(r)}>
                         {approvingId === r.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
                       </button>
                       <button type="button" title="Return" aria-label={`Return ${r.id}`} className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-amber-50 text-amber-700 transition-colors hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60" disabled={r.status !== "Pending Review" || approvingId === r.id || returningId === r.id} onClick={() => handleReturn(r)}>
                         {returningId === r.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Undo2 className="h-4 w-4" />}
-                      </button>
-                      <button type="button" title="View" aria-label={`View ${r.id}`} className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-slate-100 text-slate-700 transition-colors hover:bg-slate-200" onClick={() => setView(r)}>
-                        <Eye className="h-4 w-4" />
                       </button>
                     </div>
                   </TableCell>
@@ -1079,13 +1082,21 @@ function RestockRequests({ restock, onApprove, onReturn }: { restock: RestockRow
               <div className="grid grid-cols-2 gap-3 p-3 bg-slate-50 rounded-md">
                 <Field label="Item" value={view.item} />
                 <Field label="Category" value={view.category} />
-                <Field label="Current Stock" value={String(view.currentStock)} />
-                <Field label="Reorder Point" value={String(view.reorder)} />
+                <Field label="Current Qty at Request" value={String(view.currentStockAtRequest ?? "N/A")} />
+                <Field label="Minimum Stock at Request" value={String(view.minimumStockAtRequest ?? "N/A")} />
                 <Field label="Requested Qty" value={view.qty.toLocaleString()} />
                 <Field label="Requested By" value={view.requestedBy} />
-                <Field label="Date" value={view.date} />
+                <Field label="Date Requested" value={view.date} />
                 <div className="space-y-1"><div className="text-xs text-muted-foreground">Status</div><RestockBadge s={view.status} /></div>
               </div>
+              {view.reason && <Field label="Reason for Restock" value={view.reason} />}
+              {view.notes && <Field label="Additional Notes" value={view.notes} />}
+              {view.status !== "Pending Review" && (view.reviewedBy || view.finalizedAt) && (
+                <div className="grid grid-cols-2 gap-3 rounded-md border bg-white p-3">
+                  {view.reviewedBy && <Field label="Reviewed By" value={view.reviewedBy} />}
+                  {view.finalizedAt && <Field label="Decision Date" value={formatDatabaseDateTime(view.finalizedAt)} />}
+                </div>
+              )}
               {view.returnReason && (
                 <div className="p-3 border border-red-200 bg-red-50 rounded-md text-red-800 text-sm">
                   <strong>Return Reason:</strong> {view.returnReason}
@@ -2282,7 +2293,7 @@ function BeneficiaryHarvesterManagement({ beneficiaries, setBeneficiaries, users
   beneficiaries: MasterBeneficiary[];
   setBeneficiaries: React.Dispatch<React.SetStateAction<MasterBeneficiary[]>>;
   users: Account[];
-  setUsers: (u: Account[]) => void;
+  setUsers: React.Dispatch<React.SetStateAction<Account[]>>;
   setAudit: React.Dispatch<React.SetStateAction<AuditRow[]>>;
   adminId: string;
   adminName: string;
@@ -2291,9 +2302,11 @@ function BeneficiaryHarvesterManagement({ beneficiaries, setBeneficiaries, users
   const [search, setSearch] = useState("");
   const [saving, setSaving] = useState(false);
   const [editingBeneficiary, setEditingBeneficiary] = useState<MasterBeneficiary | null>(null);
+  const [editingHarvester, setEditingHarvester] = useState<Account | null>(null);
   const [statusTarget, setStatusTarget] = useState<MasterBeneficiary | null>(null);
   const [beneficiaryForm, setBeneficiaryForm] = useState({ code: "", name: "", contact: "", address: "", active: true, remarks: "" });
   const [harvesterForm, setHarvesterForm] = useState({ code: "", name: "", contact: "", address: "", active: true });
+  const [harvesterEditForm, setHarvesterEditForm] = useState({ name: "", contact: "", address: "", active: true });
   const harvesters = users.filter((user) => user.role === "harvester");
 
   const recordManagementAudit = (action: AuditRow["action"], module: string, affectedRecord: string, description: string, remarks?: string) => {
@@ -2462,6 +2475,42 @@ function BeneficiaryHarvesterManagement({ beneficiaries, setBeneficiaries, users
     }
   };
 
+  const openHarvesterEdit = (harvester: Account) => {
+    setEditingHarvester(harvester);
+    setHarvesterEditForm({
+      name: harvester.name,
+      contact: harvester.contact ?? "",
+      address: harvester.remarks ?? "",
+      active: harvester.active,
+    });
+  };
+
+  const saveHarvesterEdit = async () => {
+    if (!editingHarvester || saving) return;
+    if (!harvesterEditForm.name.trim()) {
+      toast.error("Harvester name is required");
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const updated = mapAccount(await updateHarvester(editingHarvester.id, {
+        name: harvesterEditForm.name.trim(),
+        contact: harvesterEditForm.contact.trim(),
+        address: harvesterEditForm.address.trim(),
+        active: harvesterEditForm.active,
+      }));
+      setUsers((current) => current.map((user) => user.id === updated.id ? updated : user));
+      recordManagementAudit("Updated", "Harvesters", updated.id, `Updated harvester ${updated.name}`, "Harvester master information updated.");
+      setEditingHarvester(null);
+      toast.success("Harvester information updated");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to update harvester.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -2557,9 +2606,14 @@ function BeneficiaryHarvesterManagement({ beneficiaries, setBeneficiaries, users
                     <TableCell><Badge className={harvester.active ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-700"}>{harvester.active ? "Active" : "Inactive"}</Badge></TableCell>
                     <TableCell className="text-xs">{harvester.updatedAt || harvester.createdAt || "-"}</TableCell>
                     <TableCell>
-                      <button className={`p-1.5 rounded ${harvester.active ? "bg-red-100 text-red-700 hover:bg-red-200" : "bg-emerald-100 text-emerald-700 hover:bg-emerald-200"}`} onClick={() => updateHarvesterStatus(harvester)} title={harvester.active ? "Deactivate" : "Activate"}>
-                        <Power className="h-3.5 w-3.5" />
-                      </button>
+                      <div className="flex items-center gap-1">
+                        <button type="button" className="p-1.5 rounded bg-sky-100 text-sky-700 hover:bg-sky-200" onClick={() => openHarvesterEdit(harvester)} title="Edit Harvester" aria-label="Edit Harvester">
+                          <Edit className="h-3.5 w-3.5" />
+                        </button>
+                        <button type="button" className={`p-1.5 rounded ${harvester.active ? "bg-red-100 text-red-700 hover:bg-red-200" : "bg-emerald-100 text-emerald-700 hover:bg-emerald-200"}`} onClick={() => updateHarvesterStatus(harvester)} title={harvester.active ? "Deactivate" : "Activate"} aria-label={harvester.active ? "Deactivate Harvester" : "Activate Harvester"}>
+                          <Power className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -2590,6 +2644,36 @@ function BeneficiaryHarvesterManagement({ beneficiaries, setBeneficiaries, users
               <div className="flex flex-col-reverse gap-2 pt-2 border-t sm:flex-row sm:justify-end [&>button]:w-full sm:[&>button]:w-auto">
                 <Button variant="outline" onClick={() => setEditingBeneficiary(null)} disabled={saving}>Cancel</Button>
                 <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={saveBeneficiaryEdit} disabled={saving}>Save Changes</Button>
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!editingHarvester} onOpenChange={(open) => !open && !saving && setEditingHarvester(null)}>
+        <DialogContent className="!max-w-[calc(100vw-1rem)] w-[calc(100vw-1rem)] sm:!max-w-[640px]">
+          {editingHarvester && (
+            <>
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2 text-emerald-700"><Edit className="h-5 w-5" />Edit Harvester Information</DialogTitle>
+                <DialogDescription>Update this harvester's master information. The existing code and linked records will be preserved.</DialogDescription>
+              </DialogHeader>
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                <div className="space-y-1"><Label>Harvester Code</Label><Input value={editingHarvester.username || "-"} readOnly aria-readonly="true" /></div>
+                <div className="space-y-1"><Label>Harvester Name</Label><Input autoComplete="name" value={harvesterEditForm.name} onChange={(event) => setHarvesterEditForm({ ...harvesterEditForm, name: event.target.value })} /></div>
+                <div className="space-y-1"><Label>Contact Number</Label><Input autoComplete="tel" inputMode="tel" value={harvesterEditForm.contact} onChange={(event) => setHarvesterEditForm({ ...harvesterEditForm, contact: event.target.value })} /></div>
+                <div className="space-y-1">
+                  <Label>Status</Label>
+                  <Select value={harvesterEditForm.active ? "active" : "inactive"} onValueChange={(value) => setHarvesterEditForm({ ...harvesterEditForm, active: value === "active" })}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent><SelectItem value="active">Active</SelectItem><SelectItem value="inactive">Inactive</SelectItem></SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1 md:col-span-2"><Label>Address</Label><Textarea autoComplete="street-address" value={harvesterEditForm.address} onChange={(event) => setHarvesterEditForm({ ...harvesterEditForm, address: event.target.value })} /></div>
+              </div>
+              <div className="flex flex-col-reverse gap-2 pt-2 border-t sm:flex-row sm:justify-end [&>button]:w-full sm:[&>button]:w-auto">
+                <Button variant="outline" onClick={() => setEditingHarvester(null)} disabled={saving}>Cancel</Button>
+                <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={saveHarvesterEdit} disabled={saving}>{saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}Save Changes</Button>
               </div>
             </>
           )}

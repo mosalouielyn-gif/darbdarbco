@@ -68,6 +68,57 @@ class UserAccountController extends Controller
         return response()->json($account);
     }
 
+    public function updateHarvester(Request $request, int $id): JsonResponse
+    {
+        $payload = $request->validate([
+            'name' => ['required', 'string', 'max:255'],
+            'contact' => ['nullable', 'string', 'max:255'],
+            'address' => ['nullable', 'string', 'max:2000'],
+            'active' => ['required', 'boolean'],
+        ]);
+
+        $actor = $this->findUser((int) $request->user()->getAuthIdentifier());
+        abort_unless($actor, 403, 'The authenticated user could not be verified.');
+
+        return DB::transaction(function () use ($id, $payload, $actor): JsonResponse {
+            $harvester = $this->findUser($id);
+            abort_unless($harvester && $harvester->role === 'harvester', 404, 'Harvester not found.');
+
+            $values = [
+                $this->nameColumn() => trim($payload['name']),
+                $this->activeColumn() => $payload['active'],
+                'updated_at' => now(),
+            ];
+
+            if (Schema::hasColumn('users', 'contact_information')) {
+                $values['contact_information'] = isset($payload['contact']) ? trim($payload['contact']) : null;
+            }
+
+            if (Schema::hasColumn('users', 'remarks')) {
+                $values['remarks'] = isset($payload['address']) ? trim($payload['address']) : null;
+            }
+
+            $query = DB::table('users')->where('id', $id);
+            if (Schema::hasColumn('users', 'role')) {
+                $query->where('role', 'harvester');
+            } elseif (Schema::hasColumn('users', 'role_id') && Schema::hasTable('roles')) {
+                $query->whereIn('role_id', DB::table('roles')->select('id')->where('code', 'harvester'));
+            }
+
+            abort_unless($query->update($values) === 1, 404, 'Harvester not found.');
+
+            $updatedHarvester = $this->findUser($id);
+            $auditPayload = [
+                'admin_id' => (int) $actor->id,
+                'admin_name' => (string) $actor->name,
+                'remarks' => 'Harvester master information updated.',
+            ];
+            $this->recordAudit($auditPayload, 'Updated', "Updated harvester account {$updatedHarvester->name}");
+
+            return response()->json($updatedHarvester);
+        });
+    }
+
     public function status(Request $request, int $id): JsonResponse
     {
         $payload = $request->validate([

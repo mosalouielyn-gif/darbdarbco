@@ -11,6 +11,7 @@ use App\Http\Controllers\Api\InventoryItemController;
 use App\Http\Controllers\Api\PayrollSlipController;
 use App\Http\Controllers\Api\ProductionBoxRecordController;
 use App\Http\Controllers\Api\RestockRequestController;
+use App\Http\Controllers\Api\RestockRequestNotificationController;
 use App\Http\Controllers\Api\RolePermissionController;
 use App\Http\Controllers\Api\SalesCheckoutController;
 use App\Http\Controllers\Api\UserAccountController;
@@ -42,6 +43,8 @@ Route::middleware(['web', 'auth'])->group(function (): void {
     });
 
     Route::middleware(EnsureUserHasRole::class.':inventory_bookkeeper')->group(function (): void {
+        Route::get('/restock-request-notifications', [RestockRequestNotificationController::class, 'index']);
+        Route::patch('/restock-request-notifications/{notificationId}/read', [RestockRequestNotificationController::class, 'markAsRead']);
         Route::post('/inventory-items', [InventoryItemController::class, 'store']);
         Route::put('/inventory-items/{id}', [InventoryItemController::class, 'update']);
         Route::put('/inventory-items/{id}/status', [InventoryItemController::class, 'status']);
@@ -77,6 +80,7 @@ Route::middleware(['web', 'auth'])->group(function (): void {
         Route::post('/users', [UserAccountController::class, 'store']);
         Route::put('/users/{id}', [UserAccountController::class, 'update']);
         Route::put('/users/{id}/status', [UserAccountController::class, 'status']);
+        Route::put('/harvesters/{id}', [UserAccountController::class, 'updateHarvester']);
         Route::post('/beneficiaries', [BeneficiaryController::class, 'store']);
         Route::put('/beneficiaries/{id}', [BeneficiaryController::class, 'update']);
         Route::put('/beneficiaries/{id}/status', [BeneficiaryController::class, 'status']);

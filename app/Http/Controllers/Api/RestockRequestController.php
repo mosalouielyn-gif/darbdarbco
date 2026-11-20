@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\User;
+use App\Notifications\RestockRequestDecision;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -13,9 +15,19 @@ class RestockRequestController extends Controller
     public function store(Request $request): JsonResponse
     {
         $payload = $this->validatedPayload($request);
+        $inventoryItem = $this->inventoryItemForSnapshot($payload);
+        $payload['item_id'] = $inventoryItem->id;
         $requestNo = 'RR-'.now()->format('YmdHis');
 
-        $id = DB::table('restock_requests')->insertGetId($this->values($payload, $requestNo, true));
+        $values = $this->values($payload, $requestNo, true);
+        if (Schema::hasColumn('restock_requests', 'current_quantity_at_request')) {
+            $values['current_quantity_at_request'] = $inventoryItem->on_hand;
+        }
+        if (Schema::hasColumn('restock_requests', 'minimum_stock_at_request')) {
+            $values['minimum_stock_at_request'] = $inventoryItem->minimum_stock;
+        }
+
+        $id = DB::table('restock_requests')->insertGetId($values);
         $record = $this->findRequest($id);
 
         $this->recordAudit($payload['user_id'] ?? null, $payload['user_name'] ?? null, 'Created', "Created restock request {$requestNo}");
@@ -131,6 +143,29 @@ class RestockRequestController extends Controller
         return $payload;
     }
 
+    private function inventoryItemForSnapshot(array $payload): object
+    {
+        abort_if(! Schema::hasTable('inventory_items'), 422, 'An inventory item is required to capture stock quantities.');
+
+        $query = DB::table('inventory_items');
+        if (! empty($payload['item_id'])) {
+            $query->where('id', $payload['item_id']);
+        } else {
+            $itemNameColumn = Schema::hasColumn('inventory_items', 'item_name') ? 'item_name' : 'name';
+            $matches = $query->where($itemNameColumn, trim((string) ($payload['material_name'] ?? '')))
+                ->limit(2)
+                ->get(['id', 'on_hand', 'minimum_stock']);
+            abort_if($matches->count() !== 1, 422, 'Select a uniquely identified inventory item to capture stock quantities.');
+
+            return $matches->first();
+        }
+
+        $item = $query->first(['id', 'on_hand', 'minimum_stock']);
+        abort_if(! $item, 422, 'The selected inventory item could not be found.');
+
+        return $item;
+    }
+
     private function values(array $payload, ?string $requestNo, bool $creating): array
     {
         $values = [
@@ -175,6 +210,22 @@ class RestockRequestController extends Controller
             DB::table('restock_requests')->where('id', $id)->update($values);
             $record = $this->findRequest($id);
             $this->recordAudit($payload['user_id'] ?? null, $payload['user_name'] ?? null, $action, "{$action} restock request {$record->request_no}");
+
+            if (Schema::hasTable('notifications') && in_array($status, ['Approved', 'Rejected'], true) && ! empty($current->requested_by)) {
+                $recipient = User::query()->find($current->requested_by);
+
+                if ($recipient) {
+                    $recipient->notify(new RestockRequestDecision([
+                        'restock_request_id' => (int) $current->id,
+                        'request_id' => (string) ($current->request_no ?? $current->id),
+                        'material_name' => (string) ($record->material_name ?? $record->inventory_item_name ?? $current->material_name ?? 'Unknown material'),
+                        'requested_quantity' => (float) ($current->requested_quantity ?? $current->quantity ?? 0),
+                        'status' => $status,
+                        'decided_at' => now()->toIso8601String(),
+                        'review_notes' => $payload['review_notes'] ?? null,
+                    ]));
+                }
+            }
 
             return $record;
         });

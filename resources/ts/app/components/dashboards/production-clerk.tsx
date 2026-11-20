@@ -397,12 +397,12 @@ function ProductionRecords({ tab, setTab, user }: { tab: string; setTab: (t: str
       </div>
 
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="bg-white border w-full justify-start h-auto flex-wrap p-1">
-          <TabsTrigger value="harvest" className="data-[state=active]:bg-emerald-600 data-[state=active]:text-white">
-            <CheckCircle2 className="h-4 w-4 mr-1" />Harvest Records
+        <TabsList className="grid w-full grid-cols-2 items-stretch gap-2 rounded-none bg-transparent p-0">
+          <TabsTrigger value="harvest" className="h-10 min-h-10 w-full min-w-0 gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-center text-slate-900 transition-colors hover:bg-slate-50 data-[state=active]:border-emerald-600 data-[state=active]:bg-emerald-600 data-[state=active]:text-white">
+            <CheckCircle2 className="h-4 w-4" />Harvest Records
           </TabsTrigger>
-          <TabsTrigger value="production" className="data-[state=active]:bg-emerald-600 data-[state=active]:text-white">
-            <Boxes className="h-4 w-4 mr-1" />Production Boxes
+          <TabsTrigger value="production" className="h-10 min-h-10 w-full min-w-0 gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-center text-slate-900 transition-colors hover:bg-slate-50 data-[state=active]:border-emerald-600 data-[state=active]:bg-emerald-600 data-[state=active]:text-white">
+            <Boxes className="h-4 w-4" />Production Boxes
           </TabsTrigger>
         </TabsList>
 

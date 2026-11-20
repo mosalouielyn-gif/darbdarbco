@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { DarbcoLayout } from "../darbco-layout";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../ui/card";
 import { Input } from "../ui/input";
@@ -15,16 +15,17 @@ import { Checkbox } from "../ui/checkbox";
 import {
   LayoutDashboard, Boxes, ArrowDownCircle, ArrowUpCircle, CreditCard, History,
   FileBarChart2, AlertTriangle, Package, TrendingUp, Plus, Search, Edit, Eye,
-  Trash2, Undo2, ChevronLeft, ChevronRight, ChevronDown, Check, CheckCircle2, Upload, Lock, Loader2, ShoppingCart, Receipt, Banknote,
+  Trash2, Undo2, ChevronLeft, ChevronRight, ChevronDown, Check, CheckCircle2, Upload, Lock, Loader2, ShoppingCart, Receipt, Banknote, Bell,
 } from "lucide-react";
 import { User } from "../types";
 import { toast } from "sonner";
 import { useAppData } from "../../lib/app-data-context";
 import { RestockHistory, type RestockHistoryRecord } from "../restock-history";
-import { adjustInventoryItem, cancelRestockRequest, confirmRestockDelivery, createInventoryItem, createRestockRequest, createSalesCheckout, releaseInventoryItem, returnBorrowedMaterial, stockInInventoryItem, updateInventoryItem, updateInventoryItemStatus, updateRestockRequest } from "../../lib/api";
+import { adjustInventoryItem, cancelRestockRequest, confirmRestockDelivery, createInventoryItem, createRestockRequest, createSalesCheckout, getRestockDecisionNotifications, markRestockDecisionNotificationAsRead, releaseInventoryItem, returnBorrowedMaterial, stockInInventoryItem, updateInventoryItem, updateInventoryItemStatus, updateRestockRequest, type RestockDecisionNotification } from "../../lib/api";
 import { addDaysSystemDate, currentSystemTime, databaseDateKey, formatDatabaseDateTime, formatSystemDate, formatSystemDateTime, todaySystemDate } from "../../lib/date-time";
 import { usePersistentState } from "../../lib/use-persistent-state";
 import { BeneficiaryOption, buildActiveBeneficiaryOptions } from "../../lib/beneficiary-options";
+import { resolveRestockMaterialName } from "../../lib/restock-material-name";
 
 interface Props { user: User; onLogout: () => void }
 
@@ -48,6 +49,9 @@ export function InventoryBookkeeperDashboard({ user, onLogout }: Props) {
   const [historyRows, setHistoryRows] = useState<StockHistoryRow[]>(stockHistory);
   const [salesReceiptRows, setSalesReceiptRows] = useState<SalesReceipt[]>([]);
   const [restockRows, setRestockRows] = useState<RestockRequest[]>(initialRestockRequests(user.name));
+  const [restockNotifications, setRestockNotifications] = useState<RestockDecisionNotification[]>([]);
+  const [notificationUnreadCount, setNotificationUnreadCount] = useState(0);
+  const [notificationRequestId, setNotificationRequestId] = useState<number | null>(null);
   const [suggestedRestockItemId, setSuggestedRestockItemId] = useState<string | null>(null);
   const beneficiaries = buildProductionBeneficiaryOptions(data);
 
@@ -88,6 +92,28 @@ export function InventoryBookkeeperDashboard({ user, onLogout }: Props) {
   }, [data?.restockRequests]);
 
   useEffect(() => {
+    let mounted = true;
+    const loadNotifications = async () => {
+      try {
+        const response = await getRestockDecisionNotifications();
+        if (mounted) {
+          setRestockNotifications(response.notifications);
+          setNotificationUnreadCount(response.unread_count);
+        }
+      } catch {
+        // The dashboard can still be used while notifications are unavailable.
+      }
+    };
+
+    void loadNotifications();
+    const interval = window.setInterval(() => void loadNotifications(), 30_000);
+    return () => {
+      mounted = false;
+      window.clearInterval(interval);
+    };
+  }, []);
+
+  useEffect(() => {
     if (active === "released") {
       setActive("sales");
     }
@@ -102,6 +128,27 @@ export function InventoryBookkeeperDashboard({ user, onLogout }: Props) {
           credits={creditRows}
           history={historyRows}
           restockRequests={restockRows}
+          notifications={restockNotifications}
+          unreadNotificationCount={notificationUnreadCount}
+          onOpenNotification={(notification) => {
+            setRestockRows((current) => current.map((request) => request.dbId === notification.data.restock_request_id
+              ? {
+                  ...request,
+                  status: notification.data.status === "Rejected" ? "Returned" : "Approved",
+                  finalizedAt: notification.data.decided_at,
+                  reviewNotes: notification.data.review_notes ?? request.reviewNotes,
+                }
+              : request));
+            setNotificationRequestId(notification.data.restock_request_id);
+            setActive("restock");
+            void markRestockDecisionNotificationAsRead(notification.id)
+              .then(() => {
+                const readAt = new Date().toISOString();
+                setRestockNotifications((current) => current.map((item) => item.id === notification.id ? { ...item, read_at: readAt } : item));
+                setNotificationUnreadCount((current) => Math.max(0, current - (notification.read_at ? 0 : 1)));
+              })
+              .catch((error) => toast.error(error instanceof Error ? error.message : "Unable to mark notification as read."));
+          }}
           onRestockSuggestion={(itemId) => {
             setSuggestedRestockItemId(itemId);
             setActive("restock");
@@ -141,6 +188,8 @@ export function InventoryBookkeeperDashboard({ user, onLogout }: Props) {
           setRequests={setRestockRows}
           suggestedItemId={suggestedRestockItemId}
           onSuggestionHandled={() => setSuggestedRestockItemId(null)}
+          openRequestId={notificationRequestId}
+          onNotificationRequestOpened={() => setNotificationRequestId(null)}
         />
       )}
       {active === "restock-history" && <RestockHistory records={restockRows.map(toRestockHistoryRecord).filter((record): record is RestockHistoryRecord => record !== null)} />}
@@ -171,14 +220,45 @@ const recentActivity = [
   { date: "May 17, 2025 08:51 AM", activity: "Release", material: "Insecticide", reference: "RS-2025-0006", account: "Bookkeeper" },
 ];
 
-function Dashboard({ goTo, items, credits, history, restockRequests, onRestockSuggestion }: {
+function Dashboard({ goTo, items, credits, history, restockRequests, notifications, unreadNotificationCount, onOpenNotification, onRestockSuggestion }: {
   goTo: (page: string) => void;
   items: InventoryItem[];
   credits: CreditRow[];
   history: StockHistoryRow[];
   restockRequests: RestockRequest[];
+  notifications: RestockDecisionNotification[];
+  unreadNotificationCount: number;
+  onOpenNotification: (notification: RestockDecisionNotification) => void;
   onRestockSuggestion: (itemId: string) => void;
 }) {
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const notificationContainerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!notificationsOpen) {
+      return;
+    }
+
+    const closeOnOutsideClick = (event: PointerEvent) => {
+      if (!notificationContainerRef.current?.contains(event.target as Node)) {
+        setNotificationsOpen(false);
+      }
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setNotificationsOpen(false);
+      }
+    };
+
+    document.addEventListener("pointerdown", closeOnOutsideClick);
+    document.addEventListener("keydown", closeOnEscape);
+
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsideClick);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [notificationsOpen]);
+
   const activeItems = items.filter((item) => item.active !== false);
   const dashboardLowStockItems = activeItems
     .filter((item) => deriveStatus(item) === "Low Stock" || deriveStatus(item) === "Out of Stock")
@@ -207,7 +287,60 @@ function Dashboard({ goTo, items, credits, history, restockRequests, onRestockSu
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="flex items-center gap-2"><LayoutDashboard className="h-6 w-6 text-emerald-700" />Dashboard</h1>
-        <div className="text-muted-foreground">{formatSystemDate()}</div>
+        <div className="flex items-center gap-3">
+          <div className="relative" ref={notificationContainerRef}>
+            <Button
+              variant="outline"
+              size="icon"
+              className="relative"
+              aria-label={`Restock notifications${unreadNotificationCount ? `, ${unreadNotificationCount} unread` : ""}`}
+              aria-expanded={notificationsOpen}
+              aria-haspopup="dialog"
+              onClick={() => setNotificationsOpen((open) => !open)}
+            >
+              <Bell className="h-4 w-4" />
+              {unreadNotificationCount > 0 && (
+                <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-emerald-600 px-1 text-[10px] font-semibold text-white">
+                  {unreadNotificationCount > 99 ? "99+" : unreadNotificationCount}
+                </span>
+              )}
+            </Button>
+            {notificationsOpen && (
+            <div role="dialog" aria-label="Restock decisions" className="absolute right-0 top-full z-50 mt-2 w-[min(24rem,calc(100vw-2rem))] rounded-md border bg-popover p-0 text-popover-foreground shadow-md">
+              <div className="border-b px-4 py-3 font-semibold">Restock decisions</div>
+              <div className="max-h-80 overflow-y-auto p-2">
+                {notifications.length === 0 ? (
+                  <p className="p-3 text-sm text-muted-foreground">No restock decisions yet.</p>
+                ) : notifications.map((notification) => (
+                  <button
+                    key={notification.id}
+                    type="button"
+                    className={`mb-1 block w-full rounded-md p-3 text-left hover:bg-emerald-50 ${notification.read_at ? "" : "bg-emerald-50/70"}`}
+                    onClick={() => {
+                      setNotificationsOpen(false);
+                      onOpenNotification(notification);
+                    }}
+                  >
+                    <span className="flex items-center justify-between gap-2">
+                      <span className="font-medium">{notification.data.material_name}</span>
+                      <Badge className={notification.data.status === "Approved" ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"}>
+                        {notification.data.status === "Rejected" ? "Returned" : "Approved"}
+                      </Badge>
+                    </span>
+                    <span className="mt-1 block text-xs text-muted-foreground">
+                      {notification.data.request_id} · Qty {notification.data.requested_quantity}
+                    </span>
+                    <span className="mt-1 block text-xs text-muted-foreground">
+                      {formatDatabaseDateTime(notification.data.decided_at)}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+            )}
+          </div>
+          <div className="text-muted-foreground">{formatSystemDate()}</div>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -577,7 +710,7 @@ function mapCreditTransaction(row: any): CreditRow {
     date: formatCreditTransactionTime(row.created_at ?? row.credit_date ?? todayInputDate()),
     beneficiary: row.beneficiary_name ?? "",
     beneficiaryId: row.beneficiary_account_id ?? beneficiaryAccountId(row.beneficiary_name ?? ""),
-    material: row.material_name ?? "",
+    material: resolveRestockMaterialName(row),
     qty: Number(row.quantity ?? 0),
     unit: row.unit ?? "",
     unitCost: Number(row.unit_cost ?? 0),
@@ -617,10 +750,12 @@ function mapRestockRequest(row: any): RestockRequest {
     itemDbId: Number(row.item_id ?? row.inventory_item_id) || undefined,
     id: String(row.request_no ?? row.id),
     dateRequested: formatDateLabel(databaseDateKey(row.requested_at ?? row.created_at ?? todayInputDate())),
-    material: row.material_name ?? "",
+    material: resolveRestockMaterialName(row),
     category: row.category ?? row.inventory_category ?? "Not specified",
     current: Number(row.current_quantity ?? 0),
     minimumStock: Number(row.minimum_stock ?? 0),
+    currentAtRequest: row.current_quantity_at_request == null ? null : Number(row.current_quantity_at_request),
+    minimumStockAtRequest: row.minimum_stock_at_request == null ? null : Number(row.minimum_stock_at_request),
     requested: Number(row.requested_quantity ?? row.quantity ?? 0),
     reason: row.reason ?? "",
     requestedBy: row.requested_by_name ?? row.user_name ?? "Inventory Bookkeeper",
@@ -1041,7 +1176,7 @@ function SalesPos({ items, setItems, setCredits, setHistory, history, salesRecei
                           ? "bg-amber-100 text-amber-800"
                           : "bg-emerald-100 text-emerald-800"
                       }>
-                        Quantity: {remainingStock} {item.unit}
+                        Quantity: {remainingStock}
                       </Badge>
                     </div>
                   </div>
@@ -2132,12 +2267,13 @@ function StockIn({ open, onOpenChange, items, setItems, setHistory, user }: {
   const [unitPrice, setUnitPrice] = useState("");
   const [supplier, setSupplier] = useState("");
   const [reference, setReference] = useState(generateStockInReference());
-  const [dateReceived, setDateReceived] = useState(todayInputDate());
+  const [dateReceived, setDateReceived] = useState("");
   const [expirationDate, setExpirationDate] = useState("");
   const [remarks, setRemarks] = useState("");
   const [documentName, setDocumentName] = useState("");
   const [saving, setSaving] = useState(false);
   const selectedItem = activeItems.find((item) => item.id === itemId);
+  const selectedItemHasExpiration = selectedItem !== undefined && !isNoExpiration(selectedItem.expiry);
   const quantityValue = Number(quantity) || 0;
   const unitPriceValue = Number(unitPrice) || 0;
   const totalAmount = quantityValue * unitPriceValue;
@@ -2148,7 +2284,7 @@ function StockIn({ open, onOpenChange, items, setItems, setHistory, user }: {
     if (item) {
       setUnitPrice(String(item.cost || ""));
       setSupplier(item.supplier ?? "");
-      setExpirationDate(item.expiry && item.expiry !== "—" && item.expiry !== "â€”" ? item.expiry : "");
+      setExpirationDate(isNoExpiration(item.expiry) ? "" : item.expiry);
     }
   };
 
@@ -2157,9 +2293,8 @@ function StockIn({ open, onOpenChange, items, setItems, setHistory, user }: {
     setQuantity("");
     setUnitPrice("");
     setSupplier("");
-    const today = todayInputDate();
-    setReference(generateStockInReference(today));
-    setDateReceived(today);
+    setReference(generateStockInReference());
+    setDateReceived("");
     setExpirationDate("");
     setRemarks("");
     setDocumentName("");
@@ -2167,11 +2302,16 @@ function StockIn({ open, onOpenChange, items, setItems, setHistory, user }: {
 
   useEffect(() => {
     if (open) {
-      setReference(generateStockInReference(dateReceived));
+      setDateReceived("");
+      setReference(generateStockInReference());
     }
   }, [open]);
 
   const handleSave = () => {
+    if (!dateReceived) {
+      toast.error("Date received is required");
+      return;
+    }
     if (!selectedItem) {
       toast.error("Please select an inventory item");
       return;
@@ -2231,6 +2371,10 @@ function StockIn({ open, onOpenChange, items, setItems, setHistory, user }: {
   };
 
   const handleSaveToDatabase = async () => {
+    if (!dateReceived) {
+      toast.error("Date received is required");
+      return;
+    }
     if (!selectedItem) {
       toast.error("Please select an inventory item");
       return;
@@ -2260,7 +2404,7 @@ function StockIn({ open, onOpenChange, items, setItems, setHistory, user }: {
         supplier: supplier.trim(),
         reference_no: reference.trim(),
         stock_date: dateReceived,
-        expiry_date: expirationDate || null,
+        expiry_date: selectedItemHasExpiration ? expirationDate || null : null,
         notes: remarks.trim() || `Received from ${supplier.trim()}. Total amount: PHP ${totalAmount.toLocaleString()}.`,
         document_name: documentName || undefined,
         user_id: currentUserId(user),
@@ -2325,13 +2469,14 @@ function StockIn({ open, onOpenChange, items, setItems, setHistory, user }: {
               <InventoryDateInput value={dateReceived} onChange={setDateReceived} />
             </div>
 
-            <div className="space-y-1">
+            <div className="space-y-1 md:col-span-2">
               <Label>Quantity Added <span className="text-red-500">*</span></Label>
-              <Input type="number" value={quantity} onChange={(event) => setQuantity(event.target.value)} placeholder="0" />
-            </div>
-            <div className="space-y-1">
-              <Label>Unit</Label>
-              <Input value={selectedItem?.unit ?? ""} placeholder="Auto-filled" disabled />
+              <div className="flex">
+                <Input className="rounded-r-none" type="number" value={quantity} onChange={(event) => setQuantity(event.target.value)} placeholder="0" />
+                <span className="inline-flex h-9 min-w-16 items-center justify-center rounded-r-md border border-l-0 bg-muted px-3 text-sm text-muted-foreground">
+                  {selectedItem?.unit || "Unit"}
+                </span>
+              </div>
             </div>
             <div className="space-y-1">
               <Label>Unit Price (₱) <span className="text-red-500">*</span></Label>
@@ -2339,41 +2484,25 @@ function StockIn({ open, onOpenChange, items, setItems, setHistory, user }: {
             </div>
 
             <div className="space-y-1">
-              <Label>Total Amount</Label>
-              <Input value={`₱${totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} disabled />
-            </div>
-            <div className="space-y-1">
               <Label>Supplier <span className="text-red-500">*</span></Label>
               <Input value={supplier} onChange={(event) => setSupplier(event.target.value)} placeholder="Supplier name" />
             </div>
-            <div className="space-y-1">
+            <div className="space-y-1 md:col-span-2">
               <Label>Receipt / Delivery Ref. <span className="text-red-500">*</span></Label>
               <Input value={reference} onChange={(event) => setReference(event.target.value)} placeholder="Auto-generated, e.g. STIN-20260603-191245" />
             </div>
 
-            <div className="space-y-1">
+            <div className="space-y-1 md:col-span-3">
               <Label>Expiration Date</Label>
-              <InventoryDateInput value={expirationDate} onChange={setExpirationDate} />
-            </div>
-            <div className="space-y-1 md:col-span-2">
-              <Label>Supporting Document</Label>
-              <input
-                id="stock-in-document"
-                className="sr-only"
-                type="file"
-                onChange={(event) => setDocumentName(event.target.files?.[0]?.name ?? "")}
-              />
-              <label
-                htmlFor="stock-in-document"
-                className="flex h-9 cursor-pointer items-center justify-between gap-3 rounded-md bg-muted/50 px-3 text-sm transition-colors hover:bg-muted"
-              >
-                <span className={documentName ? "truncate text-slate-900" : "truncate text-muted-foreground"}>
-                  {documentName || "Select supporting document"}
-                </span>
-                <span className="inline-flex shrink-0 items-center gap-1 rounded border bg-white px-2 py-1 text-xs font-medium text-slate-700">
-                  <Upload className="h-3.5 w-3.5" />Browse
-                </span>
-              </label>
+              {selectedItemHasExpiration ? (
+                <InventoryDateInput value={expirationDate} onChange={setExpirationDate} />
+              ) : (
+                <Input
+                  value={selectedItem ? "Not applicable — No expiration date" : ""}
+                  placeholder="Select an inventory item"
+                  disabled
+                />
+              )}
             </div>
           </div>
 
@@ -3851,7 +3980,7 @@ function StockHistory({ history }: { history: StockHistoryRow[] }) {
   );
 }
 
-function RestockRequests({ user, items, setItems, requests, setRequests, suggestedItemId, onSuggestionHandled }: {
+function RestockRequests({ user, items, setItems, requests, setRequests, suggestedItemId, onSuggestionHandled, openRequestId, onNotificationRequestOpened }: {
   user: User;
   items: InventoryItem[];
   setItems: React.Dispatch<React.SetStateAction<InventoryItem[]>>;
@@ -3859,6 +3988,8 @@ function RestockRequests({ user, items, setItems, requests, setRequests, suggest
   setRequests: React.Dispatch<React.SetStateAction<RestockRequest[]>>;
   suggestedItemId?: string | null;
   onSuggestionHandled?: () => void;
+  openRequestId?: number | null;
+  onNotificationRequestOpened?: () => void;
 }) {
   const [openCreate, setOpenCreate] = useState(false);
   const [search, setSearch] = useState("");
@@ -3870,6 +4001,14 @@ function RestockRequests({ user, items, setItems, requests, setRequests, suggest
   const [duplicateRequest, setDuplicateRequest] = useState<RestockRequest | null>(null);
   const [savingCancel, setSavingCancel] = useState(false);
   const [savingDelivery, setSavingDelivery] = useState(false);
+
+  useEffect(() => {
+    if (openRequestId == null) return;
+    const request = requests.find((item) => item.dbId === openRequestId);
+    if (!request) return;
+    setViewing(request);
+    onNotificationRequestOpened?.();
+  }, [openRequestId, onNotificationRequestOpened, requests]);
 
   useEffect(() => {
     if (!suggestedItemId) return;
@@ -4103,56 +4242,54 @@ function RestockRequests({ user, items, setItems, requests, setRequests, suggest
             </Select>
           </div>
 
-          <Table>
+          <Table className="table-fixed min-w-[852px]">
+            <colgroup>
+              <col className="w-[280px]" />
+              <col className="w-[150px]" />
+              <col className="w-[100px]" />
+              <col className="w-[100px]" />
+              <col className="w-[110px]" />
+              <col className="w-[112px]" />
+            </colgroup>
             <TableHeader>
               <TableRow>
-                <TableHead>Request ID</TableHead>
-                <TableHead>Date Requested</TableHead>
-                <TableHead>Material Name</TableHead>
-                <TableHead>Category</TableHead>
-                <TableHead className="text-right">Current Qty</TableHead>
-                <TableHead className="text-right">Minimum Stock</TableHead>
-                <TableHead className="text-right">Requested Qty</TableHead>
-                <TableHead>Reason</TableHead>
-                <TableHead>Requested By</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="w-[128px] text-center">Actions</TableHead>
+                <TableHead className="px-3">Material / Request</TableHead>
+                <TableHead className="px-3">Date</TableHead>
+                <TableHead className="px-3 text-right">Stock</TableHead>
+                <TableHead className="px-3 text-right">Req. Qty</TableHead>
+                <TableHead className="align-middle px-3 text-center">Status</TableHead>
+                <TableHead className="align-middle px-2 text-center">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filtered.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={11} className="text-center text-muted-foreground">
+                  <TableCell colSpan={6} className="text-center text-muted-foreground">
                     No active restock requests match the selected filters.
                   </TableCell>
                 </TableRow>
               ) : (
                 filtered.map((r) => (
                   <TableRow key={r.id}>
-                    <TableCell className="font-medium">{r.id}</TableCell>
-                    <TableCell>{r.dateRequested}</TableCell>
-                    <TableCell>{r.material}</TableCell>
-                    <TableCell className="text-sm text-muted-foreground">{r.category}</TableCell>
-                    <TableCell className="text-right">{r.current}</TableCell>
-                    <TableCell className="text-right">{r.minimumStock ?? "-"}</TableCell>
-                    <TableCell className="text-right font-medium">{r.requested}</TableCell>
-                    <TableCell className="text-sm">{r.reason}</TableCell>
-                    <TableCell>{r.requestedBy}</TableCell>
-                    <TableCell><Badge className={getStatusClass(r.status)}>{r.status}</Badge></TableCell>
-                    <TableCell className="w-[128px]">
-                      <div className="flex items-center justify-center gap-1 whitespace-nowrap">
+                    <TableCell className="whitespace-normal px-3 py-2">
+                      <div className="break-words font-medium text-slate-900">{r.material}</div>
+                      <div className="break-all text-xs text-muted-foreground">{r.id}</div>
+                    </TableCell>
+                    <TableCell className="px-3 py-2 text-sm">{r.dateRequested}</TableCell>
+                    <TableCell className="px-3 py-2 text-right tabular-nums">{r.currentAtRequest ?? "N/A"}</TableCell>
+                    <TableCell className="px-3 py-2 text-right font-medium tabular-nums">{r.requested}</TableCell>
+                    <TableCell className="align-middle px-3 py-2 text-center">
+                      <Badge className={getStatusClass(r.status)}>{r.status}</Badge>
+                    </TableCell>
+                    <TableCell className="align-middle px-2 py-2 text-center">
+                      <div className="grid grid-cols-[repeat(3,28px)] items-center justify-center gap-1 whitespace-nowrap">
                         <button className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded bg-sky-100 text-sky-700 hover:bg-sky-200" title="View" aria-label={`View ${r.id}`} onClick={() => setViewing(r)}>
                           <Eye className="h-3.5 w-3.5" />
                         </button>
                         {r.status === "Pending" && (
-                          <>
-                            <button className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded bg-emerald-100 text-emerald-700 hover:bg-emerald-200" title="Edit pending request" aria-label={`Edit ${r.id}`} onClick={() => setEditing(r)}>
-                              <Edit className="h-3.5 w-3.5" />
-                            </button>
-                            <button className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded bg-red-100 text-red-700 hover:bg-red-200" title="Cancel Request" aria-label={`Cancel Request ${r.id}`} onClick={() => setCancelling(r)}>
-                              <Undo2 className="h-3.5 w-3.5" />
-                            </button>
-                          </>
+                          <button className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded bg-emerald-100 text-emerald-700 hover:bg-emerald-200" title="Edit pending request" aria-label={`Edit ${r.id}`} onClick={() => setEditing(r)}>
+                            <Edit className="h-3.5 w-3.5" />
+                          </button>
                         )}
                         {r.status === "Approved" && (
                           <button className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded bg-emerald-100 text-emerald-700 hover:bg-emerald-200" title="Confirm delivery" aria-label={`Confirm delivery ${r.id}`} onClick={() => setDelivering(r)}>
@@ -4163,6 +4300,13 @@ function RestockRequests({ user, items, setItems, requests, setRequests, suggest
                           <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded bg-slate-100 text-slate-500" title="Locked after manager action" aria-label={`${r.id} locked`}>
                             <Lock className="h-3.5 w-3.5" />
                           </span>
+                        )}
+                        {r.status === "Pending" ? (
+                          <button className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded bg-red-100 text-red-700 hover:bg-red-200" title="Cancel Request" aria-label={`Cancel Request ${r.id}`} onClick={() => setCancelling(r)}>
+                            <Undo2 className="h-3.5 w-3.5" />
+                          </button>
+                        ) : (
+                          <span aria-hidden="true" className="h-7 w-7" />
                         )}
                       </div>
                     </TableCell>
@@ -4245,8 +4389,8 @@ function RestockRequests({ user, items, setItems, requests, setRequests, suggest
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <RestockInfo label="Material" value={viewing.material} />
                     <RestockInfo label="Category" value={viewing.category || "Not specified"} />
-                    <RestockInfo label="Current Quantity" value={String(viewing.current)} />
-                    <RestockInfo label="Minimum Stock Level" value={typeof viewing.minimumStock === "number" ? String(viewing.minimumStock) : "Not specified"} />
+                    <RestockInfo label="Current Qty at Request" value={String(viewing.currentAtRequest ?? "N/A")} />
+                    <RestockInfo label="Minimum Stock at Request" value={String(viewing.minimumStockAtRequest ?? "N/A")} />
                   </div>
                 </section>
 
@@ -4259,7 +4403,7 @@ function RestockRequests({ user, items, setItems, requests, setRequests, suggest
                     </div>
                     <div>
                       <div className="text-xs text-muted-foreground">Stock Gap</div>
-                      <div className="font-medium text-slate-900">{Math.max(0, (viewing.minimumStock ?? 0) - viewing.current)}</div>
+                      <div className="font-medium text-slate-900">{viewing.minimumStockAtRequest == null || viewing.currentAtRequest == null ? "N/A" : Math.max(0, viewing.minimumStockAtRequest - viewing.currentAtRequest)}</div>
                     </div>
                   </div>
                 </section>
@@ -4321,6 +4465,8 @@ type RestockRequest = {
   category: string;
   current: number;
   minimumStock?: number;
+  currentAtRequest?: number | null;
+  minimumStockAtRequest?: number | null;
   requested: number;
   reason: string;
   requestedBy: string;

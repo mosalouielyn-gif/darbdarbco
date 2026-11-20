@@ -24,6 +24,21 @@ export interface PayrollSlipStatistics {
   approved: number;
 }
 
+export interface RestockDecisionNotification {
+  id: string;
+  data: {
+    restock_request_id: number;
+    request_id: string;
+    material_name: string;
+    requested_quantity: number;
+    status: "Approved" | "Rejected";
+    decided_at: string;
+    review_notes?: string | null;
+  };
+  read_at: string | null;
+  created_at: string | null;
+}
+
 export interface MaintenanceTable {
   name: string;
   label: string;
@@ -451,6 +466,25 @@ export async function updateUserAccountStatus(
 
   if (!response.ok) {
     throw new Error(data?.message || "Unable to update user account status.");
+  }
+
+  return data;
+}
+
+export async function updateHarvester(
+  id: string | number,
+  payload: { name: string; contact: string; address: string; active: boolean },
+): Promise<any> {
+  const response = await apiFetch(`/api/harvesters/${id}`, {
+    method: "PUT",
+    headers: jsonHeaders,
+    body: JSON.stringify(payload),
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(data?.message || "Unable to update harvester.");
   }
 
   return data;
@@ -962,4 +996,27 @@ export async function returnRestockRequest(id: string | number, payload: { reaso
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data?.message || "Unable to return restock request.");
   return data;
+}
+
+export async function getRestockDecisionNotifications(): Promise<{
+  notifications: RestockDecisionNotification[];
+  unread_count: number;
+}> {
+  const response = await apiFetch("/api/restock-request-notifications", {
+    headers: { Accept: "application/json" },
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data?.message || "Unable to load restock notifications.");
+  return data;
+}
+
+export async function markRestockDecisionNotificationAsRead(id: string): Promise<void> {
+  const response = await apiFetch(`/api/restock-request-notifications/${encodeURIComponent(id)}/read`, {
+    method: "PATCH",
+    headers: { Accept: "application/json" },
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data?.message || "Unable to mark the restock notification as read.");
+  }
 }

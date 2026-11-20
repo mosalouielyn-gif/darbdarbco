@@ -87,22 +87,24 @@ class InventoryItemController extends Controller
 
     public function stockIn(Request $request, int $id): JsonResponse
     {
-        $payload = $request->validate([
-            'quantity' => ['required', 'numeric', 'min:0.01'],
-            'unit_cost' => ['required', 'numeric', 'min:0'],
-            'supplier' => ['required', 'string', 'max:255'],
-            'reference_no' => ['required', 'string', 'max:255'],
-            'stock_date' => ['required', 'date'],
-            'expiry_date' => ['nullable', 'date'],
-            'notes' => ['nullable', 'string'],
-            'document_name' => ['nullable', 'string', 'max:255'],
-            'user_id' => ['nullable', 'integer'],
-            'user_name' => ['nullable', 'string', 'max:255'],
-        ]);
-
-        $item = DB::transaction(function () use ($id, $payload) {
+        $item = DB::transaction(function () use ($id, $request) {
             $current = DB::table('inventory_items')->where('id', $id)->lockForUpdate()->first();
             abort_if(! $current, 404, 'Inventory item not found.');
+
+            $payload = $request->validate([
+                'quantity' => ['required', 'numeric', 'min:0.01'],
+                'unit_cost' => ['required', 'numeric', 'min:0'],
+                'supplier' => ['required', 'string', 'max:255'],
+                'reference_no' => ['required', 'string', 'max:255'],
+                'stock_date' => ['required', 'date'],
+                'expiry_date' => [Rule::prohibitedIf($current->expiry_date === null), 'nullable', 'date'],
+                'notes' => ['nullable', 'string'],
+                'document_name' => ['nullable', 'string', 'max:255'],
+                'user_id' => ['nullable', 'integer'],
+                'user_name' => ['nullable', 'string', 'max:255'],
+            ], [
+                'expiry_date.prohibited' => 'This inventory item has no expiration date; an expiration date cannot be submitted for Stock-In.',
+            ]);
 
             $previousBalance = (float) $current->on_hand;
             $updatedBalance = $previousBalance + (float) $payload['quantity'];
